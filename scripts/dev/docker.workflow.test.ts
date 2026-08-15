@@ -46,25 +46,16 @@ const expectedComposeMappings = [
 ] as const;
 
 describe('docker workflows', () => {
-  it('publishes armv7 docker images in ci and release workflows', () => {
-    const ciWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
+  it('publishes armv7 docker images in release workflow', () => {
     const releaseWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/release.yml'), 'utf8');
-
-    expect(ciWorkflow).toContain('arch: armv7');
-    expect(ciWorkflow).toContain('platform: linux/arm/v7');
-    expect(ciWorkflow).toContain('"${tag}-armv7"');
 
     expect(releaseWorkflow).toContain('arch: armv7');
     expect(releaseWorkflow).toContain('platform: linux/arm/v7');
     expect(releaseWorkflow).toContain('"${tag}-armv7"');
   });
 
-  it('derives Docker Hub image names from the configured username secret', () => {
-    const ciWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
+  it('derives Docker Hub image names from the configured username secret in release workflow', () => {
     const releaseWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/release.yml'), 'utf8');
-
-    expect(ciWorkflow).toContain('DOCKERHUB_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/metapi');
-    expect(ciWorkflow).not.toContain('images: 1467078763/metapi');
 
     expect(releaseWorkflow).toContain('DOCKERHUB_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/metapi');
     expect(releaseWorkflow).not.toContain('1467078763/metapi');

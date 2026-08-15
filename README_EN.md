@@ -17,14 +17,11 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 </p>
 
 <p align="center">
-<a href="https://github.com/cita-777/metapi/releases">
-  <img alt="GitHub Release" src="https://img.shields.io/github/v/release/cita-777/metapi?label=Release&logo=github&style=flat">
+<a href="https://github.com/yswlww/metapi-evolution/releases">
+  <img alt="GitHub Release" src="https://img.shields.io/github/v/release/yswlww/metapi-evolution?label=Release&logo=github&style=flat">
 </a><!--
---><a href="https://github.com/cita-777/metapi/stargazers">
-  <img alt="GitHub Stars" src="https://img.shields.io/github/stars/cita-777/metapi?style=flat&logo=github&label=Stars">
-</a><!--
---><a href="https://deepwiki.com/cita-777/metapi">
-  <img alt="Ask DeepWiki" src="https://deepwiki.com/badge.svg">
+--><a href="https://github.com/yswlww/metapi-evolution/stargazers">
+  <img alt="GitHub Stars" src="https://img.shields.io/github/stars/yswlww/metapi-evolution?style=flat&logo=github&label=Stars">
 </a><!--
 --><a href="https://hub.docker.com/r/kennethww/metapi">
   <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/kennethww/metapi?style=flat&logo=docker&label=Docker%20Pulls">
@@ -40,7 +37,7 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 --><a href="https://zeabur.com/templates/DOX5PR">
   <img alt="Deploy on Zeabur" src="https://zeabur.com/button.svg" height="28">
 </a><!--
---><a href="https://render.com/deploy?repo=https://github.com/cita-777/metapi">
+--><a href="https://render.com/deploy?repo=https://github.com/yswlww/metapi-evolution">
   <img alt="Deploy to Render" src="https://render.com/images/deploy-to-render-button.svg" height="28">
 </a>
 </p>
@@ -559,13 +556,23 @@ Metapi is fully self-hosted. All data (accounts, tokens, routes, logs) stays in 
 
 ---
 
+---
+
+## Origin and Evolution
+
+- **Origin**: This project originated from [`cita-777/metapi`](https://github.com/cita-777/metapi), fully preserving its historical Git commit history, contributor records, and MIT license.
+- **Evolution**: As upstream development is no longer active, this project is maintained independently at [`yswlww/metapi-evolution`](https://github.com/yswlww/metapi-evolution), incorporating extensive original bug fixes, route topology refactoring, concurrency/healing mechanisms, custom header priority controls, dynamic deployment, and automated update support.
+- **Policy**: Maintained independently; no direct merges of upstream branches or PRs.
+
+---
+
 ## Contributing
 
 All forms of contribution are welcome!
 
-- Report bugs — [Submit an Issue](https://github.com/cita-777/metapi/issues)
-- Feature suggestions — [Start a Discussion](https://github.com/cita-777/metapi/issues)
-- Code contributions — [Submit a Pull Request](https://github.com/cita-777/metapi/pulls)
+- Report bugs — [Submit an Issue](https://github.com/yswlww/metapi-evolution/issues)
+- Feature suggestions — [Start a Discussion](https://github.com/yswlww/metapi-evolution/issues)
+- Code contributions — [Submit a Pull Request](https://github.com/yswlww/metapi-evolution/pulls)
 - Contributing guide — [CONTRIBUTING.md](CONTRIBUTING.md)
 - Code of conduct — [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
@@ -600,7 +607,7 @@ Special thanks to all contributors:
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=cita-777/metapi&type=date&legend=top-left&v=2)](https://www.star-history.com/#cita-777/metapi&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=yswlww/metapi-evolution&type=date&legend=top-left&v=2)](https://www.star-history.com/#yswlww/metapi-evolution&type=date&legend=top-left)
 
 ---
 

@@ -8,7 +8,7 @@ Metapi 是 AI API 聚合平台（New API、One API、OneHub 等）的元聚合�
 
 ## Before You Start / 开始之前
 
-- Check existing [Issues](https://github.com/cita-777/metapi/issues) and [Pull Requests](https://github.com/cita-777/metapi/pulls) to avoid duplicates. / 检查现有的 [Issues](https://github.com/cita-777/metapi/issues) 和 [Pull Requests](https://github.com/cita-777/metapi/pulls) 以避免重复。
+- Check existing [Issues](https://github.com/yswlww/metapi-evolution/issues) and [Pull Requests](https://github.com/yswlww/metapi-evolution/pulls) to avoid duplicates. / 检查现有的 [Issues](https://github.com/yswlww/metapi-evolution/issues) 和 [Pull Requests](https://github.com/yswlww/metapi-evolution/pulls) 以避免重复。
 - For major changes, open an issue first to discuss your proposal. / 对于重大更改，请先开启 issue 讨论您的提案。
 - Read our [Code of Conduct](CODE_OF_CONDUCT.md). / 阅读我们的[行为准则](CODE_OF_CONDUCT.md)。
 
@@ -24,8 +24,8 @@ Metapi 是 AI API 聚合平台（New API、One API、OneHub 等）的元聚合�
 1. **Fork and clone the repository** / **Fork 并克隆仓库**
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/metapi.git
-cd metapi
+git clone https://github.com/YOUR_USERNAME/metapi-evolution.git
+cd metapi-evolution
 ```
 
 2. **Install dependencies** / **安装依赖**
@@ -214,8 +214,8 @@ If you're adding support for a new AI API platform / 如果您要添加对新 AI
 ## Getting Help / 获取帮助
 
 - 📖 [Documentation](https://metapi.cita777.me) / [文档](https://metapi.cita777.me)
-- 💬 [GitHub Discussions](https://github.com/cita-777/metapi/discussions) / [GitHub 讨论区](https://github.com/cita-777/metapi/discussions)
-- 🐛 [Issue Tracker](https://github.com/cita-777/metapi/issues) / [Issue 跟踪](https://github.com/cita-777/metapi/issues)
+- 💬 [GitHub Discussions](https://github.com/yswlww/metapi-evolution/discussions) / [GitHub 讨论区](https://github.com/yswlww/metapi-evolution/discussions)
+- 🐛 [Issue Tracker](https://github.com/yswlww/metapi-evolution/issues) / [Issue 跟踪](https://github.com/yswlww/metapi-evolution/issues)
 
 ## License / 许可证
 

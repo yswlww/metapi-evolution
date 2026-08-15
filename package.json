@@ -1,6 +1,6 @@
 {
   "name": "metapi",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Meta-layer management and unified proxy for AI API aggregation platforms",
   "main": "dist/desktop/main.js",
   "keywords": [
@@ -12,13 +12,13 @@
     "claude",
     "aggregator"
   ],
-  "homepage": "https://github.com/cita-777/metapi#readme",
+  "homepage": "https://github.com/yswlww/metapi-evolution#readme",
   "bugs": {
-    "url": "https://github.com/cita-777/metapi/issues"
+    "url": "https://github.com/yswlww/metapi-evolution/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cita-777/metapi.git"
+    "url": "https://github.com/yswlww/metapi-evolution.git"
   },
   "license": "MIT",
   "engines": {

@@ -12,21 +12,17 @@
 
 
 <p align="center">
-<a href="https://github.com/cita-777/metapi/releases">
-  <img alt="GitHub Release" src="https://img.shields.io/github/v/release/cita-777/metapi?label=Release&logo=github&style=flat">
-</a><a href="https://github.com/cita-777/metapi/stargazers">
-  <img alt="GitHub Stars" src="https://img.shields.io/github/stars/cita-777/metapi?style=flat&logo=github&label=Stars">
-</a><a href="https://atomgit.com/cita-777/metapi">
-  <img alt="AtomGit Stars" src="https://atomgit.com/cita-777/metapi/star/badge.svg">
-</a><a href="https://deepwiki.com/cita-777/metapi">
-  <img alt="Ask DeepWiki" src="https://deepwiki.com/badge.svg">
+<a href="https://github.com/yswlww/metapi-evolution/releases">
+  <img alt="GitHub Release" src="https://img.shields.io/github/v/release/yswlww/metapi-evolution?label=Release&logo=github&style=flat">
+</a><a href="https://github.com/yswlww/metapi-evolution/stargazers">
+  <img alt="GitHub Stars" src="https://img.shields.io/github/stars/yswlww/metapi-evolution?style=flat&logo=github&label=Stars">
 </a><a href="https://hub.docker.com/r/kennethww/metapi">
   <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/kennethww/metapi?style=flat&logo=docker&label=Docker%20Pulls">
 </a><a href="https://hub.docker.com/r/kennethww/metapi">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat">
 </a><img alt="Node.js" src="https://img.shields.io/badge/Node.js-22.15%2B-339933?logo=node.js&style=flat"><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&style=flat"><a href="https://zeabur.com/templates/DOX5PR">
   <img alt="Deploy on Zeabur" src="https://zeabur.com/button.svg" height="28">
-</a><a href="https://render.com/deploy?repo=https://github.com/cita-777/metapi">
+</a><a href="https://render.com/deploy?repo=https://github.com/yswlww/metapi-evolution">
   <img alt="Deploy to Render" src="https://render.com/images/deploy-to-render-button.svg" height="28">
 </a>
 </p>
@@ -283,7 +279,7 @@
 <a href="https://zeabur.com/templates/DOX5PR">
   <img alt="Deploy on Zeabur" src="https://zeabur.com/button.svg" height="28">
 </a>
-<a href="https://render.com/deploy?repo=https://github.com/cita-777/metapi">
+<a href="https://render.com/deploy?repo=https://github.com/yswlww/metapi-evolution">
   <img alt="Deploy to Render" src="https://render.com/images/deploy-to-render-button.svg" height="28">
 </a>
 
@@ -436,13 +432,21 @@ Metapi 完全自托管，所有数据（账号、令牌、路由、日志）均�
 
 ---
 
+## 🏛️ 项目起源与演进 (Origin and Evolution)
+
+- **起源**：本项目源于 [`cita-777/metapi`](https://github.com/cita-777/metapi)，完整保留其历史 Git 提交记录、贡献者历史与 MIT 开源协议。
+- **演进**：由于上游仓库停止积极维护，本项目在 [`yswlww/metapi-evolution`](https://github.com/yswlww/metapi-evolution) 作为独立演进版本持续维护，包含多项原创 bug 修复、路由拓扑重构、并发与自愈机制、自定义请求头增强、动态部署与自动化更新支持。
+- **政策**：独立演进，不再直接 merge 上游分支或 PR；上游提交仅作为参考。
+
+---
+
 ## 🤝 贡献
 
 欢迎各种形式的贡献！
 
-- 🐛 报告 Bug — [提交 Issue](https://github.com/cita-777/metapi/issues)
-- 💡 功能建议 — [发起讨论](https://github.com/cita-777/metapi/issues)
-- 🔧 代码贡献 — [提交 Pull Request](https://github.com/cita-777/metapi/pulls)
+- 🐛 报告 Bug — [提交 Issue](https://github.com/yswlww/metapi-evolution/issues)
+- 💡 功能建议 — [发起讨论](https://github.com/yswlww/metapi-evolution/issues)
+- 🔧 代码贡献 — [提交 Pull Request](https://github.com/yswlww/metapi-evolution/pulls)
 - 📝 贡献指南 — [CONTRIBUTING.md](CONTRIBUTING.md)
 - 📜 行为准则 — [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
@@ -466,15 +470,15 @@ Metapi 完全自托管，所有数据（账号、令牌、路由、日志）均�
 
 特别感谢所有贡献者：
 
-<a href="https://github.com/cita-777/metapi/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=cita-777/metapi" alt="Contributors" />
+<a href="https://github.com/yswlww/metapi-evolution/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=yswlww/metapi-evolution" alt="Contributors" />
 </a>
 
 ---
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=cita-777/metapi&type=date&legend=top-left&v=2)](https://www.star-history.com/#cita-777/metapi&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=yswlww/metapi-evolution&type=date&legend=top-left&v=2)](https://www.star-history.com/#yswlww/metapi-evolution&type=date&legend=top-left)
 
 ---
 

@@ -2,7 +2,7 @@ services:
   - type: web
     name: metapi
     runtime: docker
-    repo: https://github.com/cita-777/metapi
+    repo: https://github.com/yswlww/metapi-evolution
     dockerfilePath: ./docker/Dockerfile
     dockerContext: .
     plan: free

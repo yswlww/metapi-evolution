@@ -6,7 +6,7 @@ import { tr } from '../i18n.js';
 import { SITE_DOCS_URL } from '../docsLink.js';
 import { buildUpdateReminder } from './helpers/updateCenterPresentation.js';
 
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 
 const FEATURES = [
   { icon: '🌐', title: '统一代理网关', desc: '一个 Key、一个入口，兼容 OpenAI / Claude 下游格式' },
@@ -29,7 +29,7 @@ const TECH_STACK = [
 ];
 
 const LINKS = [
-  { label: 'GitHub', href: 'https://github.com/cita-777/metapi', icon: '📂' },
+  { label: 'GitHub', href: 'https://github.com/yswlww/metapi-evolution', icon: '📂' },
   { label: 'Docker Hub', href: 'https://hub.docker.com/r/1467078763/metapi', icon: '🐳' },
   { label: '站点文档', href: SITE_DOCS_URL, icon: '📚' },
 ];

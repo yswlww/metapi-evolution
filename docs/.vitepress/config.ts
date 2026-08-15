@@ -72,7 +72,7 @@ export default withMermaid(
         { text: 'OAuth 管理', link: '/oauth' },
         { text: 'FAQ', link: '/faq' },
         { text: '文档维护', link: '/README' },
-        { text: '项目主页', link: 'https://github.com/cita-777/metapi' },
+        { text: '项目主页', link: 'https://github.com/yswlww/metapi-evolution' },
       ],
       sidebar: [
         {
@@ -106,7 +106,7 @@ export default withMermaid(
         },
       ],
       socialLinks: [
-        { icon: 'github', link: 'https://github.com/cita-777/metapi' },
+        { icon: 'github', link: 'https://github.com/yswlww/metapi-evolution' },
       ],
       outline: {
         level: [2, 3],
