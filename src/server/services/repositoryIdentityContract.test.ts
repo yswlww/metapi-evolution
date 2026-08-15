@@ -59,6 +59,27 @@ describe('repositoryIdentityContract', () => {
     expect(readmeEn).toContain('`me.cita777.metapi.desktop`');
   });
 
+  it('tracks upstream PR dispositions and evolution PR history in the optimization checklist', () => {
+    const content = readFileSync(resolve(rootDir, '優化清單.md'), 'utf8');
+
+    expect(content).toContain('目前 11 個 OPEN upstream PR');
+    expect(content).toContain('沒有任何一個是直接 merge');
+    for (const prNumber of [520, 550, 557, 575, 581, 584, 588, 596, 599, 601, 602]) {
+      expect(content).toContain(`https://github.com/cita-777/metapi/pull/${prNumber}`);
+    }
+    expect(content).toContain('[#581](https://github.com/cita-777/metapi/pull/581) | 🟡 部分覆蓋');
+    expect(content).toContain('[#520](https://github.com/cita-777/metapi/pull/520) | ❌ 未採用');
+    expect(content).toContain('[#557](https://github.com/cita-777/metapi/pull/557) | ❌ 未採用');
+    expect(content).toContain('[#470](https://github.com/cita-777/metapi/pull/470)');
+    expect(content).toContain('[#567](https://github.com/cita-777/metapi/pull/567)');
+    expect(content).toContain('[PR #1](https://github.com/yswlww/metapi-evolution/pull/1)');
+    expect(content).toContain('[PR #2](https://github.com/yswlww/metapi-evolution/pull/2)');
+    expect(content).toContain('[`protect-main`](https://github.com/yswlww/metapi-evolution/rules/20888216)');
+    expect(content).toContain('[`protect-release-tags`](https://github.com/yswlww/metapi-evolution/rules/20888217)');
+    expect(content).toContain('完整測試：2724 passed，8 skipped');
+    expect(content).not.toContain('新 repository 尚未建立');
+  });
+
   it('keeps Dependabot from proposing unsupported Docker Node major upgrades', () => {
     const content = readFileSync(resolve(rootDir, '.github/dependabot.yml'), 'utf8');
     const dockerSection = content.slice(content.indexOf('- package-ecosystem: docker'));
