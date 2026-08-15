@@ -61,21 +61,47 @@ describe('repositoryIdentityContract', () => {
 
   it('tracks upstream PR dispositions and evolution PR history in the optimization checklist', () => {
     const content = readFileSync(resolve(rootDir, '優化清單.md'), 'utf8');
+    const upstreamDispositions = [
+      [602, '✅ 等價功能已獨立實作'],
+      [601, '✅ 等價功能已獨立實作'],
+      [599, '✅ 等價維護已獨立重做'],
+      [596, '✅ 等價功能已獨立實作'],
+      [588, '🟡 部分覆蓋'],
+      [584, '✅ 等價功能已獨立實作'],
+      [581, '🟡 部分覆蓋'],
+      [575, '✅ 等價修正已獨立提交（upstream-derived）'],
+      [557, '❌ 未採用'],
+      [550, '🟡 部分覆蓋'],
+      [520, '❌ 未採用'],
+    ] as const;
 
     expect(content).toContain('目前 11 個 OPEN upstream PR');
     expect(content).toContain('沒有任何一個是直接 merge');
-    for (const prNumber of [520, 550, 557, 575, 581, 584, 588, 596, 599, 601, 602]) {
-      expect(content).toContain(`https://github.com/cita-777/metapi/pull/${prNumber}`);
+    expect(content).toContain('不等於實作內容均由 fork 從零獨立構思');
+    for (const [prNumber, disposition] of upstreamDispositions) {
+      expect(content).toContain(
+        `| [#${prNumber}](https://github.com/cita-777/metapi/pull/${prNumber}) | ${disposition} |`,
+      );
     }
-    expect(content).toContain('[#581](https://github.com/cita-777/metapi/pull/581) | 🟡 部分覆蓋');
-    expect(content).toContain('[#520](https://github.com/cita-777/metapi/pull/520) | ❌ 未採用');
-    expect(content).toContain('[#557](https://github.com/cita-777/metapi/pull/557) | ❌ 未採用');
-    expect(content).toContain('[#470](https://github.com/cita-777/metapi/pull/470)');
-    expect(content).toContain('[#567](https://github.com/cita-777/metapi/pull/567)');
-    expect(content).toContain('[PR #1](https://github.com/yswlww/metapi-evolution/pull/1)');
-    expect(content).toContain('[PR #2](https://github.com/yswlww/metapi-evolution/pull/2)');
-    expect(content).toContain('[`protect-main`](https://github.com/yswlww/metapi-evolution/rules/20888216)');
-    expect(content).toContain('[`protect-release-tags`](https://github.com/yswlww/metapi-evolution/rules/20888217)');
+    expect(content).toContain('未提供 thinking config 時的 Gemini-3 dummy `thoughtSignature` 注入');
+    expect(content).toContain('native Gemini `functionCall` → OpenAI `tool_calls` 正規化');
+    expect(content).toContain('6 個等價功能／維護已落地（#575／#584／#596／#599／#601／#602）');
+    expect(content).toContain('3 個部分覆蓋（#550／#581／#588）');
+    expect(content).toContain('2 個未採用（#520／#557）');
+    expect(content).toContain('另外 #470 是歷史上的部分獨立採用，#567 則是歷史上的獨立等價實作');
+    expect(content).toContain(
+      '| [PR #1](https://github.com/yswlww/metapi-evolution/pull/1) | ✅ 已關閉，未合併 |',
+    );
+    expect(content).toContain(
+      '| [PR #2](https://github.com/yswlww/metapi-evolution/pull/2) | ✅ 已合併 |',
+    );
+    expect(content).toContain('15 項 checks 全部通過，merge commit `154ea82`');
+    expect(content).toContain(
+      '| [`protect-main`](https://github.com/yswlww/metapi-evolution/rules/20888216) | ✅ Active |',
+    );
+    expect(content).toContain(
+      '| [`protect-release-tags`](https://github.com/yswlww/metapi-evolution/rules/20888217) | ✅ Active |',
+    );
     expect(content).toContain('完整測試：2724 passed，8 skipped');
     expect(content).not.toContain('新 repository 尚未建立');
   });
