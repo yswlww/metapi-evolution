@@ -556,13 +556,19 @@ Metapi is fully self-hosted. All data (accounts, tokens, routes, logs) stays in 
 
 ---
 
----
-
 ## Origin and Evolution
 
-- **Origin**: This project originated from [`cita-777/metapi`](https://github.com/cita-777/metapi), fully preserving its historical Git commit history, contributor records, and MIT license.
-- **Evolution**: As upstream development is no longer active, this project is maintained independently at [`yswlww/metapi-evolution`](https://github.com/yswlww/metapi-evolution), incorporating extensive original bug fixes, route topology refactoring, concurrency/healing mechanisms, custom header priority controls, dynamic deployment, and automated update support.
-- **Policy**: Maintained independently; no direct merges of upstream branches or PRs.
+### Origin and continuity
+
+`metapi-evolution` is a community-maintained, unofficial independent continuation of [`cita-777/metapi`](https://github.com/cita-777/metapi), not an unrelated restart. This repository preserves the full Git commit history, historical release tags, and contributor records of the original project, and continues under the [MIT License](LICENSE). Copyright notices, attribution, and credit for the original authors and all historical contributors remain preserved and respected. It is not an official continuation endorsed by the original author or upstream repository, and it does not represent the views of the original author or upstream maintainers.
+
+### Independent maintenance and compatibility
+
+This branch is developed independently by community maintainers for their own use cases. [`yswlww/metapi-evolution`](https://github.com/yswlww/metapi-evolution) is the maintenance home for this independent continuation and hosts this branch's ongoing development, issues, pull requests, and releases. The repository transition does not change the `metapi` product name, the `kennethww/metapi` Docker image, or the `me.cita777.metapi.desktop` desktop application ID, and is not intended to break compatibility with existing configuration, environment variables, data directories, or upgrade paths.
+
+### Upstream reference policy
+
+This project evolves independently and does not directly merge upstream branches, pull requests, or commit series. Upstream code and commits are treated only as technical references; any candidate change must be independently assessed for applicability, security, and compatibility, then independently implemented and fully tested before adoption.
 
 ---
 

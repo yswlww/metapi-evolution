@@ -434,9 +434,17 @@ Metapi 完全自托管，所有数据（账号、令牌、路由、日志）均�
 
 ## 🏛️ 项目起源与演进 (Origin and Evolution)
 
-- **起源**：本项目源于 [`cita-777/metapi`](https://github.com/cita-777/metapi)，完整保留其历史 Git 提交记录、贡献者历史与 MIT 开源协议。
-- **演进**：由于上游仓库停止积极维护，本项目在 [`yswlww/metapi-evolution`](https://github.com/yswlww/metapi-evolution) 作为独立演进版本持续维护，包含多项原创 bug 修复、路由拓扑重构、并发与自愈机制、自定义请求头增强、动态部署与自动化更新支持。
-- **政策**：独立演进，不再直接 merge 上游分支或 PR；上游提交仅作为参考。
+### 起源与传承
+
+`metapi-evolution` 是 [`cita-777/metapi`](https://github.com/cita-777/metapi) 的社区维护、非官方后续独立演进版本，而不是与原项目无关的重新开始。本仓库完整保留了原项目的 Git 提交历史、历史版本标签和贡献者记录，并继续遵循 [MIT License](LICENSE)。原项目作者及所有历史贡献者的著作权、署名和贡献归属均予保留和尊重。本项目并非原作者或上游仓库认可的官方续作，也不代表原作者或上游维护者的立场。
+
+### 独立维护与兼容性
+
+本分支由社区维护者根据自身使用需求独立开发，[`yswlww/metapi-evolution`](https://github.com/yswlww/metapi-evolution) 仅作为本独立演进分支的维护入口，用于承载本分支的后续开发、Issue、Pull Request 与 Release。仓库身份的迁移不会改变产品名称 `metapi`、Docker 镜像 `kennethww/metapi`、桌面应用 ID `me.cita777.metapi.desktop`，也不会有意破坏既有配置、环境变量、数据目录或升级路径的相容性。
+
+### 上游参考政策
+
+本项目实行独立演进，不直接合并上游分支、Pull Request 或连续提交。上游代码和提交仅作为技术参考；任何拟采用的改动都必须在本项目中独立评估其适用性、安全性和相容性，并以独立实现及完整测试后方可纳入。
 
 ---
 
