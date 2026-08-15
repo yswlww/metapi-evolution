@@ -124,6 +124,11 @@ updates:
       time: "03:00"
       timezone: Asia/Shanghai
     open-pull-requests-limit: 5
+    ignore:
+      # Node 22 is intentionally retained for linux/arm/v7 Docker compatibility.
+      - dependency-name: "node"
+        update-types:
+          - "version-update:semver-major"
     groups:
       docker:
         patterns:
