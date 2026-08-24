@@ -4322,28 +4322,46 @@ describe('oauth routes', { timeout: 15_000 }, () => {
   it('surfaces Gemini CLI missing-config errors when credentials are absent', async () => {
     vi.resetModules();
     const idConfigModule = await import('../../config.js');
-    idConfigModule.config.geminiCliClientId = '';
-    idConfigModule.config.geminiCliClientSecret = OAUTH_TEST_CONFIG.geminiCliClientSecret;
-    const idProviderModule = await import('../../services/oauth/geminiCliProvider.js');
+    const originalIdConfig = {
+      geminiCliClientId: idConfigModule.config.geminiCliClientId,
+      geminiCliClientSecret: idConfigModule.config.geminiCliClientSecret,
+    };
+    try {
+      idConfigModule.config.geminiCliClientId = '';
+      idConfigModule.config.geminiCliClientSecret = OAUTH_TEST_CONFIG.geminiCliClientSecret;
+      const idProviderModule = await import('../../services/oauth/geminiCliProvider.js');
 
-    await expect(idProviderModule.geminiCliOauthProvider.buildAuthorizationUrl({
-      state: 'gemini-test-state',
-      redirectUri: 'http://localhost:8085/oauth2callback',
-      codeVerifier: 'gemini-test-verifier',
-    })).rejects.toThrow('GEMINI_CLI_CLIENT_ID is not configured');
+      await expect(idProviderModule.geminiCliOauthProvider.buildAuthorizationUrl({
+        state: 'gemini-test-state',
+        redirectUri: 'http://localhost:8085/oauth2callback',
+        codeVerifier: 'gemini-test-verifier',
+      })).rejects.toThrow('GEMINI_CLI_CLIENT_ID is not configured');
+    } finally {
+      idConfigModule.config.geminiCliClientId = originalIdConfig.geminiCliClientId;
+      idConfigModule.config.geminiCliClientSecret = originalIdConfig.geminiCliClientSecret;
+    }
 
     vi.resetModules();
     const secretConfigModule = await import('../../config.js');
-    secretConfigModule.config.geminiCliClientId = OAUTH_TEST_CONFIG.geminiCliClientId;
-    secretConfigModule.config.geminiCliClientSecret = '';
-    const secretProviderModule = await import('../../services/oauth/geminiCliProvider.js');
+    const originalSecretConfig = {
+      geminiCliClientId: secretConfigModule.config.geminiCliClientId,
+      geminiCliClientSecret: secretConfigModule.config.geminiCliClientSecret,
+    };
+    try {
+      secretConfigModule.config.geminiCliClientId = OAUTH_TEST_CONFIG.geminiCliClientId;
+      secretConfigModule.config.geminiCliClientSecret = '';
+      const secretProviderModule = await import('../../services/oauth/geminiCliProvider.js');
 
-    await expect(secretProviderModule.geminiCliOauthProvider.exchangeAuthorizationCode({
-      code: 'gemini-test-code',
-      state: 'gemini-test-state',
-      redirectUri: 'http://localhost:8085/oauth2callback',
-      codeVerifier: 'gemini-test-verifier',
-    })).rejects.toThrow('GEMINI_CLI_CLIENT_SECRET is not configured');
-    expect(fetchMock).not.toHaveBeenCalled();
+      await expect(secretProviderModule.geminiCliOauthProvider.exchangeAuthorizationCode({
+        code: 'gemini-test-code',
+        state: 'gemini-test-state',
+        redirectUri: 'http://localhost:8085/oauth2callback',
+        codeVerifier: 'gemini-test-verifier',
+      })).rejects.toThrow('GEMINI_CLI_CLIENT_SECRET is not configured');
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      secretConfigModule.config.geminiCliClientId = originalSecretConfig.geminiCliClientId;
+      secretConfigModule.config.geminiCliClientSecret = originalSecretConfig.geminiCliClientSecret;
+    }
   });
 });
