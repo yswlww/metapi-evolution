@@ -3,6 +3,26 @@ import { describe, expect, it } from 'vitest';
 import { buildConfig, buildFastifyOptions } from './config.js';
 
 describe('buildConfig', () => {
+  it('uses safe request rate-limit defaults', () => {
+    const config = buildConfig({});
+
+    expect(config.requestRateLimitMax).toBe(12_000);
+    expect(config.requestRateLimitWindowMs).toBe(60_000);
+    expect(config.authenticatedRateLimitMax).toBe(1_200);
+  });
+
+  it('normalizes request rate-limit environment overrides', () => {
+    const config = buildConfig({
+      REQUEST_RATE_LIMIT_MAX: '2400',
+      REQUEST_RATE_LIMIT_WINDOW_MS: '30000',
+      AUTHENTICATED_RATE_LIMIT_MAX: '300',
+    });
+
+    expect(config.requestRateLimitMax).toBe(2_400);
+    expect(config.requestRateLimitWindowMs).toBe(30_000);
+    expect(config.authenticatedRateLimitMax).toBe(300);
+  });
+
   it('defaults to external listen host for server deployments', () => {
     const config = buildConfig({});
 

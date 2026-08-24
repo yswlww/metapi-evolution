@@ -118,6 +118,9 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     dbUrl: (env.DB_URL || '').trim(),
     dbSsl: parseBoolean(env.DB_SSL, false),
     requestBodyLimit: DEFAULT_REQUEST_BODY_LIMIT,
+    requestRateLimitMax: Math.max(1, Math.trunc(parseNumber(env.REQUEST_RATE_LIMIT_MAX, 12_000))),
+    requestRateLimitWindowMs: Math.max(1_000, Math.trunc(parseNumber(env.REQUEST_RATE_LIMIT_WINDOW_MS, 60_000))),
+    authenticatedRateLimitMax: Math.max(1, Math.trunc(parseNumber(env.AUTHENTICATED_RATE_LIMIT_MAX, 1_200))),
     routingFallbackUnitCost: Math.max(1e-6, parseNumber(env.ROUTING_FALLBACK_UNIT_COST, 1)),
     proxyFirstByteTimeoutSec: Math.max(0, Math.trunc(parseNumber(env.PROXY_FIRST_BYTE_TIMEOUT_SEC, 0))),
     tokenRouterFailureCooldownMaxSec: normalizeTokenRouterFailureCooldownMaxSec(
