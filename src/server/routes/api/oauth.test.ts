@@ -4339,6 +4339,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     } finally {
       idConfigModule.config.geminiCliClientId = originalIdConfig.geminiCliClientId;
       idConfigModule.config.geminiCliClientSecret = originalIdConfig.geminiCliClientSecret;
+      vi.resetModules();
     }
 
     vi.resetModules();
@@ -4362,6 +4363,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     } finally {
       secretConfigModule.config.geminiCliClientId = originalSecretConfig.geminiCliClientId;
       secretConfigModule.config.geminiCliClientSecret = originalSecretConfig.geminiCliClientSecret;
+      vi.resetModules();
     }
   });
 });
