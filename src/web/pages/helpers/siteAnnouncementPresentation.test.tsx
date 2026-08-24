@@ -4,6 +4,7 @@ import {
   SiteAnnouncementContent,
   formatSiteAnnouncementSeenAt,
   readClientTimeZone,
+  renderSiteAnnouncementHtml,
   resolveSiteAnnouncementTimeZone,
 } from './siteAnnouncementPresentation.js';
 
@@ -11,6 +12,26 @@ const hasDomSanitizerSupport = typeof DOMParser === 'function' && typeof Node !=
 const itWithDomSupport = hasDomSanitizerSupport ? it : it.skip;
 
 describe('siteAnnouncementPresentation helpers', () => {
+  it('escapes raw announcement markup when DOM parsing is unavailable', () => {
+    const payload = [
+      '<scr<script>removed</script>ipt>alert(1)</script>',
+      '<sty<style>removed</style>le>body{display:none}</style>',
+      '<img src=x onerror=alert(1)>',
+    ].join('\n');
+
+    const html = renderSiteAnnouncementHtml(payload);
+
+    expect(html).not.toContain('<script');
+    expect(html).not.toContain('<style');
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;scr&lt;script&gt;');
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+  });
+
+  it('escapes malformed closing tags when DOM parsing is unavailable', () => {
+    expect(renderSiteAnnouncementHtml('<script>alert(1)</script >')).toContain('&lt;script&gt;');
+  });
+
   itWithDomSupport('renders sanitized html notices with safe links', () => {
     const markup = renderToStaticMarkup(
       <SiteAnnouncementContent
