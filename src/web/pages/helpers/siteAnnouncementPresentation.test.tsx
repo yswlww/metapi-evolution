@@ -10,9 +10,10 @@ import {
 
 const hasDomSanitizerSupport = typeof DOMParser === 'function' && typeof Node !== 'undefined';
 const itWithDomSupport = hasDomSanitizerSupport ? it : it.skip;
+const itWithoutDomSupport = hasDomSanitizerSupport ? it.skip : it;
 
 describe('siteAnnouncementPresentation helpers', () => {
-  it('escapes raw announcement markup when DOM parsing is unavailable', () => {
+  itWithoutDomSupport('escapes raw announcement markup when DOM parsing is unavailable', () => {
     const payload = [
       '<scr<script>removed</script>ipt>alert(1)</script>',
       '<sty<style>removed</style>le>body{display:none}</style>',
@@ -28,7 +29,7 @@ describe('siteAnnouncementPresentation helpers', () => {
     expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
   });
 
-  it('escapes malformed closing tags when DOM parsing is unavailable', () => {
+  itWithoutDomSupport('escapes malformed closing tags when DOM parsing is unavailable', () => {
     expect(renderSiteAnnouncementHtml('<script>alert(1)</script >')).toContain('&lt;script&gt;');
   });
 
