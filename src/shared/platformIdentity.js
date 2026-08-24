@@ -45,7 +45,7 @@ function normalizeUrlCandidate(url) {
   return typeof url === 'string' ? url.trim() : '';
 }
 
-function parseHttpUrlCandidate(url) {
+export function parseHttpUrlCandidate(url) {
   const normalized = typeof url === 'string' ? url.trim() : '';
   if (!normalized) return null;
   const candidates = normalized.includes('://') ? [normalized] : [`https://${normalized}`];
@@ -95,6 +95,8 @@ export function detectPlatformByUrlHint(url) {
   if (host.includes('anyrouter')) return 'anyrouter';
   if (host.includes('donehub') || host.includes('done-hub')) return 'done-hub';
   if (host.includes('onehub') || host.includes('one-hub')) return 'one-hub';
+  if (host.includes('antigravity')) return 'antigravity';
+  if (host.includes('cliproxy')) return 'cliproxyapi';
   if (host.includes('veloera')) return 'veloera';
   if (host.includes('sub2api')) return 'sub2api';
 

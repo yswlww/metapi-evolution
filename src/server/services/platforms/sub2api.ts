@@ -1,3 +1,4 @@
+import { detectPlatformByUrlHint, parseHttpUrlCandidate } from '../../../shared/platformIdentity.js';
 import {
   ApiTokenInfo,
   BasePlatformAdapter,
@@ -543,10 +544,11 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
   }
 
   async detect(url: string): Promise<boolean> {
-    const normalized = (url || '').toLowerCase();
-    if (normalized.includes('sub2api')) return true;
+    const parsed = parseHttpUrlCandidate(url);
+    if (!parsed) return false;
+    if (detectPlatformByUrlHint(url) === this.platformName) return true;
 
-    const base = normalizeBaseUrl(url);
+    const base = normalizeBaseUrl(parsed.toString());
     const { fetch } = await import('undici');
     const probeEndpoint = async (path: string) => {
       try {

@@ -95,6 +95,42 @@ describe('getAdapter platform aliases', () => {
     await expect(adapter!.detect(url)).resolves.toBe(false);
   });
 
+  const rawProviderTextCases = [
+    ['codex', 'chatgpt.com/backend-api/codex'],
+    ['anyrouter', 'anyrouter'],
+    ['one-hub', 'one-hub'],
+    ['done-hub', 'done-hub'],
+    ['antigravity', 'antigravity'],
+    ['cliproxyapi', 'cliproxy'],
+    ['sub2api', 'sub2api'],
+  ] as const;
+
+  it.each(rawProviderTextCases)('ignores %s text in path, query, fragment, and userinfo', async (_platform, text) => {
+    await withHttpServer((_req, res) => {
+      res.writeHead(404).end();
+    }, async (baseUrl) => {
+      const parsed = new URL(baseUrl);
+      const cases = [
+        `${baseUrl}/unrelated/${text}`,
+        `${baseUrl}/?next=${encodeURIComponent(text)}`,
+        `${baseUrl}/#${encodeURIComponent(text)}`,
+        `${parsed.protocol}//${encodeURIComponent(text)}@${parsed.host}/`,
+      ];
+
+      for (const url of cases) {
+        await expect(detectPlatform(url)).resolves.toBeUndefined();
+      }
+    });
+  });
+
+  it('rejects OpenAI provider text in a URL fragment at registry level', async () => {
+    await withHttpServer((_req, res) => {
+      res.writeHead(404).end();
+    }, async (baseUrl) => {
+      await expect(detectPlatform(`${baseUrl}/#api.openai.com/v1`)).resolves.toBeUndefined();
+    });
+  });
+
   it('supports antigravity adapter aliases', () => {
     expect(getAdapter('antigravity')?.platformName).toBe('antigravity');
     expect(getAdapter('anti-gravity')?.platformName).toBe('antigravity');
@@ -125,7 +161,7 @@ describe('getAdapter platform aliases', () => {
     expect(gemini?.platformName).toBe('gemini');
   });
 
-  it('preserves generic OpenAI detection for unrelated URL paths containing api.openai.com', async () => {
+  it('rejects provider text in an unrelated URL path', async () => {
     await withHttpServer((_req, res) => {
       res.writeHead(404).end();
     }, async (baseUrl) => {
