@@ -26,6 +26,20 @@ vi.mock('undici', () => ({
 type DbModule = typeof import('../../db/index.js');
 type RouteRefreshWorkflowModule = typeof import('../../services/routeRefreshWorkflow.js');
 
+type OAuthConfigSnapshot = {
+  geminiCliClientId: string;
+  geminiCliClientSecret: string;
+  antigravityClientId: string;
+  antigravityClientSecret: string;
+};
+
+const OAUTH_TEST_CONFIG: OAuthConfigSnapshot = {
+  geminiCliClientId: 'gemini-test-client-id',
+  geminiCliClientSecret: 'gemini-test-client-secret',
+  antigravityClientId: 'antigravity-test-client-id',
+  antigravityClientSecret: 'antigravity-test-client-secret',
+};
+
 function buildJwt(payload: Record<string, unknown>) {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value))
     .toString('base64url');
@@ -65,6 +79,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
   let schema: DbModule['schema'];
   let rebuildRoutesOnly: RouteRefreshWorkflowModule['rebuildRoutesOnly'];
   let config: typeof import('../../config.js').config;
+  let originalOauthConfig: OAuthConfigSnapshot;
   let dataDir = '';
 
   beforeAll(async () => {
@@ -72,16 +87,23 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     process.env.DATA_DIR = dataDir;
     vi.resetModules();
 
+    const configModule = await import('../../config.js');
+    config = configModule.config;
+    originalOauthConfig = {
+      geminiCliClientId: config.geminiCliClientId,
+      geminiCliClientSecret: config.geminiCliClientSecret,
+      antigravityClientId: config.antigravityClientId,
+      antigravityClientSecret: config.antigravityClientSecret,
+    };
+    Object.assign(config, OAUTH_TEST_CONFIG);
+
     await import('../../db/migrate.js');
     const dbModule = await import('../../db/index.js');
     const routesModule = await import('./oauth.js');
     const routeRefreshWorkflow = await import('../../services/routeRefreshWorkflow.js');
-    const configModule = await import('../../config.js');
     db = dbModule.db;
     schema = dbModule.schema;
     rebuildRoutesOnly = routeRefreshWorkflow.rebuildRoutesOnly;
-    config = configModule.config;
-
     app = Fastify();
     await app.register(routesModule.oauthRoutes);
   });
@@ -90,6 +112,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     fetchMock.mockReset();
     undiciAgentCtorMock.mockReset();
     undiciProxyAgentCtorMock.mockReset();
+    Object.assign(config, OAUTH_TEST_CONFIG);
     config.systemProxyUrl = '';
     const { resetRequestRateLimitStore } = await import('../../middleware/requestRateLimit.js');
     const { resetOauthSensitiveRouteLimiterForTests } = await import('./oauth.js');
@@ -109,6 +132,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
 
   afterAll(async () => {
     await app.close();
+    Object.assign(config, originalOauthConfig);
     delete process.env.DATA_DIR;
   });
 
@@ -300,6 +324,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(startBody.provider).toBe('antigravity');
     expect(startBody.state).toMatch(/^[a-zA-Z0-9_-]{20,}$/);
     expect(startBody.authorizationUrl).toContain('https://accounts.google.com/o/oauth2/v2/auth?');
+    expect(startBody.authorizationUrl).toContain('client_id=antigravity-test-client-id');
     expect(startBody.authorizationUrl).toContain(encodeURIComponent('http://localhost:51121/oauth-callback'));
     expect(startBody.authorizationUrl).toContain(`state=${encodeURIComponent(startBody.state)}`);
     expect(startBody.instructions).toMatchObject({
@@ -308,6 +333,64 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       callbackPath: '/oauth-callback',
       manualCallbackDelayMs: 15000,
     });
+  });
+
+  it('rejects antigravity oauth start without a client id before fetching', async () => {
+    config.antigravityClientId = '';
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/providers/antigravity/start',
+      headers: {
+        host: 'metapi.example',
+        'x-forwarded-proto': 'https',
+      },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({
+      message: 'ANTIGRAVITY_CLIENT_ID is not configured',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects antigravity authorization-code exchange without a client secret before fetching', async () => {
+    const startResponse = await app.inject({
+      method: 'POST',
+      url: '/api/oauth/providers/antigravity/start',
+      headers: {
+        host: 'metapi.example',
+        'x-forwarded-proto': 'https',
+      },
+    });
+    expect(startResponse.statusCode).toBe(200);
+    const startBody = startResponse.json() as { state: string };
+    config.antigravityClientSecret = '';
+
+    const callbackResponse = await app.inject({
+      method: 'POST',
+      url: `/api/oauth/sessions/${encodeURIComponent(startBody.state)}/manual-callback`,
+      payload: {
+        callbackUrl: `http://localhost:51121/oauth-callback?state=${encodeURIComponent(startBody.state)}&code=antigravity-test-code`,
+      },
+    });
+
+    expect(callbackResponse.statusCode).toBe(500);
+    expect(callbackResponse.json()).toEqual({
+      message: 'ANTIGRAVITY_CLIENT_SECRET is not configured',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects antigravity refresh without a client secret before fetching', async () => {
+    config.antigravityClientSecret = '';
+    const provider = (await import('../../services/oauth/providers.js')).getOAuthProviderDefinition('antigravity');
+
+    expect(provider).toBeDefined();
+    await expect(provider!.refreshAccessToken({
+      refreshToken: 'antigravity-test-refresh-token',
+    })).rejects.toThrow('ANTIGRAVITY_CLIENT_SECRET is not configured');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('discovers the Antigravity project via onboardUser polling when loadCodeAssist does not return one', async () => {
@@ -392,6 +475,12 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     });
     expect(callbackResponse.statusCode).toBe(200);
     expect(callbackResponse.json()).toEqual({ success: true });
+    expect(String(fetchMock.mock.calls[0]?.[1]?.body || '')).toContain(
+      'client_id=antigravity-test-client-id',
+    );
+    expect(String(fetchMock.mock.calls[0]?.[1]?.body || '')).toContain(
+      'client_secret=antigravity-test-client-secret',
+    );
 
     const sessionResponse = await app.inject({
       method: 'GET',
@@ -4228,5 +4317,33 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(callbackResponse.json()).toMatchObject({
       message: expect.stringContaining('invalid oauth callback url'),
     });
+  });
+
+  it('surfaces Gemini CLI missing-config errors when credentials are absent', async () => {
+    vi.resetModules();
+    const idConfigModule = await import('../../config.js');
+    idConfigModule.config.geminiCliClientId = '';
+    idConfigModule.config.geminiCliClientSecret = OAUTH_TEST_CONFIG.geminiCliClientSecret;
+    const idProviderModule = await import('../../services/oauth/geminiCliProvider.js');
+
+    await expect(idProviderModule.geminiCliOauthProvider.buildAuthorizationUrl({
+      state: 'gemini-test-state',
+      redirectUri: 'http://localhost:8085/oauth2callback',
+      codeVerifier: 'gemini-test-verifier',
+    })).rejects.toThrow('GEMINI_CLI_CLIENT_ID is not configured');
+
+    vi.resetModules();
+    const secretConfigModule = await import('../../config.js');
+    secretConfigModule.config.geminiCliClientId = OAUTH_TEST_CONFIG.geminiCliClientId;
+    secretConfigModule.config.geminiCliClientSecret = '';
+    const secretProviderModule = await import('../../services/oauth/geminiCliProvider.js');
+
+    await expect(secretProviderModule.geminiCliOauthProvider.exchangeAuthorizationCode({
+      code: 'gemini-test-code',
+      state: 'gemini-test-state',
+      redirectUri: 'http://localhost:8085/oauth2callback',
+      codeVerifier: 'gemini-test-verifier',
+    })).rejects.toThrow('GEMINI_CLI_CLIENT_SECRET is not configured');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

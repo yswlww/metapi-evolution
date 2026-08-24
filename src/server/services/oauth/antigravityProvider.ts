@@ -1,4 +1,5 @@
 import { fetch } from 'undici';
+import { config } from '../../config.js';
 import { withExplicitProxyRequestInit } from '../siteProxy.js';
 import type { OAuthProviderDefinition } from './providers.js';
 
@@ -6,8 +7,6 @@ export const ANTIGRAVITY_OAUTH_PROVIDER = 'antigravity';
 export const ANTIGRAVITY_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 export const ANTIGRAVITY_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 export const ANTIGRAVITY_USERINFO_URL = 'https://www.googleapis.com/oauth2/v1/userinfo?alt=json';
-export const ANTIGRAVITY_CLIENT_ID = '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com';
-export const ANTIGRAVITY_CLIENT_SECRET = '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';
 export const ANTIGRAVITY_LOOPBACK_CALLBACK_PORT = 51121;
 export const ANTIGRAVITY_LOOPBACK_CALLBACK_PATH = '/oauth-callback';
 export const ANTIGRAVITY_LOOPBACK_REDIRECT_URI = `http://localhost:${ANTIGRAVITY_LOOPBACK_CALLBACK_PORT}${ANTIGRAVITY_LOOPBACK_CALLBACK_PATH}`;
@@ -29,6 +28,17 @@ const ANTIGRAVITY_SCOPES = [
   'https://www.googleapis.com/auth/cclog',
   'https://www.googleapis.com/auth/experimentsandconfigs',
 ];
+
+function requireAntigravityOAuthConfig(): {
+  clientId: string;
+  clientSecret: string;
+} {
+  const clientId = config.antigravityClientId;
+  const clientSecret = config.antigravityClientSecret;
+  if (!clientId) throw new Error('ANTIGRAVITY_CLIENT_ID is not configured');
+  if (!clientSecret) throw new Error('ANTIGRAVITY_CLIENT_SECRET is not configured');
+  return { clientId, clientSecret };
+}
 
 type AntigravityOAuthTokenPayload = {
   access_token?: unknown;
@@ -251,8 +261,9 @@ export const antigravityOauthProvider: OAuthProviderDefinition = {
     redirectUri: ANTIGRAVITY_LOOPBACK_REDIRECT_URI,
   },
   buildAuthorizationUrl: async ({ state, redirectUri }) => {
+    const oauthConfig = requireAntigravityOAuthConfig();
     const params = new URLSearchParams({
-      client_id: ANTIGRAVITY_CLIENT_ID,
+      client_id: oauthConfig.clientId,
       redirect_uri: redirectUri,
       response_type: 'code',
       access_type: 'offline',
@@ -263,10 +274,11 @@ export const antigravityOauthProvider: OAuthProviderDefinition = {
     return `${ANTIGRAVITY_AUTH_URL}?${params.toString()}`;
   },
   exchangeAuthorizationCode: async ({ code, redirectUri, proxyUrl }) => {
+    const oauthConfig = requireAntigravityOAuthConfig();
     const token = await postAntigravityToken(new URLSearchParams({
       code,
-      client_id: ANTIGRAVITY_CLIENT_ID,
-      client_secret: ANTIGRAVITY_CLIENT_SECRET,
+      client_id: oauthConfig.clientId,
+      client_secret: oauthConfig.clientSecret,
       redirect_uri: redirectUri,
       grant_type: 'authorization_code',
     }), proxyUrl);
@@ -281,9 +293,10 @@ export const antigravityOauthProvider: OAuthProviderDefinition = {
     };
   },
   refreshAccessToken: async ({ refreshToken, oauth, proxyUrl }) => {
+    const oauthConfig = requireAntigravityOAuthConfig();
     const token = await postAntigravityToken(new URLSearchParams({
-      client_id: ANTIGRAVITY_CLIENT_ID,
-      client_secret: ANTIGRAVITY_CLIENT_SECRET,
+      client_id: oauthConfig.clientId,
+      client_secret: oauthConfig.clientSecret,
       grant_type: 'refresh_token',
       refresh_token: refreshToken,
     }), proxyUrl);
