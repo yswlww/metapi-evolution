@@ -352,13 +352,13 @@ export function renderSiteAnnouncementHtml(content: string): string {
   const raw = String(content || '').trim();
   if (!raw) return '<p>-</p>';
 
-  if (isLikelyHtml(raw)) {
-    return sanitizeAnnouncementHtml(raw);
-  }
-
   if (isLikelyMarkdown(raw)) {
     const rendered = String(marked.parse(raw, { gfm: true, breaks: true }));
     return sanitizeAnnouncementHtml(rendered || renderMarkdown(raw));
+  }
+
+  if (isLikelyHtml(raw)) {
+    return sanitizeAnnouncementHtml(raw);
   }
 
   return renderPlainText(raw);

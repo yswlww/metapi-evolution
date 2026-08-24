@@ -55,6 +55,29 @@ describe('siteAnnouncementPresentation helpers', () => {
     expect(markup).toContain('rel="noopener noreferrer"');
   });
 
+  itWithDomSupport('rejects hostile DOM sanitizer payloads while preserving safe links', () => {
+    const payload = [
+      '<script>alert(1)</script>',
+      '<style>body{display:none}</style>',
+      '<img src="https://example.com/a.png" onerror="alert(1)">',
+      '<a href="javascript:alert(1)" onclick="alert(1)">bad</a>',
+      '<a href="https://example.com/safe">safe</a>',
+      '<iframe src="https://attacker.test"></iframe>',
+    ].join('');
+
+    const markup = renderToStaticMarkup(
+      <SiteAnnouncementContent content={payload} />,
+    );
+
+    expect(markup).not.toContain('<script');
+    expect(markup).not.toContain('<style');
+    expect(markup).not.toContain('<iframe');
+    expect(markup).not.toContain('onerror=');
+    expect(markup).not.toContain('onclick=');
+    expect(markup).not.toContain('href="javascript:alert(1)"');
+    expect(markup).toContain('href="https://example.com/safe"');
+  });
+
   itWithDomSupport('renders markdown notices as structured content', () => {
     const markup = renderToStaticMarkup(
       <SiteAnnouncementContent
@@ -76,6 +99,52 @@ describe('siteAnnouncementPresentation helpers', () => {
     expect(markup).toContain('href="https://example.com/setup"');
     expect(markup).toContain('<pre><code class="language-json">');
     expect(markup).toContain('&quot;model&quot;: &quot;gpt-5.4&quot;');
+  });
+
+  itWithDomSupport('sanitizes markdown links and raw html while escaping fenced tags', () => {
+    const markdownMarkup = renderSiteAnnouncementHtml('[bad](javascript:alert(1))');
+    const rawHtmlMarkup = renderSiteAnnouncementHtml('<script>alert(1)</script>');
+    const fencedMarkup = renderSiteAnnouncementHtml([
+      '```html',
+      '<script>literal code</script>',
+      '```',
+    ].join('\n'));
+
+    const markdownContainer = document.createElement('div');
+    markdownContainer.innerHTML = markdownMarkup;
+    expect(markdownContainer.querySelector('a[href^="javascript:"]')).toBeNull();
+    expect(markdownMarkup).not.toContain('href="javascript:alert(1)"');
+
+    expect(rawHtmlMarkup).not.toContain('<script');
+
+    const fencedContainer = document.createElement('div');
+    fencedContainer.innerHTML = fencedMarkup;
+    const fencedCode = fencedContainer.querySelector('pre > code');
+    expect(fencedContainer.querySelector('script')).toBeNull();
+    expect(fencedCode?.textContent ?? '').toContain(
+      '<script>literal code</script>',
+    );
+    expect(fencedMarkup).toContain('<pre><code class="language-html">');
+    expect(fencedMarkup).toContain('&lt;script&gt;literal code&lt;/script&gt;');
+  });
+
+  itWithDomSupport('keeps hostile announcement markup out of the html sink', () => {
+    const payload = [
+      '<script>alert(1)</script>',
+      '<style>body{display:none}</style>',
+      '<img src="https://example.com/a.png" onerror="alert(1)">',
+      '<a href="javascript:alert(1)" onclick="alert(1)">bad</a>',
+      '<a href="https://example.com/safe">safe</a>',
+      '<iframe src="https://attacker.test"></iframe>',
+    ].join('');
+    const container = document.createElement('div');
+
+    container.innerHTML = renderSiteAnnouncementHtml(payload);
+
+    expect(container.querySelector('script, style, iframe, object, embed')).toBeNull();
+    expect(container.querySelector('[onclick], [onerror]')).toBeNull();
+    expect(container.querySelector('a[href^="javascript:"]')).toBeNull();
+    expect(container.querySelector('a[href="https://example.com/safe"]')).not.toBeNull();
   });
 
   it('formats first-seen time in the requested local timezone', () => {
