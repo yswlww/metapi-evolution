@@ -1,5 +1,6 @@
 import { isIP } from 'node:net';
 import { FastifyRequest, FastifyReply } from 'fastify';
+import { createRateLimitGuard } from './requestRateLimit.js';
 import { config } from '../config.js';
 import { authorizeDownstreamToken, consumeManagedKeyRequest } from '../services/downstreamApiKeyService.js';
 import { EMPTY_DOWNSTREAM_ROUTING_POLICY, type DownstreamRoutingPolicy } from '../services/downstreamPolicyTypes.js';
@@ -157,10 +158,6 @@ export async function proxyAuthMiddleware(request: FastifyRequest, reply: Fastif
     return;
   }
 
-  if (authResult.source === 'managed' && authResult.key) {
-    await consumeManagedKeyRequest(authResult.key.id);
-  }
-
   proxyAuthContextByRequest.set(request, {
     token: authResult.token,
     source: authResult.source,
@@ -179,6 +176,32 @@ export function getProxyRateLimitIdentity(request: FastifyRequest): string | nul
   if (!auth) return null;
   if (auth.source === 'managed' && auth.keyId !== null) return `managed:${auth.keyId}`;
   return 'global';
+}
+
+export type ProxyAuthRateLimitOptions = {
+  bucket: string;
+  max: number;
+  windowMs: number;
+};
+
+export function createProxyAuthRateLimitHook(options: ProxyAuthRateLimitOptions) {
+  const limitAuthenticatedProxy = createRateLimitGuard({
+    ...options,
+    keyGenerator: (request) => getProxyRateLimitIdentity(request) || 'missing',
+  });
+
+  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    await proxyAuthMiddleware(request, reply);
+    if (reply.sent) return;
+
+    await limitAuthenticatedProxy(request, reply);
+    if (reply.sent) return;
+
+    const auth = getProxyAuthContext(request);
+    if (auth?.source === 'managed' && auth.keyId !== null) {
+      await consumeManagedKeyRequest(auth.keyId);
+    }
+  };
 }
 
 export function getProxyResourceOwner(request: FastifyRequest): ProxyResourceOwner | null {

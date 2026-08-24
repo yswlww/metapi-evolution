@@ -34,7 +34,11 @@ describe('request rate-limit guard', () => {
 
       expect(first.statusCode).toBe(200);
       expect(second.statusCode).toBe(429);
-      expect(second.headers['retry-after']).toBeDefined();
+      expect(second.headers['retry-after']).toMatch(/^\d+$/);
+      expect(second.json()).toEqual({
+        success: false,
+        message: '请求过于频繁，请稍后再试',
+      });
     } finally {
       await app.close();
     }

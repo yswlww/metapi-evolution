@@ -1,5 +1,5 @@
 import fastifyRateLimit from '@fastify/rate-limit';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 export type GlobalRateLimitOptions = {
   max: number;
@@ -21,4 +21,12 @@ export async function registerGlobalRateLimit(
       retryAfter: context.after,
     }),
   });
+}
+
+export function createGlobalRateLimitHook(app: FastifyInstance) {
+  const enforceGlobalRateLimit = app.rateLimit();
+  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    if (request.routeOptions.config?.rateLimit !== undefined) return;
+    await enforceGlobalRateLimit.call(app, request, reply);
+  };
 }

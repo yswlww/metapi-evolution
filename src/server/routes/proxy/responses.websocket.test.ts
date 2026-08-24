@@ -465,6 +465,18 @@ describe('responses websocket transport', () => {
   });
 
   it('accepts response.create over GET /v1/responses websocket and forwards streamed responses events', async () => {
+    authorizeDownstreamTokenMock.mockResolvedValueOnce({
+      ok: true,
+      source: 'managed',
+      token: 'sk-managed-websocket',
+      key: { id: 77, name: 'websocket-key' },
+      policy: {
+        supportedModels: [],
+        allowedRouteIds: [],
+        siteWeightMultipliers: {},
+      },
+    });
+    consumeManagedKeyRequestMock.mockResolvedValue(undefined);
     const selectedChannel = createSelectedChannel({
       siteUrl: upstreamSiteUrl,
     });
@@ -548,6 +560,8 @@ describe('responses websocket transport', () => {
     expect(messages[3]?.response?.output?.[0]?.content?.[0]?.text).toBe('pong');
     expect(fetchMock).toHaveBeenCalledTimes(0);
     expect(upstreamConnectionCount).toBe(1);
+    expect(consumeManagedKeyRequestMock).toHaveBeenCalledTimes(1);
+    expect(consumeManagedKeyRequestMock).toHaveBeenCalledWith(77);
   });
 
   it('uses the configured site api endpoint pool for codex websocket transport', async () => {

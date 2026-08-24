@@ -236,7 +236,9 @@ Metapi 当前有三类主要配置入口：
 
 `GET /api/desktop/health` 是健康探测例外，不要求认证，也不参与全局限流。其他更靠近敏感操作的路由仍保留更严格的路由级 guard；例如修改管理员 Token 的路由仍限制为每个来源地址每 60 秒最多 3 次。这些更严格的限制与全局、认证边界叠加，不会因新增全局限流而取消。
 
-根插件会在注册 API 和 proxy 路由之前安装全局限流。因此，未来新增 provider 或在根插件之后注册的新路由会自动受到全局保护，无需为每个 provider 或路由另行配置 limiter；认证代理路由仍沿用其既有的认证身份级保护。
+全局边界超限时返回 HTTP `429`，JSON 固定为 `{"statusCode":429,"error":"Too many requests","retryAfter":"..."}`，并设置秒数形式的 `Retry-After` 响应头。既有路由级 guard 保持项目兼容的 `{"success":false,"message":"请求过于频繁，请稍后再试"}` JSON 形状，同时设置 `Retry-After`；两种形状都表示同一类 429 限流结果。
+
+根插件会在注册 API 和 proxy 路由之前安装全局限流；根级 enforcement hook 在 CORS 之后、退休路由 guard 和认证之前执行。因此未来新增 provider 或在根插件之后注册的新路由会自动受到全局保护，无需为每个 provider 或路由另行配置 limiter；认证代理路由仍沿用其既有的认证身份级保护。
 
 ---
 

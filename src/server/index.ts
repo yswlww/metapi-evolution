@@ -7,7 +7,7 @@ import {
 } from './config.js';
 import { authMiddleware } from './middleware/auth.js';
 import { createRateLimitGuard } from './middleware/requestRateLimit.js';
-import { registerGlobalRateLimit } from './middleware/globalRateLimit.js';
+import { createGlobalRateLimitHook, registerGlobalRateLimit } from './middleware/globalRateLimit.js';
 import { registerRetiredMonitorRouteGuard } from './retiredMonitorRouteGuard.js';
 import { sitesRoutes } from './routes/api/sites.js';
 import { accountsRoutes } from './routes/api/accounts.js';
@@ -217,6 +217,7 @@ const limitAuthenticatedAdmin = createRateLimitGuard({
 });
 
 await app.register(cors);
+app.addHook('onRequest', createGlobalRateLimitHook(app));
 
 // Deny retired monitor endpoints before auth and SPA fallback can handle them.
 registerRetiredMonitorRouteGuard(app);

@@ -23,6 +23,40 @@ describe('buildConfig', () => {
     expect(config.authenticatedRateLimitMax).toBe(300);
   });
 
+  it('truncates fractional limits and clamps zero or negative values', () => {
+    const config = buildConfig({
+      REQUEST_RATE_LIMIT_MAX: '4.9',
+      REQUEST_RATE_LIMIT_WINDOW_MS: '999.9',
+      AUTHENTICATED_RATE_LIMIT_MAX: '-2.5',
+    });
+
+    expect(config.requestRateLimitMax).toBe(4);
+    expect(config.requestRateLimitWindowMs).toBe(1_000);
+    expect(config.authenticatedRateLimitMax).toBe(1);
+
+    const zeroConfig = buildConfig({
+      REQUEST_RATE_LIMIT_MAX: '0',
+      REQUEST_RATE_LIMIT_WINDOW_MS: '0',
+      AUTHENTICATED_RATE_LIMIT_MAX: '0',
+    });
+
+    expect(zeroConfig.requestRateLimitMax).toBe(1);
+    expect(zeroConfig.requestRateLimitWindowMs).toBe(1_000);
+    expect(zeroConfig.authenticatedRateLimitMax).toBe(1);
+  });
+
+  it('falls back safely for non-finite and invalid rate-limit values', () => {
+    const config = buildConfig({
+      REQUEST_RATE_LIMIT_MAX: 'NaN',
+      REQUEST_RATE_LIMIT_WINDOW_MS: 'Infinity',
+      AUTHENTICATED_RATE_LIMIT_MAX: 'not-a-number',
+    });
+
+    expect(config.requestRateLimitMax).toBe(12_000);
+    expect(config.requestRateLimitWindowMs).toBe(60_000);
+    expect(config.authenticatedRateLimitMax).toBe(1_200);
+  });
+
   it('defaults to external listen host for server deployments', () => {
     const config = buildConfig({});
 
