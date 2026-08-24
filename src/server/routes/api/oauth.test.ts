@@ -4329,6 +4329,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     try {
       idConfigModule.config.geminiCliClientId = '';
       idConfigModule.config.geminiCliClientSecret = OAUTH_TEST_CONFIG.geminiCliClientSecret;
+      fetchMock.mockReset();
       const idProviderModule = await import('../../services/oauth/geminiCliProvider.js');
 
       await expect(idProviderModule.geminiCliOauthProvider.buildAuthorizationUrl({
@@ -4336,6 +4337,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
         redirectUri: 'http://localhost:8085/oauth2callback',
         codeVerifier: 'gemini-test-verifier',
       })).rejects.toThrow('GEMINI_CLI_CLIENT_ID is not configured');
+      expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       idConfigModule.config.geminiCliClientId = originalIdConfig.geminiCliClientId;
       idConfigModule.config.geminiCliClientSecret = originalIdConfig.geminiCliClientSecret;
@@ -4343,6 +4345,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     }
 
     vi.resetModules();
+    fetchMock.mockReset();
     const secretConfigModule = await import('../../config.js');
     const originalSecretConfig = {
       geminiCliClientId: secretConfigModule.config.geminiCliClientId,

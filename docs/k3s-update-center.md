@@ -297,6 +297,12 @@ stringData:
   CHECKIN_CRON: "0 8 * * *"
   BALANCE_REFRESH_CRON: "0 * * * *"
   DEPLOY_HELPER_TOKEN: <helper-token>
+  # Required only when using Gemini CLI OAuth; otherwise leave blank.
+  GEMINI_CLI_CLIENT_ID: ""
+  GEMINI_CLI_CLIENT_SECRET: ""
+  # Required only when using Antigravity OAuth; otherwise leave blank.
+  ANTIGRAVITY_CLIENT_ID: ""
+  ANTIGRAVITY_CLIENT_SECRET: ""
 ```
 
 创建并核对这个 Secret 后，再显式启用外部 Secret 模式：

@@ -86,6 +86,24 @@ describe('buildConfig', () => {
     expect(config.antigravityClientSecret).toBe('antigravity-test-client-secret');
   });
 
+  it('preserves the default Codex OAuth client ID', () => {
+    const config = buildConfig({});
+
+    expect(config.codexClientId).toBe('app_EMoamEEZ73f0CkXaXp7hrann');
+  });
+
+  it('preserves the default Claude OAuth client ID', () => {
+    const config = buildConfig({});
+
+    expect(config.claudeClientId).toBe('9d1c250a-e61b-44d9-88ed-5944d1962f5e');
+  });
+
+  it('preserves the default Codex websocket beta value', () => {
+    const config = buildConfig({});
+
+    expect(config.codexResponsesWebsocketBeta).toBe('responses_websockets=2026-02-06');
+  });
+
   it('allows overriding the codex websocket beta gate from environment', () => {
     const config = buildConfig({
       CODEX_RESPONSES_WEBSOCKET_BETA: 'responses_websockets=2099-01-01',

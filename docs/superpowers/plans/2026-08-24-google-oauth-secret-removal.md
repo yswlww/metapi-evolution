@@ -29,6 +29,11 @@
 - Modify `src/server/services/oauth/antigravityProvider.ts`: consume config and add lazy validation.
 - Modify `src/server/routes/api/oauth.test.ts`: set synthetic config values and test missing-config/URL/token flows.
 - Modify `.env.example`: blank required-when-used variables for both providers.
+- Modify `docker/docker-compose.yml`, `docker/.env.example`, `README.md`, `README_EN.md`, and `docs/getting-started.md`: propagate blank runtime variables through Compose examples.
+- Modify `render.yaml` and `zeabur-template.yaml`: propagate runtime variables through hosted deployment templates without defaults.
+- Modify `deploy/k3s/chart/values.yaml` and `deploy/k3s/chart/templates/secret.yaml`: propagate blank values through the managed Helm Secret while preserving `existingSecret` behavior.
+- Modify `scripts/dev/docker.workflow.test.ts` and `src/server/update-helper/k3sAssets.test.ts`: verify deployment propagation and blank defaults.
+- Modify `docs/k3s-update-center.md`: document the four environment keys for external Secrets.
 - Modify `docs/configuration.md`: document empty defaults and required-when-used semantics.
 - Modify `docs/oauth.md`: preparation note for runtime OAuth client configuration.
 
@@ -101,11 +106,16 @@ antigravityClientSecret: parseOptionalSecret(env.ANTIGRAVITY_CLIENT_SECRET),
 
 ```bash
 npx vitest run --root . src/server/config.test.ts
-rg -n "GOCSPX-|\.apps\.googleusercontent\.com" src/server/config.ts src/server/config.test.ts
+set +e
+git grep -l -E 'GOCSPX-|\.apps\.googleusercontent\.com' -- src/server/config.ts src/server/config.test.ts >/tmp/metapi-google-oauth-scan
+scan_status=$?
+set -e
+if [ "$scan_status" -eq 0 ]; then printf 'unexpected detector match\n'; exit 1; fi
+test "$scan_status" -eq 1
 npm run typecheck:server
 ```
 
-Expected: tests/typecheck pass; `rg` has no output.
+Expected: tests/typecheck pass; the no-match `git grep` scan exits `1` and prints no values.
 
 - [ ] **Step 5: Commit**
 
@@ -181,10 +191,15 @@ Call it in `buildAuthorizationUrl`, `exchangeAuthorizationCode`, and `refreshAcc
 ```bash
 npx vitest run --root . src/server/routes/api/oauth.test.ts
 npm run typecheck:server
-rg -n "GOCSPX-|\.apps\.googleusercontent\.com" src/server/services/oauth/antigravityProvider.ts src/server/routes/api/oauth.test.ts
+set +e
+git grep -l -E 'GOCSPX-|\.apps\.googleusercontent\.com' -- src/server/services/oauth/antigravityProvider.ts src/server/routes/api/oauth.test.ts >/tmp/metapi-google-oauth-scan
+scan_status=$?
+set -e
+if [ "$scan_status" -eq 0 ]; then printf 'unexpected detector match\n'; exit 1; fi
+test "$scan_status" -eq 1
 ```
 
-Expected: tests/typecheck pass; no literal matches.
+Expected: tests/typecheck pass; the no-match `git grep` scan exits `1` and prints no values.
 
 - [ ] **Step 5: Commit**
 
@@ -219,23 +234,36 @@ ANTIGRAVITY_CLIENT_SECRET=
 
 Document all four defaults as empty and required only when that provider is used. Remove claims that Gemini CLI has built-in defaults or Antigravity needs no configuration. State that deployment secret managers or untracked environment files must be used.
 
-- [ ] **Step 3: Run complete current-tree secret scan and verification**
+- [ ] **Step 3: Run complete tracked-tree secret scan and verification**
+
+The scan must cover every tracked source, template, script, test, root file, and document. Exclude only this plan, which contains detector patterns as verification prose; do not print matched values.
 
 ```bash
-rg -n "GOCSPX-|[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com" src .env.example docs --glob '!docs/superpowers/**'
-npx vitest run --root . src/server/config.test.ts src/server/routes/api/oauth.test.ts
+set +e
+git grep -l -E 'GOCSPX-|[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com' -- . ':(exclude)docs/superpowers/plans/2026-08-24-google-oauth-secret-removal.md' >/tmp/metapi-google-oauth-scan
+scan_status=$?
+set -e
+if [ "$scan_status" -eq 0 ]; then printf 'unexpected detector match in tracked source\n'; exit 1; fi
+test "$scan_status" -eq 1
+npx vitest run --root . src/server/config.test.ts src/server/routes/api/oauth.test.ts scripts/dev/docker.workflow.test.ts src/server/update-helper/k3sAssets.test.ts
 npm run typecheck
 npm run repo:drift-check
 git diff --check
+npm test
 ```
 
-Expected: no literal scan matches; all verification commands exit `0`.
+Expected: the no-match `git grep` command returns its native exit `1`, the wrapper accepts that status without printing values, and all subsequent verification commands exit `0`.
 
-- [ ] **Step 4: Commit docs**
+- [ ] **Step 4: Commit the final-review fix wave**
 
 ```bash
-git add .env.example docs/configuration.md docs/oauth.md
-git commit -m "docs: require runtime Google OAuth credentials" -m "Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
+git add .env.example docker/docker-compose.yml docker/.env.example README.md README_EN.md \
+  docs/getting-started.md docs/configuration.md docs/oauth.md docs/k3s-update-center.md \
+  render.yaml zeabur-template.yaml deploy/k3s/chart/values.yaml \
+  deploy/k3s/chart/templates/secret.yaml scripts/dev/docker.workflow.test.ts \
+  src/server/update-helper/k3sAssets.test.ts src/server/config.test.ts \
+  src/server/routes/api/oauth.test.ts docs/superpowers/plans/2026-08-24-google-oauth-secret-removal.md
+git commit -m "security: propagate Google OAuth configuration through deployments" -m "Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
 - [ ] **Step 5: Record unresolved history state**
