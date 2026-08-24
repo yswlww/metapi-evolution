@@ -1,7 +1,7 @@
 import { StandardApiProviderAdapterBase } from './standardApiProvider.js';
 
 export class OpenAiAdapter extends StandardApiProviderAdapterBase {
-  readonly platformName = 'openai';
+  readonly platformName: string = 'openai';
 
   async detect(url: string): Promise<boolean> {
     const normalized = (url || '').toLowerCase();

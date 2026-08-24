@@ -225,6 +225,7 @@ function SiteBalanceDisplay(props: {
 
 const platformColors: Record<string, string> = {
   'new-api': 'badge-info',
+  axonhub: 'badge-primary',
   'one-api': 'badge-success',
   anyrouter: 'badge-warning',
   veloera: 'badge-warning',
@@ -241,6 +242,7 @@ const platformColors: Record<string, string> = {
 const SITE_PLATFORM_OPTIONS = [
   { value: '', label: '平台类型（可自动检测）' },
   { value: 'new-api', label: 'new-api', description: '聚合面板，适合多渠道统一管理' },
+  { value: 'axonhub', label: 'AxonHub', description: 'OpenAI 兼容网关，优先使用 Responses API 并支持协议回退' },
   { value: 'one-api', label: 'one-api', description: '经典聚合面板，常见于通用 OpenAI 中转' },
   { value: 'anyrouter', label: 'anyrouter', description: 'any大善人今天还能用吗' },
   { value: 'veloera', label: 'veloera', description: 'Veloera 兼容站点，常见于聚合代理场景' },

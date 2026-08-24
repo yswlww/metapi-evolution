@@ -88,6 +88,7 @@ The AI ecosystem is seeing a growing number of aggregation relay stations based 
 - [DoneHub](https://github.com/deanxv/done-hub)
 - [Veloera](https://github.com/Veloera/Veloera)
 - [AnyRouter](https://anyrouter.top) — Universal routing platform
+- [AxonHub](https://github.com/looplj/axonhub) — OpenAI-compatible gateway with Responses-first routing
 - [Sub2API](https://github.com/Wei-Shaw/sub2api) — Subscription-based relay
 
 | Pain Point | How Metapi Solves It |
@@ -179,7 +180,7 @@ The AI ecosystem is seeing a growing number of aggregation relay stations based 
 &emsp;• Format Conversion — transparent bidirectional OpenAI ⇄ Claude conversion
 &emsp;• Auto Check-in · Balance Management · Alerts & Notifications · Data Dashboard
 &emsp;↓
-**Upstream Platforms** (New API · One API · OneHub · DoneHub · Veloera · AnyRouter · Sub2API …)
+**Upstream Platforms** (New API · One API · OneHub · DoneHub · Veloera · AnyRouter · AxonHub · Sub2API …)
 
 ---
 
@@ -215,6 +216,7 @@ The AI ecosystem is seeing a growing number of aggregation relay stations based 
 | **DoneHub** | `done-hub` | Enhanced OneHub fork |
 | **Veloera** | `veloera` | API gateway platform |
 | **AnyRouter** | `anyrouter` | Universal routing platform |
+| **AxonHub** | `axonhub` | OpenAI-compatible gateway with Responses-first routing |
 | **Sub2API** | `sub2api` | Subscription-based relay |
 
 Adapters cover shared capabilities such as model discovery, balance access, token management, and proxy integration; login, check-in, and user-info flows vary by platform.

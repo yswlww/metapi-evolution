@@ -43,6 +43,32 @@ describe('getAdapter platform aliases', () => {
     expect(adapter?.platformName).toBe('anyrouter');
   });
 
+  it('discovers AxonHub models through its OpenAI-compatible endpoint', async () => {
+    await withHttpServer((req, res) => {
+      if (req.url === '/v1/models' && req.headers.authorization === 'Bearer axon-key') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          object: 'list',
+          data: [
+            { id: 'gpt-5.5', object: 'model' },
+            { id: 'claude-opus-4-6', object: 'model' },
+          ],
+        }));
+        return;
+      }
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { type: 'Unauthorized', message: 'Invalid API key' } }));
+    }, async (baseUrl) => {
+      const adapter = getAdapter('axonhub');
+
+      expect(adapter?.platformName).toBe('axonhub');
+      await expect(adapter?.getModels(baseUrl, 'axon-key')).resolves.toEqual([
+        'gpt-5.5',
+        'claude-opus-4-6',
+      ]);
+    });
+  });
+
   it('handles case-insensitive platform strings', () => {
     const adapter = getAdapter('Veloera');
     expect(adapter?.platformName).toBe('veloera');
@@ -88,6 +114,15 @@ describe('getAdapter platform aliases', () => {
     expect(gemini?.platformName).toBe('gemini');
   });
 
+  it('preserves generic OpenAI detection for unrelated URL paths containing api.openai.com', async () => {
+    await withHttpServer((_req, res) => {
+      res.writeHead(404).end();
+    }, async (baseUrl) => {
+      const adapter = await detectPlatform(`${baseUrl}/api.openai.com/v1`);
+      expect(adapter?.platformName).toBe('openai');
+    });
+  });
+
   it('detects one-hub by title under custom domain before generic new-api', async () => {
     await withHttpServer((req, res) => {
       if (req.url === '/') {
@@ -121,6 +156,20 @@ describe('getAdapter platform aliases', () => {
     }, async (baseUrl) => {
       const adapter = await detectPlatform(baseUrl);
       expect(adapter?.platformName).toBe('done-hub');
+    });
+  });
+
+  it('detects AxonHub by title under a custom domain', async () => {
+    await withHttpServer((req, res) => {
+      if (req.url === '/') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<html><head><title>AxonHub Console</title></head><body></body></html>');
+        return;
+      }
+      res.writeHead(404).end();
+    }, async (baseUrl) => {
+      const adapter = await detectPlatform(baseUrl);
+      expect(adapter?.platformName).toBe('axonhub');
     });
   });
 
