@@ -33,6 +33,15 @@ describe('siteAnnouncementPresentation helpers', () => {
     expect(renderSiteAnnouncementHtml('<script>alert(1)</script >')).toContain('&lt;script&gt;');
   });
 
+  itWithoutDomSupport('renders original markdown as escaped plain text when DOM parsing is unavailable', () => {
+    const markdown = '# Heading\n\n[docs](https://example.com/docs)';
+    const html = renderSiteAnnouncementHtml(markdown);
+
+    expect(html).not.toContain('&lt;h1&gt;');
+    expect(html).toContain('# Heading');
+    expect(html).toContain('[docs](https://example.com/docs)');
+  });
+
   itWithDomSupport('renders sanitized html notices with safe links', () => {
     const markup = renderToStaticMarkup(
       <SiteAnnouncementContent
@@ -75,6 +84,7 @@ describe('siteAnnouncementPresentation helpers', () => {
     expect(markup).not.toContain('onerror=');
     expect(markup).not.toContain('onclick=');
     expect(markup).not.toContain('href="javascript:alert(1)"');
+    expect(markup).toContain('src="https://example.com/a.png"');
     expect(markup).toContain('href="https://example.com/safe"');
   });
 
@@ -101,31 +111,29 @@ describe('siteAnnouncementPresentation helpers', () => {
     expect(markup).toContain('&quot;model&quot;: &quot;gpt-5.4&quot;');
   });
 
-  itWithDomSupport('sanitizes markdown links and raw html while escaping fenced tags', () => {
-    const markdownMarkup = renderSiteAnnouncementHtml('[bad](javascript:alert(1))');
-    const rawHtmlMarkup = renderSiteAnnouncementHtml('<script>alert(1)</script>');
-    const fencedMarkup = renderSiteAnnouncementHtml([
+  itWithDomSupport('sanitizes mixed markdown and raw html in one document', () => {
+    const content = [
+      '[bad](javascript:alert(1))',
+      '',
+      '<script>alert(1)</script>',
+      '',
       '```html',
       '<script>literal code</script>',
       '```',
-    ].join('\n'));
+    ].join('\n');
+    const container = document.createElement('div');
 
-    const markdownContainer = document.createElement('div');
-    markdownContainer.innerHTML = markdownMarkup;
-    expect(markdownContainer.querySelector('a[href^="javascript:"]')).toBeNull();
-    expect(markdownMarkup).not.toContain('href="javascript:alert(1)"');
+    const markup = renderSiteAnnouncementHtml(content);
+    container.innerHTML = markup;
 
-    expect(rawHtmlMarkup).not.toContain('<script');
-
-    const fencedContainer = document.createElement('div');
-    fencedContainer.innerHTML = fencedMarkup;
-    const fencedCode = fencedContainer.querySelector('pre > code');
-    expect(fencedContainer.querySelector('script')).toBeNull();
+    expect(container.querySelector('a[href^="javascript:"]')).toBeNull();
+    expect(container.querySelector('script')).toBeNull();
+    const fencedCode = container.querySelector('pre > code');
     expect(fencedCode?.textContent ?? '').toContain(
       '<script>literal code</script>',
     );
-    expect(fencedMarkup).toContain('<pre><code class="language-html">');
-    expect(fencedMarkup).toContain('&lt;script&gt;literal code&lt;/script&gt;');
+    expect(markup).toContain('<pre><code class="language-html">');
+    expect(markup).toContain('&lt;script&gt;literal code&lt;/script&gt;');
   });
 
   itWithDomSupport('keeps hostile announcement markup out of the html sink', () => {
