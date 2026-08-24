@@ -278,7 +278,7 @@ CPA 这类站点推荐直接使用 **API Key**：
 
 ### AxonHub
 
-**适用场景：** AxonHub 实例及 `hub.linux.do`。Metapi 会将其作为独立的 OpenAI 兼容平台处理。
+**适用场景：** 官方 AxonHub 入口 `hub.linux.do`，以及通过页面标题检测或手动选择接入的自定义部署。Metapi 会将其作为独立的 OpenAI 兼容平台处理。
 
 #### 站点配置
 
@@ -528,7 +528,7 @@ Metapi 支持自动识别站点类型，当前检测优先级如下：
 | `generativelanguage.googleapis.com` | Gemini |
 | `chatgpt.com/backend-api/codex` | Codex |
 | `127.0.0.1:8317` / `localhost:8317` / `cliproxy` | CLIProxyAPI / CPA |
-| `hub.linux.do` / 主机名包含 `axonhub` | AxonHub |
+| `hub.linux.do` | AxonHub（自定义部署可通过页面标题检测或手动选择） |
 | `anyrouter` | AnyRouter |
 | `donehub` / `done-hub` | DoneHub |
 | `onehub` / `one-hub` | OneHub |

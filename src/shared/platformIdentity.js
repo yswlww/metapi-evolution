@@ -91,7 +91,7 @@ export function detectPlatformByUrlHint(url) {
   }
   if (host === 'cloudcode-pa.googleapis.com') return 'gemini-cli';
   if ((host === '127.0.0.1' || host === 'localhost') && port === '8317') return 'cliproxyapi';
-  if (host === 'hub.linux.do' || host.includes('axonhub')) return 'axonhub';
+  if (host === 'hub.linux.do') return 'axonhub';
   if (host.includes('anyrouter')) return 'anyrouter';
   if (host.includes('donehub') || host.includes('done-hub')) return 'done-hub';
   if (host.includes('onehub') || host.includes('one-hub')) return 'one-hub';

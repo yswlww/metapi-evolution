@@ -25,7 +25,6 @@ describe('platformIdentity', () => {
     expect(detectPlatformByUrlHint('https://cloudcode-pa.googleapis.com')).toBe('gemini-cli');
     expect(detectPlatformByUrlHint('http://127.0.0.1:8317/v1/models')).toBe('cliproxyapi');
     expect(detectPlatformByUrlHint('https://hub.linux.do/v1/models')).toBe('axonhub');
-    expect(detectPlatformByUrlHint('https://console.axonhub.example/v1')).toBe('axonhub');
     expect(detectPlatformByUrlHint('https://evil.example.com/?next=https://api.openai.com/v1/models')).toBeUndefined();
   });
 
@@ -38,6 +37,13 @@ describe('platformIdentity', () => {
     ['https://cloudcode-pa.googleapis.com', 'gemini-cli'],
   ] as const)('detects safe provider URL %s', (url, expected) => {
     expect(detectPlatformByUrlHint(url)).toBe(expected);
+  });
+
+  it.each([
+    'https://notaxonhub.example/v1',
+    'https://axonhub.attacker.test/v1',
+  ])('rejects AxonHub look-alike hostname %s', (url) => {
+    expect(detectPlatformByUrlHint(url)).toBeUndefined();
   });
 
   it.each([
