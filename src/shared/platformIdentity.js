@@ -45,19 +45,22 @@ function normalizeUrlCandidate(url) {
   return typeof url === 'string' ? url.trim() : '';
 }
 
-function parseUrlCandidate(url) {
-  const normalized = normalizeUrlCandidate(url);
+function parseHttpUrlCandidate(url) {
+  const normalized = typeof url === 'string' ? url.trim() : '';
   if (!normalized) return null;
-
-  const candidates = normalized.includes('://')
-    ? [normalized]
-    : [`https://${normalized}`];
+  const candidates = normalized.includes('://') ? [normalized] : [`https://${normalized}`];
   for (const candidate of candidates) {
     try {
-      return new URL(candidate);
+      const parsed = new URL(candidate);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') continue;
+      return parsed;
     } catch {}
   }
   return null;
+}
+
+function matchesPathSegment(pathname, prefix) {
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
 }
 
 export function normalizePlatformAlias(platform) {
@@ -69,20 +72,20 @@ export function normalizePlatformAlias(platform) {
 export function detectPlatformByUrlHint(url) {
   const normalized = normalizeUrlCandidate(url).toLowerCase();
   if (!normalized) return undefined;
-  const parsed = parseUrlCandidate(normalized);
+  const parsed = parseHttpUrlCandidate(normalized);
   const host = parsed?.hostname?.trim().toLowerCase() || '';
   const port = parsed?.port?.trim() || '';
   const path = parsed?.pathname?.trim().toLowerCase() || '';
 
   if (host === 'api.openai.com') return 'openai';
-  if (host === 'qianfan.baidubce.com' && path.startsWith('/v2/coding')) return 'openai';
-  if (host === 'qianfan.baidubce.com' && path.startsWith('/anthropic/coding')) return 'claude';
-  if (host === 'chatgpt.com' && path.startsWith('/backend-api/codex')) return 'codex';
-  if (host === 'api.anthropic.com' || (host === 'anthropic.com' && path.startsWith('/v1'))) return 'claude';
+  if (host === 'qianfan.baidubce.com' && matchesPathSegment(path, '/v2/coding')) return 'openai';
+  if (host === 'qianfan.baidubce.com' && matchesPathSegment(path, '/anthropic/coding')) return 'claude';
+  if (host === 'chatgpt.com' && matchesPathSegment(path, '/backend-api/codex')) return 'codex';
+  if (host === 'api.anthropic.com' || (host === 'anthropic.com' && matchesPathSegment(path, '/v1'))) return 'claude';
   if (
     host === 'generativelanguage.googleapis.com'
     || host === 'gemini.google.com'
-    || ((host === 'googleapis.com' || host.endsWith('.googleapis.com')) && path.startsWith('/v1beta/openai'))
+    || ((host === 'googleapis.com' || host.endsWith('.googleapis.com')) && matchesPathSegment(path, '/v1beta/openai'))
   ) {
     return 'gemini';
   }
