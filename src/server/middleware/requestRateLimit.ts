@@ -5,6 +5,7 @@ type RateLimitOptions = {
   max: number;
   windowMs: number;
   message?: string;
+  keyGenerator?: (request: FastifyRequest) => string;
 };
 
 type RateLimitEntry = {
@@ -37,8 +38,11 @@ function extractClientIp(request: FastifyRequest): string {
   return normalizeIp(request.ip);
 }
 
-function getRateLimitKey(bucket: string, request: FastifyRequest): string {
-  return `${bucket}:${extractClientIp(request)}`;
+function getRateLimitKey(options: RateLimitOptions, request: FastifyRequest): string {
+  const identity = options.keyGenerator
+    ? String(options.keyGenerator(request) || 'unknown')
+    : extractClientIp(request);
+  return `${options.bucket}:${identity}`;
 }
 
 function pruneExpiredEntries(nowMs: number): void {
@@ -58,7 +62,7 @@ export function createRateLimitGuard(options: RateLimitOptions) {
     const nowMs = Date.now();
     pruneExpiredEntries(nowMs);
 
-    const key = getRateLimitKey(options.bucket, request);
+    const key = getRateLimitKey(options, request);
     const current = rateLimitStore.get(key);
 
     if (!current || current.resetAt <= nowMs) {
