@@ -6,6 +6,7 @@ import {
   config,
 } from './config.js';
 import { authMiddleware } from './middleware/auth.js';
+import { registerRetiredMonitorRouteGuard } from './retiredMonitorRouteGuard.js';
 import { sitesRoutes } from './routes/api/sites.js';
 import { accountsRoutes } from './routes/api/accounts.js';
 import { checkinRoutes } from './routes/api/checkin.js';
@@ -202,6 +203,9 @@ await ensureOauthProviderSitesExist();
 const app = Fastify(buildFastifyOptions(config));
 
 await app.register(cors);
+
+// Deny retired monitor endpoints before auth and SPA fallback can handle them.
+registerRetiredMonitorRouteGuard(app);
 
 // Auth middleware for /api routes
 app.addHook('onRequest', async (request, reply) => {
