@@ -136,19 +136,23 @@ Metapi 当前有三类主要配置入口：
 
 ### 2. OAuth 与 Provider 登录
 
-这一节只在你需要覆盖默认 OAuth client 配置时才看。
+这一节说明 OAuth client 的环境变量配置。Codex 和 Claude 保留各自的现有默认行为；Gemini CLI 和 Antigravity 不包含内置 Google OAuth client 凭据。
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
 | `CODEX_CLIENT_ID` | 覆盖内置 Codex OAuth Client ID | 内置默认值 |
 | `CLAUDE_CLIENT_ID` | 覆盖内置 Claude OAuth Client ID | 内置默认值 |
 | `CLAUDE_CLIENT_SECRET` | 预留的 Claude OAuth Client Secret（默认留空） | 空 |
-| `GEMINI_CLI_CLIENT_ID` | 覆盖内置 Gemini CLI OAuth Client ID | 内置默认值 |
-| `GEMINI_CLI_CLIENT_SECRET` | 覆盖内置 Gemini CLI OAuth Client Secret | 内置默认值 |
+| `GEMINI_CLI_CLIENT_ID` | Gemini CLI OAuth Client ID | 空（使用 Gemini CLI OAuth 时必填） |
+| `GEMINI_CLI_CLIENT_SECRET` | Gemini CLI OAuth Client Secret | 空（使用 Gemini CLI OAuth 时必填） |
+| `ANTIGRAVITY_CLIENT_ID` | Antigravity OAuth Client ID | 空（使用 Antigravity OAuth 时必填） |
+| `ANTIGRAVITY_CLIENT_SECRET` | Antigravity OAuth Client Secret | 空（使用 Antigravity OAuth 时必填） |
 
 说明：
 
-- `Antigravity` 当前不需要额外环境变量即可启用。
+- 使用 Gemini CLI OAuth 时，必须同时提供 `GEMINI_CLI_CLIENT_ID` 和 `GEMINI_CLI_CLIENT_SECRET`；不使用该 provider 时可以留空。
+- 使用 Antigravity OAuth 时，必须同时提供 `ANTIGRAVITY_CLIENT_ID` 和 `ANTIGRAVITY_CLIENT_SECRET`；不使用该 provider 时可以留空。
+- 这些 Google OAuth 凭据必须通过部署 secret manager，或未跟踪的本地 `.env` / 容器环境变量提供；不要把真实值写入仓库。`.env.example` 中的字段保持为空。
 - 如果你的部署环境访问 provider 受限，优先先在 UI 里配置**系统代理**。
 - 如果 OAuth 页面运行在远程服务器上，还要考虑 SSH 隧道或手动回填 callback，详见 [OAuth 管理](./oauth.md)。
 
