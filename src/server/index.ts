@@ -6,6 +6,7 @@ import {
   config,
 } from './config.js';
 import { authMiddleware } from './middleware/auth.js';
+import { registerGlobalRateLimit } from './middleware/globalRateLimit.js';
 import { registerRetiredMonitorRouteGuard } from './retiredMonitorRouteGuard.js';
 import { sitesRoutes } from './routes/api/sites.js';
 import { accountsRoutes } from './routes/api/accounts.js';
@@ -201,6 +202,11 @@ try {
 await ensureOauthProviderSitesExist();
 
 const app = Fastify(buildFastifyOptions(config));
+
+await registerGlobalRateLimit(app, {
+  max: config.requestRateLimitMax,
+  windowMs: config.requestRateLimitWindowMs,
+});
 
 await app.register(cors);
 
