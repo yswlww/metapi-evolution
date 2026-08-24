@@ -1,5 +1,7 @@
 import { FastifyInstance } from 'fastify';
-import { proxyAuthMiddleware } from '../../middleware/auth.js';
+import { config } from '../../config.js';
+import { proxyAuthMiddleware, getProxyRateLimitIdentity } from '../../middleware/auth.js';
+import { createRateLimitGuard } from '../../middleware/requestRateLimit.js';
 import { chatProxyRoute, claudeMessagesProxyRoute } from './chat.js';
 import { modelsProxyRoute } from './models.js';
 import { embeddingsProxyRoute } from './embeddings.js';
@@ -12,9 +14,17 @@ import { videosProxyRoute } from './videos.js';
 import { filesProxyRoute } from './files.js';
 
 export async function proxyRoutes(app: FastifyInstance) {
+  const limitAuthenticatedProxy = createRateLimitGuard({
+    bucket: 'proxy-authenticated',
+    max: config.authenticatedRateLimitMax,
+    windowMs: config.requestRateLimitWindowMs,
+    keyGenerator: (request) => getProxyRateLimitIdentity(request) || 'missing',
+  });
+
   // Auth middleware for all /v1 routes
   app.addHook('onRequest', async (request, reply) => {
     await proxyAuthMiddleware(request, reply);
+    if (!reply.sent) await limitAuthenticatedProxy(request, reply);
   });
 
   await app.register(chatProxyRoute);

@@ -6,6 +6,7 @@ import {
   config,
 } from './config.js';
 import { authMiddleware } from './middleware/auth.js';
+import { createRateLimitGuard } from './middleware/requestRateLimit.js';
 import { registerGlobalRateLimit } from './middleware/globalRateLimit.js';
 import { registerRetiredMonitorRouteGuard } from './retiredMonitorRouteGuard.js';
 import { sitesRoutes } from './routes/api/sites.js';
@@ -208,6 +209,13 @@ await registerGlobalRateLimit(app, {
   windowMs: config.requestRateLimitWindowMs,
 });
 
+const limitAuthenticatedAdmin = createRateLimitGuard({
+  bucket: 'admin-authenticated',
+  max: config.authenticatedRateLimitMax,
+  windowMs: config.requestRateLimitWindowMs,
+  keyGenerator: () => 'admin',
+});
+
 await app.register(cors);
 
 // Deny retired monitor endpoints before auth and SPA fallback can handle them.
@@ -217,6 +225,7 @@ registerRetiredMonitorRouteGuard(app);
 app.addHook('onRequest', async (request, reply) => {
   if (request.url.startsWith('/api/') && !isPublicApiRoute(request.url)) {
     await authMiddleware(request, reply);
+    if (!reply.sent) await limitAuthenticatedAdmin(request, reply);
   }
 });
 

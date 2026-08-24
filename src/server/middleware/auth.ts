@@ -174,6 +174,13 @@ export function getProxyAuthContext(request: FastifyRequest): ProxyAuthContext |
   return proxyAuthContextByRequest.get(request) || null;
 }
 
+export function getProxyRateLimitIdentity(request: FastifyRequest): string | null {
+  const auth = getProxyAuthContext(request);
+  if (!auth) return null;
+  if (auth.source === 'managed' && auth.keyId !== null) return `managed:${auth.keyId}`;
+  return 'global';
+}
+
 export function getProxyResourceOwner(request: FastifyRequest): ProxyResourceOwner | null {
   const auth = getProxyAuthContext(request);
   if (!auth) return null;
