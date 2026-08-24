@@ -84,6 +84,17 @@ describe('getAdapter platform aliases', () => {
     expect(getAdapter('gemini')?.platformName).toBe('gemini');
   });
 
+  it.each([
+    ['openai', 'https://api.openai.com.attacker.test/'],
+    ['claude', 'https://api.anthropic.com.attacker.test/'],
+    ['gemini', 'https://generativelanguage.googleapis.com.attacker.test/'],
+    ['gemini-cli', 'https://cloudcode-pa.googleapis.com.attacker.test/'],
+  ] as const)('does not let %s detect look-alike URL %s', async (platform, url) => {
+    const adapter = getAdapter(platform);
+    expect(adapter).toBeDefined();
+    await expect(adapter!.detect(url)).resolves.toBe(false);
+  });
+
   it('supports antigravity adapter aliases', () => {
     expect(getAdapter('antigravity')?.platformName).toBe('antigravity');
     expect(getAdapter('anti-gravity')?.platformName).toBe('antigravity');
@@ -119,7 +130,7 @@ describe('getAdapter platform aliases', () => {
       res.writeHead(404).end();
     }, async (baseUrl) => {
       const adapter = await detectPlatform(`${baseUrl}/api.openai.com/v1`);
-      expect(adapter?.platformName).toBe('openai');
+      expect(adapter).toBeUndefined();
     });
   });
 
