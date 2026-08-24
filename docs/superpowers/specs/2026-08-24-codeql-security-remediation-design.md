@@ -1,7 +1,7 @@
 # CodeQL Security Remediation Design
 
-**Date:** 2026-08-24  
-**Status:** Approved  
+**Date:** 2026-08-24
+**Status:** Approved
 **Repository:** `yswlww/metapi-evolution`
 
 ## 1. Purpose
