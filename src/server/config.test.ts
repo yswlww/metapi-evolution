@@ -63,15 +63,27 @@ describe('buildConfig', () => {
     expect(config.telegramMessageThreadId).toBe('77');
   });
 
-  it('ships CLI-aligned OAuth defaults', () => {
+  it('does not embed Google OAuth client material by default', () => {
     const config = buildConfig({});
 
-    expect(config.codexClientId).toBe('app_EMoamEEZ73f0CkXaXp7hrann');
-    expect(config.codexResponsesWebsocketBeta).toBe('responses_websockets=2026-02-06');
-    expect(config.claudeClientId).toBe('9d1c250a-e61b-44d9-88ed-5944d1962f5e');
-    expect(config.claudeClientSecret).toBe('');
-    expect(config.geminiCliClientId).toBe('681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com');
-    expect(config.geminiCliClientSecret).toBe('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');
+    expect(config.geminiCliClientId).toBe('');
+    expect(config.geminiCliClientSecret).toBe('');
+    expect(config.antigravityClientId).toBe('');
+    expect(config.antigravityClientSecret).toBe('');
+  });
+
+  it('trims runtime Google OAuth configuration', () => {
+    const config = buildConfig({
+      GEMINI_CLI_CLIENT_ID: ' gemini-test-client-id ',
+      GEMINI_CLI_CLIENT_SECRET: ' gemini-test-client-secret ',
+      ANTIGRAVITY_CLIENT_ID: ' antigravity-test-client-id ',
+      ANTIGRAVITY_CLIENT_SECRET: ' antigravity-test-client-secret ',
+    });
+
+    expect(config.geminiCliClientId).toBe('gemini-test-client-id');
+    expect(config.geminiCliClientSecret).toBe('gemini-test-client-secret');
+    expect(config.antigravityClientId).toBe('antigravity-test-client-id');
+    expect(config.antigravityClientSecret).toBe('antigravity-test-client-secret');
   });
 
   it('allows overriding the codex websocket beta gate from environment', () => {
