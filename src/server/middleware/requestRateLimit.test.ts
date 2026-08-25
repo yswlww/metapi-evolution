@@ -69,6 +69,33 @@ describe('request rate-limit guard', () => {
     expect(blocked?.retryAfterSec).toBeGreaterThanOrEqual(1);
   });
 
+  it('does not alias bucket and identity values containing delimiters', () => {
+    const consumeRateLimit = (requestRateLimit as typeof requestRateLimit & {
+      consumeRateLimit: (options: {
+        bucket: string;
+        identity: string;
+        max: number;
+        windowMs: number;
+      }) => { allowed: boolean; retryAfterSec: number };
+    }).consumeRateLimit;
+
+    const first = consumeRateLimit({
+      bucket: 'delimiter:bucket',
+      identity: 'identity',
+      max: 1,
+      windowMs: 60_000,
+    });
+    const independent = consumeRateLimit({
+      bucket: 'delimiter',
+      identity: 'bucket:identity',
+      max: 1,
+      windowMs: 60_000,
+    });
+
+    expect(first.allowed).toBe(true);
+    expect(independent.allowed).toBe(true);
+  });
+
   it('shares one bucket between transport-neutral consumption and the Fastify guard', async () => {
     const app = Fastify();
     app.get('/limited', {

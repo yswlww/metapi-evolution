@@ -377,6 +377,7 @@ describe('responses websocket transport', () => {
 
   beforeAll(async () => {
     const { responsesProxyRoute } = await import('./responses.js');
+    const { searchProxyRoute } = await import('./search.js');
     app = Fastify();
     app.addHook('onRequest', createProxyAuthRateLimitHook({
       bucket: 'proxy-authenticated',
@@ -384,6 +385,7 @@ describe('responses websocket transport', () => {
       windowMs: config.requestRateLimitWindowMs,
     }));
     await app.register(responsesProxyRoute);
+    await app.register(searchProxyRoute);
     await app.listen({ port: 0, host: '127.0.0.1' });
     const address = app.server.address() as AddressInfo;
     baseUrl = `ws://127.0.0.1:${address.port}`;
@@ -532,6 +534,25 @@ describe('responses websocket transport', () => {
     if (app) {
       await app.close();
     }
+  });
+
+  it('rejects repeated missing-token websocket upgrades before authentication work', async () => {
+    (config as any).requestRateLimitMax = 1;
+
+    const firstSocket = createClientSocketForPath(`${baseUrl}/v1/responses`);
+    const first = await waitForSocketUnexpectedResponse(firstSocket);
+    const secondSocket = createClientSocketForPath(`${baseUrl}/v1/responses`);
+    const second = await waitForSocketUnexpectedResponse(secondSocket);
+
+    expect(first.statusCode).toBe(401);
+    expect(second.statusCode).toBe(429);
+    expect(second.headers['retry-after']).toMatch(/^\d+$/);
+    expect(JSON.parse(second.body)).toMatchObject({
+      statusCode: 429,
+      error: 'Too many requests',
+      retryAfter: expect.any(String),
+    });
+    expect(authorizeDownstreamTokenMock).not.toHaveBeenCalled();
   });
 
   it('rejects repeated invalid websocket upgrades before another authentication call', async () => {
@@ -953,7 +974,9 @@ describe('responses websocket transport', () => {
       expect(deniedResponse).toMatchObject({
         type: 'error',
         status: 429,
+        retryAfter: expect.any(String),
       });
+      expect(Number(deniedResponse.retryAfter)).toBeGreaterThanOrEqual(1);
       expect(fetchMock).toHaveBeenCalledTimes(1);
     } finally {
       await fallbackApp.close();
@@ -1040,6 +1063,153 @@ describe('responses websocket transport', () => {
     expect(consumeManagedKeyRequestMock).toHaveBeenCalledWith(206);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(upstreamConnectionCount).toBe(0);
+  });
+
+  it('preserves exactly-once accounting for managed search-only fallback frames', async () => {
+    (config as any).codexUpstreamWebsocketEnabled = false;
+    (config as any).authenticatedRateLimitMax = 10;
+    authorizeDownstreamTokenMock.mockResolvedValue({
+      ok: true,
+      source: 'managed',
+      token: 'managed-search-only-token',
+      key: { id: 212, name: 'managed-search-only-key' },
+      policy: {
+        supportedModels: [],
+        allowedRouteIds: [],
+        siteWeightMultipliers: {},
+        excludedSiteIds: [],
+        excludedCredentialRefs: [],
+      },
+    });
+    consumeManagedKeyRequestMock.mockResolvedValue(undefined);
+    const selectedChannel = createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: [{ title: 'Search result', url: 'https://example.com/result' }],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const socket = createClientSocket(baseUrl, {
+      Authorization: 'Bearer managed-search-only-token',
+    });
+    await waitForSocketOpen(socket);
+    const responsePromise = waitForSocketMessages(socket, 1);
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-4.1',
+      tools: [{ type: 'web_search_preview' }],
+      input: [{
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'search for the latest result' }],
+      }],
+    }));
+    const [response] = await responsePromise;
+    socket.close();
+
+    expect(response?.type).toBe('response.completed');
+    expect(response?.response?.output?.[0]?.type).toBe('web_search_call');
+    expect(authorizeDownstreamTokenMock).toHaveBeenCalledTimes(2);
+    expect(consumeManagedKeyRequestMock).toHaveBeenCalledTimes(1);
+    expect(consumeManagedKeyRequestMock).toHaveBeenCalledWith(212);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('reselects a channel when refreshed managed policy revokes the reused site', async () => {
+    (config as any).authenticatedRateLimitMax = 10;
+    let authorizeCalls = 0;
+    authorizeDownstreamTokenMock.mockImplementation(async (token: string) => {
+      authorizeCalls += 1;
+      return {
+        ok: true as const,
+        source: 'managed' as const,
+        token,
+        key: { id: 211, name: 'managed-refresh-policy-key' },
+        policy: authorizeCalls >= 3
+          ? {
+            supportedModels: [],
+            allowedRouteIds: [],
+            siteWeightMultipliers: {},
+            excludedSiteIds: [44],
+            excludedCredentialRefs: [],
+          }
+          : {
+            supportedModels: [],
+            allowedRouteIds: [],
+            siteWeightMultipliers: {},
+            excludedSiteIds: [],
+            excludedCredentialRefs: [],
+          },
+      };
+    });
+    consumeManagedKeyRequestMock.mockResolvedValue(undefined);
+    const selectedChannelA = createSelectedChannel({
+      siteUrl: upstreamSiteUrl,
+      actualModel: 'gpt-5.4',
+    });
+    const selectedChannelB = {
+      ...createSelectedChannel({
+        sitePlatform: 'openai',
+        actualModel: 'gpt-5.4',
+      }),
+      site: {
+        ...createSelectedChannel({
+          sitePlatform: 'openai',
+          actualModel: 'gpt-5.4',
+        }).site,
+        id: 45,
+      },
+    };
+    selectChannelMock.mockImplementation((_model: string, policy: { excludedSiteIds?: number[] }) => (
+      policy?.excludedSiteIds?.includes(44) ? selectedChannelB : selectedChannelA
+    ));
+    previewSelectedChannelMock.mockImplementation(async (_model: string, policy: { excludedSiteIds?: number[] }) => (
+      policy?.excludedSiteIds?.includes(44) ? selectedChannelB : selectedChannelA
+    ));
+    fetchMock.mockResolvedValueOnce(createSseResponse([
+      'event: response.completed\n',
+      'data: {"type":"response.completed","response":{"id":"resp_reselected_channel","model":"gpt-5.4","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const socket = createClientSocket(baseUrl, {
+      Authorization: 'Bearer managed-refresh-policy-token',
+    });
+    await waitForSocketOpen(socket);
+    const firstResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+    await firstResponsePromise;
+
+    const secondResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+    await secondResponsePromise;
+    socket.close();
+
+    expect(authorizeCalls).toBe(3);
+    expect(selectChannelMock).toHaveBeenCalledTimes(3);
+    expect(selectChannelMock.mock.calls[1]?.[1]).toMatchObject({ excludedSiteIds: [44] });
+    expect(upstreamRequests).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('accepts response.create over GET /v1/responses websocket and forwards streamed responses events', async () => {

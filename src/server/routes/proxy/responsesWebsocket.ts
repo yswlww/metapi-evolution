@@ -13,6 +13,7 @@ import { consumeRateLimit } from '../../middleware/requestRateLimit.js';
 import {
   authorizeDownstreamToken,
   consumeManagedKeyRequest,
+  isModelAllowedByPolicy,
   isModelAllowedByPolicyOrAllowedRoutes,
   type DownstreamTokenAuthSuccess,
 } from '../../services/downstreamApiKeyService.js';
@@ -163,6 +164,74 @@ function shouldReuseSelectedChannel(
   const normalizedRequestModel = asTrimmedString(requestModel).toLowerCase();
   if (!selectedModel || !normalizedRequestModel) return true;
   return selectedModel === normalizedRequestModel;
+}
+
+function selectedChannelMatchesRefreshedPolicy(
+  selectedChannel: SelectedChannel | null,
+  requestModel: string,
+  policy: ResponsesWebsocketAuthContext['policy'],
+): boolean {
+  if (!selectedChannel) return false;
+  if (selectedChannel.channel.enabled === false) return false;
+  if (selectedChannel.site.status === 'disabled') return false;
+  if (
+    selectedChannel.channel.tokenId == null
+    && selectedChannel.account.status !== 'active'
+  ) {
+    return false;
+  }
+  if (
+    selectedChannel.channel.tokenId != null
+    && selectedChannel.account.status === 'disabled'
+  ) {
+    return false;
+  }
+  if (
+    selectedChannel.channel.cooldownUntil
+    && selectedChannel.channel.cooldownUntil > new Date().toISOString()
+  ) {
+    return false;
+  }
+
+  const excludedSiteIds = Array.isArray(policy.excludedSiteIds) ? policy.excludedSiteIds : [];
+  if (excludedSiteIds.includes(selectedChannel.site.id)) return false;
+  const excludedCredentialRefs = Array.isArray(policy.excludedCredentialRefs)
+    ? policy.excludedCredentialRefs
+    : [];
+  for (const ref of excludedCredentialRefs) {
+    if (
+      ref.kind === 'account_token'
+      && selectedChannel.channel.tokenId === ref.tokenId
+      && selectedChannel.token?.id === ref.tokenId
+      && selectedChannel.account.id === ref.accountId
+      && selectedChannel.site.id === ref.siteId
+    ) {
+      return false;
+    }
+    if (
+      ref.kind === 'default_api_key'
+      && selectedChannel.channel.tokenId == null
+      && selectedChannel.account.id === ref.accountId
+      && selectedChannel.site.id === ref.siteId
+      && selectedChannel.tokenValue === (selectedChannel.account.apiToken?.trim() || '')
+    ) {
+      return false;
+    }
+  }
+
+  const supportedModels = Array.isArray(policy.supportedModels) ? policy.supportedModels : [];
+  const modelMatchesSupportedRules = supportedModels.length > 0
+    && isModelAllowedByPolicy(requestModel, policy);
+  const allowedRouteIds = Array.isArray(policy.allowedRouteIds) ? policy.allowedRouteIds : [];
+  if (
+    allowedRouteIds.length > 0
+    && (!modelMatchesSupportedRules || supportedModels.length === 0)
+    && !allowedRouteIds.includes(selectedChannel.channel.routeId)
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 function deriveCodexExplicitSessionId(body: Record<string, unknown>, sessionId: string): string {
@@ -454,11 +523,15 @@ async function forwardResponsesRequestViaHttp(input: {
     } catch {
       payload = null;
     }
+    const retryAfterSec = response.statusCode === 429
+      ? extractFallbackRetryAfter(response, payload)
+      : undefined;
     writeResponsesWebsocketError(
       input.socket,
       response.statusCode,
       response.statusMessage || 'Upstream error',
       payload,
+      retryAfterSec,
     );
     return null;
   }
@@ -518,6 +591,27 @@ function buildInjectHeaders(request: IncomingMessage): Record<string, string | s
     headers[rawKey] = rawValue as string | string[];
   }
   return headers;
+}
+
+function parsePositiveRetryAfter(value: unknown): number | undefined {
+  const candidate = typeof value === 'number' ? String(value) : headerValueToTrimmedString(value);
+  if (!candidate) return undefined;
+  const numeric = Number(candidate);
+  if (!Number.isFinite(numeric) || numeric <= 0) return undefined;
+  return Math.max(1, Math.ceil(numeric));
+}
+
+function extractFallbackRetryAfter(response: {
+  headers: Record<string, unknown>;
+}, payload: unknown): number | undefined {
+  const headerRetryAfter = parsePositiveRetryAfter(response.headers['retry-after']);
+  if (headerRetryAfter !== undefined) return headerRetryAfter;
+  if (!isRecord(payload)) return undefined;
+
+  const payloadRetryAfter = parsePositiveRetryAfter(payload.retryAfter ?? payload.retry_after);
+  if (payloadRetryAfter !== undefined) return payloadRetryAfter;
+  if (!isRecord(payload.error)) return undefined;
+  return parsePositiveRetryAfter(payload.error.retryAfter ?? payload.error.retry_after);
 }
 
 function extractWebsocketAuthToken(request: IncomingMessage, url: URL): string {
@@ -671,6 +765,12 @@ async function handleResponsesWebsocketConnection(
           }
           parsed.service_tier = serviceTierPolicy.body.service_tier;
           if (serviceTierPolicy.body.service_tier === undefined) delete parsed.service_tier;
+          if (
+            selectedChannel
+            && !selectedChannelMatchesRefreshedPolicy(selectedChannel, requestModel, frameAuthContext.policy)
+          ) {
+            selectedChannel = null;
+          }
           const supportsIncrementalInput = selectedChannelSupportsIncrementalInput(selectedChannel, requestModel)
             || await supportsResponsesWebsocketIncrementalInput(parsed, lastRequest, frameAuthContext);
           const shouldHandleLocalPrewarm = shouldHandleResponsesWebsocketPrewarmLocally(

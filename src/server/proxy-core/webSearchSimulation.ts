@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { anthropicMessagesTransformer } from '../transformers/anthropic/messages/index.js';
 import {
+  getProxyAuthExecutionKey,
+} from '../middleware/auth.js';
+import {
   extractResponsesWebSearchQuery,
   hasResponsesWebSearchOnlyRequest,
 } from './responsesPreflight.js';
@@ -92,9 +95,11 @@ async function callLocalSearchRoute(input: {
   model: string;
   maxResults: number;
 }): Promise<{ statusCode: number; payload: unknown }> {
+  const executionKey = getProxyAuthExecutionKey();
   const searchResponse = await input.app.inject({
     method: 'POST',
     url: '/v1/search',
+    ...(executionKey ? { remoteAddress: executionKey } : {}),
     headers: buildSearchInjectHeaders(input.request),
     payload: {
       model: input.model,

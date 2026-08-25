@@ -37,7 +37,7 @@ const proxyAuthExecutionContext = new AsyncLocalStorage<InternalProxyAuthExecuti
 
 function isResponsesFallbackRequest(request: FastifyRequest): boolean {
   const rawUrl = request.raw.url || request.url || '';
-  return rawUrl.split('?')[0] === '/v1/responses';
+  return rawUrl.split('?')[0] === '/v1/responses' || rawUrl.split('?')[0] === '/v1/search';
 }
 
 function getInternalProxyAuthExecutionContext(request: FastifyRequest): InternalProxyAuthExecutionContext | null {
@@ -75,6 +75,10 @@ export function runWithProxyAuthExecutionContext<T>(
   };
 
   return proxyAuthExecutionContext.run(context, async () => fn(executionKey));
+}
+
+export function getProxyAuthExecutionKey(): string | null {
+  return proxyAuthExecutionContext.getStore()?.executionKey || null;
 }
 
 export function resolveProxyAuthSocketAddress(request: FastifyRequest): string {
