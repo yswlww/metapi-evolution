@@ -281,3 +281,121 @@ Round-2 implementation commit:
 ```
 
 The report amendment is committed separately after this code commit so the cumulative evidence remains tracked. The final report commit SHA is returned alongside the implementation SHA.
+
+## Task 3 fix round 3 — findings addressed
+
+Round 3 retained the round-1 and round-2 implementation and addressed both remaining Important findings.
+
+- `src/server/routes/proxy/responsesWebsocket.ts` no longer duplicates TokenRouter channel eligibility. For managed persistent frames, it delegates preferred-channel revalidation to `tokenRouter.selectPreferredChannel(requestModel, selectedChannel.channel.id, refreshedPolicy)`. An eligible preferred channel is replaced with the refreshed returned channel; a revoked or otherwise ineligible preferred channel becomes null and the existing policy-aware `selectChannel` fallback chooses an allowed replacement or fails before dispatch. Global-token channel reuse remains unchanged.
+- `src/server/middleware/globalRateLimit.ts` configures the supported `@fastify/rate-limit` dynamic `allowList(request, key)` option. Only an active process-local `AsyncLocalStorage` execution context whose exact synthetic execution key is the request socket address and whose path is `/v1/search` is allow-listed. The outer internal `/v1/responses`, external `/v1/search`, and synthetic-looking requests without the active context remain globally accounted.
+- `src/server/routes/proxy/responses.websocket.test.ts` completes the channel/account/token/site fixture state, asserts the existing preferred-channel API calls and arguments, and adds a production-like real global-plugin search fallback test. The latter proves one WebSocket search frame succeeds with a root limit of one, managed/authenticated accounting remains exactly once for that frame, and an external synthetic-looking `/v1/search` request remains counted.
+
+Round-3 files changed:
+
+- `src/server/middleware/globalRateLimit.ts`
+- `src/server/routes/proxy/responsesWebsocket.ts`
+- `src/server/routes/proxy/responses.websocket.test.ts`
+
+### Round-3 RED evidence
+
+Tests and complete valid fixtures were added before the production amendments. The preferred-channel behavior RED was:
+
+```bash
+npx vitest run --root . src/server/routes/proxy/responses.websocket.test.ts -t "reselects a channel when refreshed managed policy revokes the reused site"
+```
+
+```text
+FAIL ... reselects a channel when refreshed managed policy revokes the reused site
+expected "spy" to be called 1 times, but got 0 times
+```
+
+This showed the retained implementation never delegated refreshed preferred-channel validation to `selectPreferredChannel`.
+
+The production-like nested-search RED was:
+
+```bash
+npx vitest run --root . src/server/routes/proxy/responses.websocket.test.ts -t "counts one websocket search fallback once"
+```
+
+```text
+FAIL ... counts one websocket search fallback once in the production global bucket and still counts external search
+expected 'error' to be 'response.completed'
+Expected: "response.completed"
+Received: "error"
+```
+
+The error envelope was HTTP 429 from the nested `/v1/search` injection, proving that the outer fallback and nested search were both consuming the root global bucket. An initial run timed out because the test's open socket masked the intended assertion during cleanup; that result was discarded, the cleanup was corrected, and the clean behavioral RED above was rerun.
+
+### Round-3 GREEN evidence
+
+Focused matrix:
+
+```bash
+npx vitest run --root . \
+  src/server/middleware/requestRateLimit.test.ts \
+  src/server/middleware/auth.proxy.test.ts \
+  src/server/middleware/globalRateLimit.test.ts \
+  src/server/routes/proxy/responses.websocket.test.ts
+```
+
+```text
+4 files passed
+74 tests passed
+```
+
+The two new/changed round-3 regressions also passed directly:
+
+```bash
+npx vitest run --root . src/server/routes/proxy/responses.websocket.test.ts -t "reselects a channel when refreshed managed policy revokes the reused site|counts one websocket search fallback once"
+```
+
+```text
+1 file passed
+2 tests passed
+```
+
+Full suite:
+
+```bash
+npm test
+```
+
+```text
+Test Files  468 passed | 1 skipped (469)
+Tests       2874 passed | 11 skipped (2885)
+Duration    33.38s
+```
+
+The full suite retained the existing node-cron missing-sourcemap warning and test-induced migration/error-path logs; the command exited successfully.
+
+Required static/build verification:
+
+- `npm run typecheck` passed `typecheck:web`, `typecheck:web:test`, `typecheck:server`, and `typecheck:desktop`.
+- `npm run repo:drift-check` passed with `Violations: 0` and `Tracked debt: 0`.
+- `npm run build` passed web, server, and desktop builds. The existing Vite large-chunk warning remained non-failing.
+- `git diff --check` passed.
+
+### Round-3 self-review
+
+- Preferred-channel revalidation now uses the existing TokenRouter eligibility implementation, including current route/channel/account/token state, downstream policy, and OAuth route-unit member cooldown; no partial eligibility clone remains in the WebSocket path.
+- The refreshed returned preferred channel is retained for incremental sessions, while a null preferred result reaches normal policy-aware selection before any upstream dispatch.
+- The dynamic allow-list is path-scoped to `/v1/search`, requires active process-local `AsyncLocalStorage`, and compares the raw request socket address to the exact random execution key. No header, query parameter, token, or body field can activate it.
+- The outer internal `/v1/responses` fallback remains globally accounted under the original external socket. Nested search is the only exact-context request skipped by both plugin and `app.rateLimit()` root enforcement.
+- External `/v1/search` and synthetic-looking requests without active context remain globally rate-limited; existing repeated outer-fallback coverage remains green.
+- No transport migration, retired-route change, unrelated refactor, permission/config change, or external bypass signal was added.
+
+### Round-3 deferred items and concerns
+
+- The reviewer’s retired-route trailing-slash Minor remains explicitly deferred as required by the brief.
+- Limiter state and the internal fallback execution context remain process-local; multi-process, multi-container, and multi-instance deployments still require shared enforcement outside this change.
+- Existing Vite large-chunk and test-induced logging/sourcemap warnings remain non-failing.
+
+### Round-3 commit and clean status
+
+Implementation commit:
+
+```text
+c6ca761
+```
+
+The report amendment is committed separately after this implementation commit so the cumulative evidence remains tracked. The final worktree status is recorded after that report commit.
