@@ -126,12 +126,37 @@ export type ParameterEnabled = {
   seed: boolean;
 };
 
+export type ImageGenerationParameterEnabled = {
+  n: boolean;
+  size: boolean;
+  quality: boolean;
+  style: boolean;
+  response_format: boolean;
+  output_format: boolean;
+  background: boolean;
+  output_compression: boolean;
+  moderation: boolean;
+  user: boolean;
+};
+
 export type ModelTesterModeState = {
   embeddingsInput: string;
   searchQuery: string;
   searchAllowedDomains: string;
   searchBlockedDomains: string;
   imagesPrompt: string;
+  imagesEditPrompt?: string;
+  imagesN: number | null;
+  imagesSize: string;
+  imagesQuality: string;
+  imagesStyle: string;
+  imagesResponseFormat: string;
+  imagesOutputFormat: string;
+  imagesBackground: string;
+  imagesOutputCompression: number | null;
+  imagesModeration: string;
+  imagesUser: string;
+  imagesParameterEnabled?: ImageGenerationParameterEnabled;
   imagesMaskDataUrl: string;
   videosPrompt: string;
   videosInspectId: string;
@@ -143,6 +168,7 @@ export type ModelTesterSessionState = {
   input: string;
   inputs: ModelTesterInputs;
   parameterEnabled: ParameterEnabled;
+  imageParameterEnabled?: ImageGenerationParameterEnabled;
   messages: ChatMessage[];
   conversationFiles: ConversationDraftFile[];
   pendingPayload: TesterProxyEnvelope | null;
@@ -187,12 +213,37 @@ export const DEFAULT_PARAMETER_ENABLED: ParameterEnabled = {
   seed: false,
 };
 
+export const DEFAULT_IMAGE_PARAMETER_ENABLED: ImageGenerationParameterEnabled = {
+  n: false,
+  size: false,
+  quality: false,
+  style: false,
+  response_format: false,
+  output_format: false,
+  background: false,
+  output_compression: false,
+  moderation: false,
+  user: false,
+};
+
 export const DEFAULT_MODE_STATE: ModelTesterModeState = {
   embeddingsInput: '',
   searchQuery: '',
   searchAllowedDomains: '',
   searchBlockedDomains: '',
   imagesPrompt: '',
+  imagesEditPrompt: '',
+  imagesN: null,
+  imagesSize: 'auto',
+  imagesQuality: 'auto',
+  imagesStyle: 'vivid',
+  imagesResponseFormat: 'url',
+  imagesOutputFormat: 'png',
+  imagesBackground: 'auto',
+  imagesOutputCompression: null,
+  imagesModeration: 'auto',
+  imagesUser: '',
+  imagesParameterEnabled: { ...DEFAULT_IMAGE_PARAMETER_ENABLED },
   imagesMaskDataUrl: '',
   videosPrompt: '',
   videosInspectId: '',
@@ -278,6 +329,29 @@ const appendOptionalNumber = (target: Record<string, unknown>, key: string, enab
   if (typeof value === 'number' && Number.isFinite(value)) {
     target[key] = value;
   }
+};
+
+const appendOptionalTrimmedString = (
+  target: Record<string, unknown>,
+  key: string,
+  enabled: boolean,
+  value: unknown,
+) => {
+  if (!enabled || typeof value !== 'string') return;
+  const trimmed = value.trim();
+  if (trimmed) target[key] = trimmed;
+};
+
+const clampImageCount = (value: unknown): number | null => {
+  const parsed = typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : null;
+  if (parsed === null || parsed <= 0) return null;
+  return Math.max(1, Math.min(10, parsed));
+};
+
+const clampImageCompression = (value: unknown): number | null => {
+  const parsed = typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : null;
+  if (parsed === null) return null;
+  return Math.max(0, Math.min(100, parsed));
 };
 
 const parseDataUrl = (dataUrl: string): { mimeType: string; data: string } | null => {
@@ -770,14 +844,49 @@ const parseConversationDraftFiles = (value: unknown): ConversationDraftFile[] =>
   });
 };
 
+const parseImageParameterEnabled = (value: unknown): ImageGenerationParameterEnabled => {
+  if (!isRecord(value)) return { ...DEFAULT_IMAGE_PARAMETER_ENABLED };
+  return {
+    n: toBoolean(value.n, DEFAULT_IMAGE_PARAMETER_ENABLED.n),
+    size: toBoolean(value.size, DEFAULT_IMAGE_PARAMETER_ENABLED.size),
+    quality: toBoolean(value.quality, DEFAULT_IMAGE_PARAMETER_ENABLED.quality),
+    style: toBoolean(value.style, DEFAULT_IMAGE_PARAMETER_ENABLED.style),
+    response_format: toBoolean(value.response_format, DEFAULT_IMAGE_PARAMETER_ENABLED.response_format),
+    output_format: toBoolean(value.output_format, DEFAULT_IMAGE_PARAMETER_ENABLED.output_format),
+    background: toBoolean(value.background, DEFAULT_IMAGE_PARAMETER_ENABLED.background),
+    output_compression: toBoolean(value.output_compression, DEFAULT_IMAGE_PARAMETER_ENABLED.output_compression),
+    moderation: toBoolean(value.moderation, DEFAULT_IMAGE_PARAMETER_ENABLED.moderation),
+    user: toBoolean(value.user, DEFAULT_IMAGE_PARAMETER_ENABLED.user),
+  };
+};
+
+const parseNullableBoundedInteger = (value: unknown, min: number, max: number): number | null => {
+  const parsed = toNullableFiniteNumber(value);
+  if (parsed === null) return null;
+  return Math.max(min, Math.min(max, Math.trunc(parsed)));
+};
+
 const parseModeState = (value: unknown): ModelTesterModeState => {
-  if (!isRecord(value)) return { ...DEFAULT_MODE_STATE };
+  if (!isRecord(value)) return { ...DEFAULT_MODE_STATE, imagesParameterEnabled: { ...DEFAULT_IMAGE_PARAMETER_ENABLED } };
+  const imagesParameterEnabled = parseImageParameterEnabled(value.imagesParameterEnabled);
   return {
     embeddingsInput: sanitizeString(value.embeddingsInput),
     searchQuery: sanitizeString(value.searchQuery),
     searchAllowedDomains: sanitizeString(value.searchAllowedDomains),
     searchBlockedDomains: sanitizeString(value.searchBlockedDomains),
     imagesPrompt: sanitizeString(value.imagesPrompt),
+    imagesEditPrompt: sanitizeString(value.imagesEditPrompt),
+    imagesN: parseNullableBoundedInteger(value.imagesN, 1, 10),
+    imagesSize: sanitizeString(value.imagesSize, DEFAULT_MODE_STATE.imagesSize),
+    imagesQuality: sanitizeString(value.imagesQuality, DEFAULT_MODE_STATE.imagesQuality),
+    imagesStyle: sanitizeString(value.imagesStyle, DEFAULT_MODE_STATE.imagesStyle),
+    imagesResponseFormat: sanitizeString(value.imagesResponseFormat, DEFAULT_MODE_STATE.imagesResponseFormat),
+    imagesOutputFormat: sanitizeString(value.imagesOutputFormat, DEFAULT_MODE_STATE.imagesOutputFormat),
+    imagesBackground: sanitizeString(value.imagesBackground, DEFAULT_MODE_STATE.imagesBackground),
+    imagesOutputCompression: parseNullableBoundedInteger(value.imagesOutputCompression, 0, 100),
+    imagesModeration: sanitizeString(value.imagesModeration, DEFAULT_MODE_STATE.imagesModeration),
+    imagesUser: sanitizeString(value.imagesUser),
+    imagesParameterEnabled,
     imagesMaskDataUrl: sanitizeString(value.imagesMaskDataUrl),
     videosPrompt: sanitizeString(value.videosPrompt),
     videosInspectId: sanitizeString(value.videosInspectId),
@@ -1158,6 +1267,10 @@ export const parseModelTesterSession = (raw: string | null): ModelTesterSessionS
     input: typeof parsed.input === 'string' ? parsed.input : '',
     inputs,
     parameterEnabled,
+    imageParameterEnabled: parseImageParameterEnabled(
+      parsed.imageParameterEnabled
+        ?? (isRecord(parsed.modeState) ? parsed.modeState.imagesParameterEnabled : undefined),
+    ),
     messages: sanitizeMessages(parsed.messages),
     conversationFiles: parseConversationDraftFiles(parsed.conversationFiles),
     pendingPayload: parsePendingPayload(parsed.pendingPayload, inputs, parameterEnabled),
@@ -1266,18 +1379,37 @@ export const buildSearchRequestEnvelope = (
 export const buildImagesGenerationsRequestEnvelope = (
   inputs: ModelTesterInputs,
   modeState: ModelTesterModeState,
-): TesterProxyEnvelope => ({
-  method: 'POST',
-  path: '/v1/images/generations',
-  requestKind: 'json',
-  stream: false,
-  jobMode: false,
-  rawMode: false,
-  jsonBody: {
-    model: inputs.model,
-    prompt: modeState.imagesPrompt,
-  },
-});
+  imageParameterEnabled: ImageGenerationParameterEnabled = modeState.imagesParameterEnabled || DEFAULT_IMAGE_PARAMETER_ENABLED,
+): TesterProxyEnvelope => {
+  const jsonBody: Record<string, unknown> = {
+    model: inputs.model.trim(),
+    prompt: modeState.imagesPrompt.trim(),
+  };
+  const enabled = imageParameterEnabled;
+  const count = clampImageCount(modeState.imagesN);
+  const compression = clampImageCompression(modeState.imagesOutputCompression);
+
+  if (enabled.n && count !== null) jsonBody.n = count;
+  appendOptionalTrimmedString(jsonBody, 'size', enabled.size, modeState.imagesSize);
+  appendOptionalTrimmedString(jsonBody, 'quality', enabled.quality, modeState.imagesQuality);
+  appendOptionalTrimmedString(jsonBody, 'style', enabled.style, modeState.imagesStyle);
+  appendOptionalTrimmedString(jsonBody, 'response_format', enabled.response_format, modeState.imagesResponseFormat);
+  appendOptionalTrimmedString(jsonBody, 'output_format', enabled.output_format, modeState.imagesOutputFormat);
+  appendOptionalTrimmedString(jsonBody, 'background', enabled.background, modeState.imagesBackground);
+  if (enabled.output_compression && compression !== null) jsonBody.output_compression = compression;
+  appendOptionalTrimmedString(jsonBody, 'moderation', enabled.moderation, modeState.imagesModeration);
+  appendOptionalTrimmedString(jsonBody, 'user', enabled.user, modeState.imagesUser);
+
+  return {
+    method: 'POST',
+    path: '/v1/images/generations',
+    requestKind: 'json',
+    stream: false,
+    jobMode: false,
+    rawMode: false,
+    jsonBody,
+  };
+};
 
 export const buildFileUploadRequestEnvelope = (
   file: Omit<PlaygroundMultipartFile, 'field'> & { field?: string },
