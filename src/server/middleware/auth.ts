@@ -61,8 +61,8 @@ function toProxyAuthContext(authResult: DownstreamTokenAuthSuccess): ProxyAuthCo
   };
 }
 
-export function runWithProxyAuthExecutionContext<T>(
-  authResult: DownstreamTokenAuthSuccess,
+function runWithProxyAuthContext<T>(
+  auth: ProxyAuthContext,
   originalRemoteAddress: string,
   fn: (executionKey: string) => Promise<T>,
 ): Promise<T> {
@@ -70,11 +70,37 @@ export function runWithProxyAuthExecutionContext<T>(
   const context: InternalProxyAuthExecutionContext = {
     executionKey,
     originalRemoteAddress: originalRemoteAddress || 'unknown',
-    auth: toProxyAuthContext(authResult),
+    auth,
     accountingAlreadyApplied: true,
   };
 
   return proxyAuthExecutionContext.run(context, async () => fn(executionKey));
+}
+
+export function runWithProxyAuthExecutionContext<T>(
+  authResult: DownstreamTokenAuthSuccess,
+  originalRemoteAddress: string,
+  fn: (executionKey: string) => Promise<T>,
+): Promise<T> {
+  return runWithProxyAuthContext(toProxyAuthContext(authResult), originalRemoteAddress, fn);
+}
+
+export function runWithProxyAuthRequestExecutionContext<T>(
+  request: FastifyRequest,
+  fn: (executionKey: string | null) => Promise<T>,
+): Promise<T> {
+  const activeContext = proxyAuthExecutionContext.getStore();
+  if (activeContext?.accountingAlreadyApplied) {
+    return fn(activeContext.executionKey);
+  }
+
+  const auth = getProxyAuthContext(request);
+  if (!auth) return fn(null);
+  return runWithProxyAuthContext(
+    auth,
+    request.raw.socket.remoteAddress || 'unknown',
+    fn,
+  );
 }
 
 export function getProxyAuthExecutionKey(): string | null {

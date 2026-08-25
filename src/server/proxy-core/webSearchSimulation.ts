@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { anthropicMessagesTransformer } from '../transformers/anthropic/messages/index.js';
 import {
-  getProxyAuthExecutionKey,
+  runWithProxyAuthRequestExecutionContext,
 } from '../middleware/auth.js';
 import {
   extractResponsesWebSearchQuery,
@@ -46,6 +46,20 @@ function toSearchMaxResults(tool: Record<string, unknown> | null): number {
   return Math.max(1, Math.min(20, Math.trunc(raw)));
 }
 
+const INTERNAL_SEARCH_STRIPPED_HEADERS = new Set([
+  'x-forwarded-for',
+  'x-forwarded-host',
+  'x-forwarded-proto',
+  'x-forwarded-port',
+  'forwarded',
+  'x-real-ip',
+  'x-client-ip',
+  'true-client-ip',
+  'cf-connecting-ip',
+  'x-metapi-tester-request',
+  'x-metapi-tester-forced-channel-id',
+]);
+
 function buildSearchInjectHeaders(request: FastifyRequest): Record<string, string | string[]> {
   const headers: Record<string, string | string[]> = {};
   for (const [rawKey, rawValue] of Object.entries(request.headers as Record<string, string | string[]>)) {
@@ -56,6 +70,7 @@ function buildSearchInjectHeaders(request: FastifyRequest): Record<string, strin
       || key === 'content-type'
       || key === 'connection'
       || key === 'transfer-encoding'
+      || INTERNAL_SEARCH_STRIPPED_HEADERS.has(key)
     ) {
       continue;
     }
@@ -95,18 +110,20 @@ async function callLocalSearchRoute(input: {
   model: string;
   maxResults: number;
 }): Promise<{ statusCode: number; payload: unknown }> {
-  const executionKey = getProxyAuthExecutionKey();
-  const searchResponse = await input.app.inject({
-    method: 'POST',
-    url: '/v1/search',
-    ...(executionKey ? { remoteAddress: executionKey } : {}),
-    headers: buildSearchInjectHeaders(input.request),
-    payload: {
-      model: input.model,
-      query: input.query,
-      max_results: input.maxResults,
-    },
-  });
+  const searchResponse = await runWithProxyAuthRequestExecutionContext(
+    input.request,
+    (executionKey) => input.app.inject({
+      method: 'POST',
+      url: '/v1/search',
+      ...(executionKey ? { remoteAddress: executionKey } : {}),
+      headers: buildSearchInjectHeaders(input.request),
+      payload: {
+        model: input.model,
+        query: input.query,
+        max_results: input.maxResults,
+      },
+    }),
+  );
 
   let payload: unknown = null;
   try {

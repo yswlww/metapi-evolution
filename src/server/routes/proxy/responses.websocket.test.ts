@@ -368,6 +368,31 @@ function createClientSocketForPath(path: string, headers: Record<string, string>
   return socket;
 }
 
+async function createDirectHttpSearchApp(options: {
+  globalMax?: number;
+  authenticatedMax?: number;
+} = {}): Promise<FastifyInstance> {
+  const { chatProxyRoute, claudeMessagesProxyRoute } = await import('./chat.js');
+  const { responsesProxyRoute } = await import('./responses.js');
+  const { searchProxyRoute } = await import('./search.js');
+  const app = Fastify({ trustProxy: true });
+  await registerGlobalRateLimit(app, {
+    max: options.globalMax ?? 10,
+    windowMs: 60_000,
+  });
+  app.addHook('onRequest', createGlobalRateLimitHook(app));
+  app.addHook('onRequest', createProxyAuthRateLimitHook({
+    bucket: 'direct-http-search-authenticated',
+    max: options.authenticatedMax ?? 10,
+    windowMs: 60_000,
+  }));
+  await app.register(chatProxyRoute);
+  await app.register(claudeMessagesProxyRoute);
+  await app.register(responsesProxyRoute);
+  await app.register(searchProxyRoute);
+  return app;
+}
+
 describe('responses websocket transport', () => {
   const originalCodexResponsesWebsocketBeta = config.codexResponsesWebsocketBeta;
   const originalCodexUpstreamWebsocketEnabled = config.codexUpstreamWebsocketEnabled;
@@ -1094,6 +1119,272 @@ describe('responses websocket transport', () => {
         await waitForSocketClose(socket);
       }
       await fallbackApp.close();
+    }
+  });
+
+  it('charges direct HTTP Responses web-search-only requests once for a maxRequests-one managed key', async () => {
+    let usedRequests = 0;
+    authorizeDownstreamTokenMock.mockImplementation(async (token: string) => {
+      if (usedRequests >= 1) {
+        return {
+          ok: false as const,
+          statusCode: 403,
+          error: 'API key has exceeded max requests',
+          reason: 'over_requests' as const,
+        };
+      }
+      return {
+        ok: true as const,
+        source: 'managed' as const,
+        token,
+        key: { id: 215, name: 'direct-http-responses-search-key', maxRequests: 1, usedRequests },
+        policy: {
+          supportedModels: [],
+          allowedRouteIds: [],
+          siteWeightMultipliers: {},
+        },
+      };
+    });
+    consumeManagedKeyRequestMock.mockImplementation(async () => {
+      usedRequests += 1;
+    });
+    selectChannelMock.mockReturnValue(createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    }));
+    fetchMock.mockImplementation(() => new Response(JSON.stringify({
+      object: 'search.result',
+      data: [{ title: 'Direct Responses result' }],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    const directApp = await createDirectHttpSearchApp({ authenticatedMax: 1 });
+
+    try {
+      const response = await directApp.inject({
+        method: 'POST',
+        url: '/v1/responses',
+        remoteAddress: '127.0.0.1',
+        headers: { Authorization: 'Bearer direct-http-responses-search-token' },
+        payload: {
+          model: 'gpt-4.1',
+          stream: false,
+          tools: [{ type: 'web_search', name: 'web_search', max_results: 2 }],
+          input: 'direct HTTP Responses search',
+        },
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json().output?.[0]).toMatchObject({ type: 'web_search_call' });
+      expect(authorizeDownstreamTokenMock).toHaveBeenCalledTimes(1);
+      expect(consumeManagedKeyRequestMock).toHaveBeenCalledTimes(1);
+      expect(consumeManagedKeyRequestMock).toHaveBeenCalledWith(215);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      await directApp.close();
+    }
+  });
+
+  it('charges direct Claude web-search-only requests once for a maxRequests-one managed key', async () => {
+    let usedRequests = 0;
+    authorizeDownstreamTokenMock.mockImplementation(async (token: string) => {
+      if (usedRequests >= 1) {
+        return {
+          ok: false as const,
+          statusCode: 403,
+          error: 'API key has exceeded max requests',
+          reason: 'over_requests' as const,
+        };
+      }
+      return {
+        ok: true as const,
+        source: 'managed' as const,
+        token,
+        key: { id: 216, name: 'direct-http-claude-search-key', maxRequests: 1, usedRequests },
+        policy: {
+          supportedModels: [],
+          allowedRouteIds: [],
+          siteWeightMultipliers: {},
+        },
+      };
+    });
+    consumeManagedKeyRequestMock.mockImplementation(async () => {
+      usedRequests += 1;
+    });
+    selectChannelMock.mockReturnValue(createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    }));
+    fetchMock.mockImplementation(() => new Response(JSON.stringify({
+      object: 'search.result',
+      data: [{ title: 'Direct Claude result' }],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    const directApp = await createDirectHttpSearchApp({ authenticatedMax: 1 });
+
+    try {
+      const response = await directApp.inject({
+        method: 'POST',
+        url: '/v1/messages',
+        remoteAddress: '127.0.0.1',
+        headers: { Authorization: 'Bearer direct-http-claude-search-token' },
+        payload: {
+          model: 'claude-opus-4-6',
+          max_tokens: 256,
+          stream: false,
+          tools: [{ type: 'web_search_20250305', max_uses: 2 }],
+          messages: [{ role: 'user', content: 'direct Claude search' }],
+        },
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json().content?.[0]).toMatchObject({ type: 'server_tool_use' });
+      expect(authorizeDownstreamTokenMock).toHaveBeenCalledTimes(1);
+      expect(consumeManagedKeyRequestMock).toHaveBeenCalledTimes(1);
+      expect(consumeManagedKeyRequestMock).toHaveBeenCalledWith(216);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      await directApp.close();
+    }
+  });
+
+  it('accounts direct HTTP search once while external forged-looking search remains ordinary', async () => {
+    authorizeDownstreamTokenMock.mockImplementation(async (token: string) => ({
+      ok: true as const,
+      source: 'managed' as const,
+      token,
+      key: { id: 217, name: 'direct-http-global-search-key' },
+      policy: {
+        supportedModels: [],
+        allowedRouteIds: [],
+        siteWeightMultipliers: {},
+      },
+    }));
+    consumeManagedKeyRequestMock.mockResolvedValue(undefined);
+    selectChannelMock.mockReturnValue(createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    }));
+    fetchMock.mockImplementation(() => new Response(JSON.stringify({
+      object: 'search.result',
+      data: [{ title: 'Global accounting result' }],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    const directApp = await createDirectHttpSearchApp({ globalMax: 1 });
+
+    try {
+      const directResponse = await directApp.inject({
+        method: 'POST',
+        url: '/v1/responses',
+        remoteAddress: '127.0.0.1',
+        headers: { Authorization: 'Bearer direct-http-global-search-token' },
+        payload: {
+          model: 'gpt-4.1',
+          stream: false,
+          tools: [{ type: 'web_search_preview' }],
+          input: 'one direct search',
+        },
+      });
+      const externalFirst = await directApp.inject({
+        method: 'POST',
+        url: '/v1/search?executionKey=metapi-internal-forged',
+        remoteAddress: 'metapi-internal-forged',
+        headers: {
+          Authorization: 'Bearer direct-http-global-search-token',
+          'x-metapi-proxy-execution-key': 'metapi-internal-forged',
+        },
+        payload: {
+          model: '__search',
+          query: 'external search',
+          max_results: 1,
+          executionKey: 'metapi-internal-forged',
+        },
+      });
+      const externalSecond = await directApp.inject({
+        method: 'POST',
+        url: '/v1/search?executionKey=metapi-internal-forged',
+        remoteAddress: 'metapi-internal-forged',
+        headers: {
+          Authorization: 'Bearer direct-http-global-search-token',
+          'x-metapi-proxy-execution-key': 'metapi-internal-forged',
+        },
+        payload: {
+          model: '__search',
+          query: 'external search again',
+          max_results: 1,
+          executionKey: 'metapi-internal-forged',
+        },
+      });
+
+      expect(directResponse.statusCode, directResponse.body).toBe(200);
+      expect(externalFirst.statusCode, externalFirst.body).toBe(200);
+      expect(externalSecond.statusCode).toBe(429);
+      expect(authorizeDownstreamTokenMock).toHaveBeenCalledTimes(2);
+      expect(consumeManagedKeyRequestMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      await directApp.close();
+    }
+  });
+
+  it('strips forwarded identity and tester controls from direct HTTP nested search', async () => {
+    authorizeDownstreamTokenMock.mockResolvedValue({
+      ok: true,
+      source: 'managed',
+      token: 'direct-http-header-search-token',
+      key: { id: 218, name: 'direct-http-header-search-key' },
+      policy: {
+        supportedModels: [],
+        allowedRouteIds: [],
+        siteWeightMultipliers: {},
+      },
+    });
+    consumeManagedKeyRequestMock.mockResolvedValue(undefined);
+    const selectedChannel = createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    selectPreferredChannelMock.mockReturnValue(selectedChannel);
+    fetchMock.mockImplementation(() => new Response(JSON.stringify({
+      object: 'search.result',
+      data: [{ title: 'Header isolation result' }],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    const directApp = await createDirectHttpSearchApp();
+
+    try {
+      const response = await directApp.inject({
+        method: 'POST',
+        url: '/v1/responses',
+        remoteAddress: '198.51.100.44',
+        headers: {
+          Authorization: 'Bearer direct-http-header-search-token',
+          'x-forwarded-for': '127.0.0.1',
+          'x-metapi-tester-request': '1',
+          'x-metapi-tester-forced-channel-id': '999',
+        },
+        payload: {
+          model: 'gpt-4.1',
+          stream: false,
+          tools: [{ type: 'web_search' }],
+          input: 'header isolation search',
+        },
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      expect(selectPreferredChannelMock).not.toHaveBeenCalled();
+      expect(authorizeDownstreamTokenMock).toHaveBeenCalledTimes(1);
+      expect(consumeManagedKeyRequestMock).toHaveBeenCalledTimes(1);
+    } finally {
+      await directApp.close();
     }
   });
 
