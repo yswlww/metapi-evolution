@@ -399,3 +399,136 @@ c6ca761
 ```
 
 The report amendment is committed separately after this implementation commit so the cumulative evidence remains tracked. The final worktree status is recorded after that report commit.
+
+## Task 3 fix round 4 — exact side-effect-free channel validation
+
+Date: 2026-08-25
+
+Round 4 retained the round-1 through round-3 implementation and addressed the remaining exact-member affinity finding. The raw `ws` transport, authenticated boundaries, fallback accounting, nested-search allow-list, and global-token behavior were left unchanged.
+
+### Round-4 implementation
+
+- `src/server/services/tokenRouter.ts`
+  - Added `TokenRouter.previewPreferredChannel(requestedModel, preferredChannelId, preferredAccountId, downstreamPolicy)`, a side-effect-free exact-candidate validator/refresh API.
+  - Force-refreshes enabled routes and route matches for current channel/account/site/token/route-unit member state before validation.
+  - Reuses `getCandidateEligibilityReasons`, `getRouteUnitMemberEligibilityReasons`, runtime breaker filtering, downstream policy checks, cooldown checks, and token resolution already used by TokenRouter.
+  - Requires the exact outer channel ID and exact selected account/member ID. OAuth route-unit validation never calls member selection, round-robin ordering, or selection bookkeeping.
+  - Returns a refreshed `SelectedChannel` only when the exact candidate remains eligible; otherwise returns null without `recordChannelSelection`, `recordRouteUnitMemberSelection`, rotation, or failure writes.
+- `src/server/routes/proxy/responsesWebsocket.ts`
+  - Managed persistent-frame reuse now calls `previewPreferredChannel` with the selected outer channel and selected account/member ID instead of `selectPreferredChannel`.
+  - A null exact preview follows the existing policy-aware selection/error path and cannot dispatch the stale candidate.
+- `src/server/services/tokenRouter.oauth-route-units.test.ts`
+  - Added real-database coverage for exact OAuth member A affinity with a round-robin member B, no selection timestamp writes, exact-member cooldown null behavior without selecting B, refreshed downstream site exclusion, and ordinary same-channel validation without writes.
+- `src/server/routes/proxy/responses.websocket.test.ts`
+  - Added exact validator mock coverage for managed incremental follow-up account/member affinity and one upstream runtime session; converted refreshed-policy null coverage to assert the new validator and exact account argument.
+
+### Round-4 RED evidence
+
+Tests were added before the production API and WebSocket call-site amendment. After correcting one invalid ordinary-account fixture (`access_token` is non-null in the schema), the exact TokenRouter tests produced the intended missing-API behavior failures:
+
+```bash
+npx vitest run --root . src/server/services/tokenRouter.oauth-route-units.test.ts -t "validates the exact|unavailable exact|ordinary exact"
+```
+
+```text
+3 tests failed
+expected 'undefined' to be 'function'
+```
+
+The failure was the absent `previewPreferredChannel` API, not a fixture or compile error. The WebSocket regressions then produced the intended missing-call failures against the retained round-3 implementation:
+
+```bash
+npx vitest run --root . src/server/routes/proxy/responses.websocket.test.ts -t "retains exact managed|reselects a channel"
+```
+
+```text
+2 tests failed
+expected previewPreferredChannelMock to be called; Number of calls: 0
+```
+
+This demonstrated that persistent reuse still used `selectPreferredChannel`/selection behavior and did not invoke the required side-effect-free exact validator.
+
+### Round-4 GREEN evidence
+
+Exact focused tests after implementation:
+
+```bash
+npx vitest run --root . src/server/services/tokenRouter.oauth-route-units.test.ts -t "validates the exact|unavailable exact|ordinary exact"
+```
+
+```text
+1 file passed
+3 tests passed
+```
+
+Focused TokenRouter/downstream-policy/rate/auth/global/WebSocket matrix:
+
+```bash
+npx vitest run --root . \
+  src/server/services/tokenRouter.oauth-route-units.test.ts \
+  src/server/services/tokenRouter.selection.test.ts \
+  src/server/services/tokenRouter.downstream-policy.test.ts \
+  src/server/middleware/requestRateLimit.test.ts \
+  src/server/middleware/auth.proxy.test.ts \
+  src/server/middleware/globalRateLimit.test.ts \
+  src/server/routes/proxy/responses.websocket.test.ts
+```
+
+```text
+7 files passed
+117 tests passed
+```
+
+The focused TokenRouter/WebSocket rerun after final test cleanup also passed:
+
+```text
+2 files passed
+58 tests passed
+```
+
+Full suite:
+
+```bash
+npm test
+```
+
+```text
+Test Files  468 passed | 1 skipped (469)
+Tests       2878 passed | 11 skipped (2889)
+```
+
+The full suite retained existing non-failing test-induced error-path logs and the node-cron missing-sourcemap warning.
+
+### Round-4 required verification
+
+- `npm run typecheck` passed `typecheck:web`, `typecheck:web:test`, `typecheck:server`, and `typecheck:desktop`.
+- `npm run repo:drift-check` passed with `Violations: 0` and `Tracked debt: 0`.
+- `npm run build` passed web, server, and desktop builds. The existing Vite large-chunk warning remained non-failing.
+- `git diff --check` passed.
+
+### Round-4 self-review
+
+- The WebSocket path no longer calls `selectPreferredChannel` for managed per-frame validation; it passes both the exact outer channel ID and selected account/member ID to `previewPreferredChannel`.
+- The validator force-refreshes route/channel/account/site/token/route-unit member snapshots and delegates eligibility to TokenRouter’s existing machinery rather than cloning eligibility in `responsesWebsocket.ts`.
+- OAuth route-unit validation only examines the requested member. If that member is cooling, disabled, excluded by refreshed downstream policy, unusable, or otherwise ineligible, the validator returns null and never rotates to member B.
+- Ordinary channels require the same account ID and return a refreshed same-channel candidate without selection writes.
+- No validator path invokes `recordChannelSelection`, `recordRouteUnitMemberSelection`, stable-first progress, round-robin selection, or failure bookkeeping.
+- Successful exact validation preserves the selected account/member and Codex runtime session key across managed incremental follow-up frames. Null validation cannot dispatch the stale candidate; existing fallback selection remains policy-aware.
+- The completed round-3 exact-context `/v1/search` global allow-list and all prior authenticated/rate/quota behavior remain unchanged.
+- No transport migration, retired-route change, external bypass signal, permission/config change, push, merge, or publication was added.
+
+### Round-4 deferred items and concerns
+
+- The reviewer’s retired-route trailing-slash Minor remains explicitly deferred as required by the brief.
+- Limiter state and the internal fallback execution context remain process-local; multi-process, multi-container, and multi-instance deployments still require shared enforcement outside this change.
+- Existing Vite large-chunk, node-cron sourcemap, and test-induced logging warnings remain non-failing.
+
+### Round-4 commit and status
+
+Implementation commit:
+
+```text
+b135b15
+```
+
+The report amendment is committed separately after this implementation commit. The final clean-status evidence is recorded after that report commit.
