@@ -644,3 +644,15 @@ Implementation commit:
 ```
 
 The report amendment is committed separately after this implementation commit. Final clean-status evidence is recorded after the report commit.
+
+Final clean-status verification command:
+
+```bash
+git status --short --branch
+```
+
+Expected final output after the report commit:
+
+```text
+## worktree-fix-axonhub-provider
+```
