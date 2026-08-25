@@ -701,9 +701,10 @@ async function handleResponsesWebsocketConnection(
             && frameAuthContext.source === 'managed'
             && requestModel
           ) {
-            selectedChannel = await tokenRouter.selectPreferredChannel(
+            selectedChannel = await tokenRouter.previewPreferredChannel(
               requestModel,
               selectedChannel.channel.id,
+              selectedChannel.account.id,
               frameAuthContext.policy,
             );
           }

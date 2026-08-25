@@ -13,6 +13,7 @@ const fetchMock = vi.fn();
 const selectChannelMock = vi.fn();
 const selectNextChannelMock = vi.fn();
 const selectPreferredChannelMock = vi.fn();
+const previewPreferredChannelMock = vi.fn();
 const previewSelectedChannelMock = vi.fn();
 const recordSuccessMock = vi.fn();
 const recordFailureMock = vi.fn();
@@ -48,6 +49,7 @@ vi.mock('../../services/tokenRouter.js', () => ({
     selectChannel: (...args: unknown[]) => selectChannelMock(...args),
     selectNextChannel: (...args: unknown[]) => selectNextChannelMock(...args),
     selectPreferredChannel: (...args: unknown[]) => selectPreferredChannelMock(...args),
+    previewPreferredChannel: (...args: unknown[]) => previewPreferredChannelMock(...args),
     previewSelectedChannel: (...args: unknown[]) => previewSelectedChannelMock(...args),
     recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
     recordFailure: (...args: unknown[]) => recordFailureMock(...args),
@@ -155,6 +157,7 @@ function createSseResponse(chunks: string[], status = 200) {
 }
 
 function createSelectedChannel(options?: {
+  accountId?: number;
   siteName?: string;
   siteUrl?: string;
   sitePlatform?: string;
@@ -182,7 +185,7 @@ function createSelectedChannel(options?: {
       status: 'active',
     },
     account: {
-      id: 33,
+      id: options?.accountId ?? 33,
       username: options?.username ?? (isCodex ? 'codex-user@example.com' : 'openai-user@example.com'),
       status: 'active',
       apiToken: isCodex ? null : (options?.tokenValue ?? 'sk-openai-token'),
@@ -451,6 +454,7 @@ describe('responses websocket transport', () => {
     selectChannelMock.mockReset();
     selectNextChannelMock.mockReset();
     selectPreferredChannelMock.mockReset();
+    previewPreferredChannelMock.mockReset();
     previewSelectedChannelMock.mockReset();
     recordSuccessMock.mockReset();
     recordFailureMock.mockReset();
@@ -468,6 +472,7 @@ describe('responses websocket transport', () => {
     selectChannelMock.mockReturnValue(selectedChannel);
     selectNextChannelMock.mockReturnValue(null);
     selectPreferredChannelMock.mockReturnValue(null);
+    previewPreferredChannelMock.mockResolvedValue(selectedChannel);
     previewSelectedChannelMock.mockResolvedValue(selectedChannel);
     upstreamConnectionCount = 0;
     upstreamUpgradeHeaders = {};
@@ -1275,9 +1280,10 @@ describe('responses websocket transport', () => {
         id: 45,
       },
     };
-    selectPreferredChannelMock.mockImplementation(async (
+    previewPreferredChannelMock.mockImplementation(async (
       _model: string,
       _channelId: number,
+      _accountId: number,
       policy: { excludedSiteIds?: number[] },
     ) => policy?.excludedSiteIds?.includes(44) ? null : selectedChannelA);
     selectChannelMock.mockImplementation((_model: string, policy: { excludedSiteIds?: number[] }) => (
@@ -1320,14 +1326,77 @@ describe('responses websocket transport', () => {
     socket.close();
 
     expect(authorizeCalls).toBe(3);
-    expect(selectPreferredChannelMock).toHaveBeenCalledTimes(1);
-    expect(selectPreferredChannelMock.mock.calls[0]).toMatchObject([
+    expect(previewPreferredChannelMock).toHaveBeenCalledTimes(1);
+    expect(previewPreferredChannelMock.mock.calls[0]).toMatchObject([
       'gpt-5.4',
       selectedChannelA.channel.id,
+      selectedChannelA.account.id,
       { excludedSiteIds: [44] },
     ]);
     expect(upstreamRequests).toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains exact managed oauth route-unit affinity across incremental websocket follow-ups', async () => {
+    authorizeDownstreamTokenMock.mockResolvedValue({
+      ok: true,
+      source: 'managed',
+      token: 'managed-affinity-token',
+      key: { id: 214, name: 'managed-affinity-key' },
+      policy: {
+        supportedModels: [],
+        allowedRouteIds: [],
+        siteWeightMultipliers: {},
+      },
+    });
+    consumeManagedKeyRequestMock.mockResolvedValue(undefined);
+    const selectedChannelA = createSelectedChannel({
+      accountId: 301,
+      siteUrl: upstreamSiteUrl,
+      actualModel: 'gpt-5.4',
+    });
+    selectChannelMock.mockReturnValue(selectedChannelA);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannelA);
+    previewPreferredChannelMock.mockResolvedValue(selectedChannelA);
+
+    const socket = createClientSocket(baseUrl, {
+      Authorization: 'Bearer managed-affinity-token',
+      'session-id': 'affinity-session',
+    });
+    await waitForSocketOpen(socket);
+    const firstResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+    await firstResponsePromise;
+
+    const secondResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+    await secondResponsePromise;
+    socket.close();
+
+    expect(previewPreferredChannelMock).toHaveBeenCalledWith(
+      'gpt-5.4',
+      selectedChannelA.channel.id,
+      selectedChannelA.account.id,
+      expect.any(Object),
+    );
+    expect(selectPreferredChannelMock).not.toHaveBeenCalled();
+    expect(selectChannelMock).toHaveBeenCalledTimes(1);
+    expect(upstreamConnectionCount).toBe(1);
+    expect(upstreamRequests).toHaveLength(2);
   });
 
   it('accepts response.create over GET /v1/responses websocket and forwards streamed responses events', async () => {

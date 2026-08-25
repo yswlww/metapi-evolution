@@ -1102,8 +1102,8 @@ function isCacheFresh(loadedAt: number, nowMs: number): boolean {
   return nowMs - loadedAt < resolveTokenRouterCacheTtlMs();
 }
 
-async function loadEnabledRoutes(nowMs = Date.now()): Promise<RouteRow[]> {
-  if (isCacheFresh(routeCacheSnapshot.loadedAt, nowMs)) {
+async function loadEnabledRoutes(nowMs = Date.now(), forceRefresh = false): Promise<RouteRow[]> {
+  if (!forceRefresh && isCacheFresh(routeCacheSnapshot.loadedAt, nowMs)) {
     return routeCacheSnapshot.routes;
   }
 
@@ -1137,13 +1137,13 @@ async function loadEnabledRoutes(nowMs = Date.now()): Promise<RouteRow[]> {
   return routes;
 }
 
-async function loadRouteMatch(route: RouteRow, nowMs = Date.now()): Promise<RouteMatch> {
+async function loadRouteMatch(route: RouteRow, nowMs = Date.now(), forceRefresh = false): Promise<RouteMatch> {
   const cached = routeMatchCache.get(route.id);
-  if (cached && isCacheFresh(cached.loadedAt, nowMs)) {
+  if (!forceRefresh && cached && isCacheFresh(cached.loadedAt, nowMs)) {
     return cached.match;
   }
 
-  const enabledRoutes = await loadEnabledRoutes(nowMs);
+  const enabledRoutes = await loadEnabledRoutes(nowMs, forceRefresh);
   const routeIds = (() => {
     if (!isExplicitGroupRoute(route)) {
       return [route.id];
@@ -1897,6 +1897,29 @@ export class TokenRouter {
       normalizedPreferredChannelId,
       downstreamPolicy,
       excludeChannelIds,
+    );
+  }
+
+  async previewPreferredChannel(
+    requestedModel: string,
+    preferredChannelId: number,
+    preferredAccountId: number,
+    downstreamPolicy: DownstreamRoutingPolicy = DEFAULT_DOWNSTREAM_POLICY,
+  ): Promise<SelectedChannel | null> {
+    if (!isModelAllowedByDownstreamPolicy(requestedModel, downstreamPolicy)) return null;
+    const normalizedPreferredChannelId = Math.trunc(preferredChannelId || 0);
+    const normalizedPreferredAccountId = Math.trunc(preferredAccountId || 0);
+    if (normalizedPreferredChannelId <= 0 || normalizedPreferredAccountId <= 0) return null;
+    await ensureSiteRuntimeHealthStateLoaded();
+
+    const match = await this.findRoute(requestedModel, downstreamPolicy, true);
+    if (!match) return null;
+    return this.previewPreferredFromMatch(
+      match,
+      requestedModel,
+      normalizedPreferredChannelId,
+      normalizedPreferredAccountId,
+      downstreamPolicy,
     );
   }
 
@@ -2974,6 +2997,83 @@ export class TokenRouter {
     return null;
   }
 
+  private async previewPreferredFromMatch(
+    match: RouteMatch,
+    requestedModel: string,
+    preferredChannelId: number,
+    preferredAccountId: number,
+    downstreamPolicy: DownstreamRoutingPolicy,
+  ): Promise<SelectedChannel | null> {
+    const preferred = match.channels.find((candidate) => candidate.channel.id === preferredChannelId);
+    if (!preferred) return null;
+
+    const mappedModel = resolveMappedModel(requestedModel, match.route.modelMapping);
+    const requestedByDisplayName = isRouteDisplayNameMatch(requestedModel, match.route.displayName);
+    const bypassSourceModelCheck = requestedByDisplayName;
+    const runtimeModelResolver = requestedByDisplayName
+      ? ((candidate: RouteChannelCandidate) => normalizeChannelSourceModel(candidate.channel.sourceModel) || mappedModel)
+      : mappedModel;
+    const nowIso = new Date().toISOString();
+    const nowMs = Date.now();
+
+    if (this.getCandidateEligibilityReasons(preferred, {
+      requestedModel,
+      bypassSourceModelCheck,
+      excludeChannelIds: [],
+      nowIso,
+      downstreamPolicy,
+    }).length > 0) {
+      return null;
+    }
+
+    const breakerFiltered = filterSiteRuntimeBrokenCandidatesByModel([preferred], runtimeModelResolver, nowMs);
+    const selected = breakerFiltered.candidates.find((candidate) => candidate.channel.id === preferredChannelId);
+    if (!selected) return null;
+
+    const routeStrategy = resolveRouteStrategy(match.route);
+    if (
+      !isOauthRouteUnitCandidate(selected)
+      && routeStrategy !== 'round_robin'
+      && isChannelRecentlyFailed(selected.channel, nowMs)
+    ) {
+      return null;
+    }
+
+    let dispatchCandidate = selected;
+    let tokenValue: string | null;
+    if (isOauthRouteUnitCandidate(selected)) {
+      const member = selected.routeUnitMembers.find((memberCandidate) => memberCandidate.account.id === preferredAccountId);
+      if (!member || this.getRouteUnitMemberEligibilityReasons(selected, member, {
+        requestedModel,
+        bypassSourceModelCheck,
+        excludeChannelIds: [],
+        nowIso,
+        downstreamPolicy,
+      }).length > 0) {
+        return null;
+      }
+      dispatchCandidate = this.buildRouteUnitMemberDispatchCandidate(selected, member);
+      tokenValue = this.resolveRouteUnitMemberTokenValue(member);
+    } else {
+      if (selected.account.id !== preferredAccountId) return null;
+      tokenValue = this.resolveChannelTokenValue(selected);
+    }
+    if (!tokenValue) return null;
+
+    return {
+      ...dispatchCandidate,
+      channel: selected.channel,
+      tokenValue,
+      tokenName: dispatchCandidate.token?.name || 'default',
+      actualModel: resolveActualModelForSelectedChannel(
+        requestedModel,
+        match.route,
+        mappedModel,
+        selected.channel.sourceModel,
+      ),
+    };
+  }
+
   private async selectPreferredFromMatch(
     match: RouteMatch,
     requestedModel: string,
@@ -3029,8 +3129,12 @@ export class TokenRouter {
     );
   }
 
-  private async findRoute(model: string, downstreamPolicy: DownstreamRoutingPolicy): Promise<RouteMatch | null> {
-    let routes = await loadEnabledRoutes();
+  private async findRoute(
+    model: string,
+    downstreamPolicy: DownstreamRoutingPolicy,
+    forceRefresh = false,
+  ): Promise<RouteMatch | null> {
+    let routes = await loadEnabledRoutes(Date.now(), forceRefresh);
 
     const supportedPatterns = Array.isArray(downstreamPolicy.supportedModels)
       ? downstreamPolicy.supportedModels
@@ -3053,7 +3157,7 @@ export class TokenRouter {
 
     if (!matchedRoute) return null;
 
-    return await this.loadRouteMatch(matchedRoute);
+    return await this.loadRouteMatch(matchedRoute, forceRefresh);
   }
 
   private async findRouteById(routeId: number, downstreamPolicy: DownstreamRoutingPolicy): Promise<RouteMatch | null> {
@@ -3067,8 +3171,8 @@ export class TokenRouter {
     return await this.loadRouteMatch(route);
   }
 
-  private async loadRouteMatch(route: RouteRow): Promise<RouteMatch> {
-    return await loadRouteMatch(route);
+  private async loadRouteMatch(route: RouteRow, forceRefresh = false): Promise<RouteMatch> {
+    return await loadRouteMatch(route, Date.now(), forceRefresh);
   }
 
   private resolveRouteUnitMemberTokenValue(candidate: {
