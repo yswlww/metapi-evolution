@@ -1,7 +1,7 @@
 # Task 3 fix round 1 cumulative report — WebSocket request boundary
 
 Date: 2026-08-25
-Status: DONE_WITH_CONCERNS
+Status: DONE
 
 ## Scope and implementation
 
@@ -532,3 +532,115 @@ b135b15
 ```
 
 The report amendment is committed separately after this implementation commit. The final clean-status evidence is recorded after that report commit.
+
+## Task 3 final-review fix wave — direct HTTP nested search accounting
+
+Date: 2026-08-25
+Status: DONE
+
+The final-review Important finding for ordinary HTTP web-search-only requests is resolved without changing the raw WebSocket transport or normal external `/v1/search` behavior.
+
+### Final-wave implementation
+
+- `src/server/middleware/auth.ts`
+  - Added `runWithProxyAuthRequestExecutionContext`, which first preserves an already-active raw-WebSocket execution context and otherwise derives a unique process-local execution key from the outer request's trusted `ProxyAuthContext` and original raw socket address.
+  - Requests without a trusted per-request auth context run without the internal capability and retain ordinary nested authentication/accounting.
+- `src/server/proxy-core/webSearchSimulation.ts`
+  - `callLocalSearchRoute` now runs `/v1/search` injection through the request execution-context helper, passing the exact internal key only to the process-local `remoteAddress` boundary.
+  - Internal search injection strips forwarding identity and tester-only channel-control headers while retaining authentication and request metadata.
+- `src/server/routes/proxy/responses.websocket.test.ts`
+  - Added production-like direct HTTP Responses and Claude web-search-only coverage with managed `maxRequests=1`, authenticated max-one accounting, root global max-one accounting, external forged-looking search requests, and forwarding/tester-header isolation.
+
+### Final-wave RED evidence
+
+Tests were added before the final production amendments. The initial valid behavioral RED command was:
+
+```bash
+npx vitest run --root . src/server/routes/proxy/responses.websocket.test.ts -t "direct HTTP Responses web-search-only|direct Claude web-search-only|direct HTTP search once|strips forwarded identity"
+```
+
+Observed failures on the retained round-four implementation:
+
+- Direct HTTP Responses web-search-only returned `403 {"error":"API key has exceeded max requests"}` instead of 200 because nested search reauthenticated after outer quota consumption.
+- Direct Claude web-search-only returned the same managed-quota 403 instead of 200.
+- The direct HTTP global-accounting case returned `429 {"statusCode":429,"error":"Too many requests","retryAfter":"1 minute"}` from nested root enforcement instead of 200.
+- The header-isolation case called `selectPreferredChannel('__search', 999, ...)`, proving forwarded loopback identity plus tester headers reached the nested search.
+
+The authenticated max-one fixture was then tightened to `authenticatedMax: 1` for both direct HTTP surface regressions; after the production amendment, those tests passed with exactly one auth/quota application.
+
+### Final-wave GREEN evidence
+
+Direct final-wave regressions:
+
+```bash
+npx vitest run --root . src/server/routes/proxy/responses.websocket.test.ts -t "direct HTTP Responses web-search-only|direct Claude web-search-only|direct HTTP search once|strips forwarded identity"
+```
+
+```text
+1 file passed
+4 tests passed
+```
+
+Focused surface/search/WebSocket/auth/rate matrix:
+
+```bash
+npx vitest run --root . \
+  src/server/middleware/requestRateLimit.test.ts \
+  src/server/middleware/auth.proxy.test.ts \
+  src/server/middleware/globalRateLimit.test.ts \
+  src/server/routes/proxy/search.test.ts \
+  src/server/routes/proxy/chat.stream.test.ts \
+  src/server/routes/proxy/responses.websocket.test.ts
+```
+
+```text
+Test Files  6 passed (6)
+Tests       185 passed (185)
+```
+
+The complete Responses WebSocket/HTTP fallback file also passed with 53 tests.
+
+Full suite:
+
+```bash
+npm test
+```
+
+```text
+Test Files  468 passed | 1 skipped (469)
+Tests      2882 passed | 11 skipped (2893)
+```
+
+Required static/build verification:
+
+- `npm run typecheck` passed `typecheck:web`, `typecheck:web:test`, `typecheck:server`, and `typecheck:desktop`.
+- `npm run repo:drift-check` passed with `Violations: 0` and `Tracked debt: 0`.
+- `npm run build` passed web, server, and desktop builds. The existing Vite large-chunk warning remained non-failing.
+- `git diff --check` passed.
+
+### Final-wave self-review
+
+- Direct HTTP outer requests use only the trusted `ProxyAuthContext` already stored by the proxy auth hook; no client-controlled header, query parameter, token value, body field, synthetic address, or bypass signal can create the context.
+- Existing raw-WebSocket fallback execution contexts retain the same exact execution key rather than nesting a new context.
+- Internal `/v1/search` injection skips duplicate authenticated rate/quota and root global accounting only when the active process-local context and exact synthetic socket key match.
+- Managed direct Responses and Claude search-only requests consume one authenticated allowance and one managed quota unit; root global max-one succeeds for the outer request and nested search does not consume a second unit.
+- External `/v1/search` with forged-looking address/header/query/body values still authenticates, consumes quota, and is root-rate-limited normally.
+- Forwarding identity and tester-only headers are stripped only from nested search injection; normal external routes remain unchanged.
+- Downstream policy and resource-owner lookup continue to use the internal request's copied trusted auth context.
+- Existing WebSocket, global, policy, auth, rate, search, and surface behavior remains green. No transport migration, retired-route change, permission/config change, push, merge, or publication was added.
+
+### Final-wave concerns and deferred items
+
+- The reviewer’s retired-route trailing-slash Minor remains explicitly deferred as required by the brief.
+- Limiter state and the internal fallback execution context remain process-local; multi-process, multi-container, and multi-instance deployments still require shared enforcement outside this change.
+- Existing Vite large-chunk, node-cron sourcemap, and test-induced logging warnings remain non-failing.
+
+### Final-wave commit and status
+
+Implementation commit:
+
+```text
+105fab5772c284636561965d3274188bee1c3b2f
+```
+
+The report amendment is committed separately after this implementation commit. Final clean-status evidence is recorded after the report commit.
