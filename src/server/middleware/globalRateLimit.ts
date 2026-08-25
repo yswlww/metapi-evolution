@@ -1,11 +1,23 @@
 import fastifyRateLimit from '@fastify/rate-limit';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { resolveProxyAuthSocketAddress } from './auth.js';
+import {
+  getProxyAuthExecutionKey,
+  resolveProxyAuthSocketAddress,
+} from './auth.js';
 
 export type GlobalRateLimitOptions = {
   max: number;
   windowMs: number;
 };
+
+function isActiveInternalSearchRequest(request: FastifyRequest): boolean {
+  const rawUrl = request.raw.url || request.url || '';
+  if (rawUrl.split('?')[0] !== '/v1/search') return false;
+
+  const executionKey = getProxyAuthExecutionKey();
+  if (!executionKey) return false;
+  return request.raw.socket.remoteAddress === executionKey;
+}
 
 export async function registerGlobalRateLimit(
   app: FastifyInstance,
@@ -16,6 +28,7 @@ export async function registerGlobalRateLimit(
     max: options.max,
     timeWindow: options.windowMs,
     keyGenerator: (request) => resolveProxyAuthSocketAddress(request),
+    allowList: (request, _key) => isActiveInternalSearchRequest(request),
     errorResponseBuilder: (_request, context) => ({
       statusCode: context.statusCode,
       error: 'Too many requests',

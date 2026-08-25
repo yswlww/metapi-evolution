@@ -13,7 +13,6 @@ import { consumeRateLimit } from '../../middleware/requestRateLimit.js';
 import {
   authorizeDownstreamToken,
   consumeManagedKeyRequest,
-  isModelAllowedByPolicy,
   isModelAllowedByPolicyOrAllowedRoutes,
   type DownstreamTokenAuthSuccess,
 } from '../../services/downstreamApiKeyService.js';
@@ -164,74 +163,6 @@ function shouldReuseSelectedChannel(
   const normalizedRequestModel = asTrimmedString(requestModel).toLowerCase();
   if (!selectedModel || !normalizedRequestModel) return true;
   return selectedModel === normalizedRequestModel;
-}
-
-function selectedChannelMatchesRefreshedPolicy(
-  selectedChannel: SelectedChannel | null,
-  requestModel: string,
-  policy: ResponsesWebsocketAuthContext['policy'],
-): boolean {
-  if (!selectedChannel) return false;
-  if (selectedChannel.channel.enabled === false) return false;
-  if (selectedChannel.site.status === 'disabled') return false;
-  if (
-    selectedChannel.channel.tokenId == null
-    && selectedChannel.account.status !== 'active'
-  ) {
-    return false;
-  }
-  if (
-    selectedChannel.channel.tokenId != null
-    && selectedChannel.account.status === 'disabled'
-  ) {
-    return false;
-  }
-  if (
-    selectedChannel.channel.cooldownUntil
-    && selectedChannel.channel.cooldownUntil > new Date().toISOString()
-  ) {
-    return false;
-  }
-
-  const excludedSiteIds = Array.isArray(policy.excludedSiteIds) ? policy.excludedSiteIds : [];
-  if (excludedSiteIds.includes(selectedChannel.site.id)) return false;
-  const excludedCredentialRefs = Array.isArray(policy.excludedCredentialRefs)
-    ? policy.excludedCredentialRefs
-    : [];
-  for (const ref of excludedCredentialRefs) {
-    if (
-      ref.kind === 'account_token'
-      && selectedChannel.channel.tokenId === ref.tokenId
-      && selectedChannel.token?.id === ref.tokenId
-      && selectedChannel.account.id === ref.accountId
-      && selectedChannel.site.id === ref.siteId
-    ) {
-      return false;
-    }
-    if (
-      ref.kind === 'default_api_key'
-      && selectedChannel.channel.tokenId == null
-      && selectedChannel.account.id === ref.accountId
-      && selectedChannel.site.id === ref.siteId
-      && selectedChannel.tokenValue === (selectedChannel.account.apiToken?.trim() || '')
-    ) {
-      return false;
-    }
-  }
-
-  const supportedModels = Array.isArray(policy.supportedModels) ? policy.supportedModels : [];
-  const modelMatchesSupportedRules = supportedModels.length > 0
-    && isModelAllowedByPolicy(requestModel, policy);
-  const allowedRouteIds = Array.isArray(policy.allowedRouteIds) ? policy.allowedRouteIds : [];
-  if (
-    allowedRouteIds.length > 0
-    && (!modelMatchesSupportedRules || supportedModels.length === 0)
-    && !allowedRouteIds.includes(selectedChannel.channel.routeId)
-  ) {
-    return false;
-  }
-
-  return true;
 }
 
 function deriveCodexExplicitSessionId(body: Record<string, unknown>, sessionId: string): string {
@@ -767,9 +698,14 @@ async function handleResponsesWebsocketConnection(
           if (serviceTierPolicy.body.service_tier === undefined) delete parsed.service_tier;
           if (
             selectedChannel
-            && !selectedChannelMatchesRefreshedPolicy(selectedChannel, requestModel, frameAuthContext.policy)
+            && frameAuthContext.source === 'managed'
+            && requestModel
           ) {
-            selectedChannel = null;
+            selectedChannel = await tokenRouter.selectPreferredChannel(
+              requestModel,
+              selectedChannel.channel.id,
+              frameAuthContext.policy,
+            );
           }
           const supportsIncrementalInput = selectedChannelSupportsIncrementalInput(selectedChannel, requestModel)
             || await supportsResponsesWebsocketIncrementalInput(parsed, lastRequest, frameAuthContext);

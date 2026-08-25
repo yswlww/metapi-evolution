@@ -166,16 +166,27 @@ function createSelectedChannel(options?: {
   const sitePlatform = options?.sitePlatform ?? 'codex';
   const isCodex = sitePlatform === 'codex';
   return {
-    channel: { id: 11, routeId: 22 },
+    channel: {
+      id: 11,
+      routeId: 22,
+      enabled: true,
+      tokenId: null,
+      cooldownUntil: null,
+      sourceModel: options?.actualModel ?? (isCodex ? 'gpt-5.4' : 'gpt-4.1'),
+    },
     site: {
       id: 44,
       name: options?.siteName ?? (isCodex ? 'codex-site' : 'openai-site'),
       url: options?.siteUrl ?? (isCodex ? 'https://chatgpt.com/backend-api/codex' : 'https://api.openai.com'),
       platform: sitePlatform,
+      status: 'active',
     },
     account: {
       id: 33,
       username: options?.username ?? (isCodex ? 'codex-user@example.com' : 'openai-user@example.com'),
+      status: 'active',
+      apiToken: isCodex ? null : (options?.tokenValue ?? 'sk-openai-token'),
+      accessToken: isCodex ? (options?.tokenValue ?? 'oauth-access-token') : null,
       extraConfig: options?.extraConfig ?? (isCodex
         ? JSON.stringify({
           credentialMode: 'session',
@@ -983,6 +994,104 @@ describe('responses websocket transport', () => {
     }
   });
 
+  it('counts one websocket search fallback once in the production global bucket and still counts external search', async () => {
+    (config as any).codexUpstreamWebsocketEnabled = false;
+    (config as any).authenticatedRateLimitMax = 10;
+    const { responsesProxyRoute } = await import('./responses.js');
+    const { searchProxyRoute } = await import('./search.js');
+    const fallbackApp = Fastify();
+    await registerGlobalRateLimit(fallbackApp, { max: 1, windowMs: 60_000 });
+    fallbackApp.addHook('onRequest', createGlobalRateLimitHook(fallbackApp));
+    fallbackApp.addHook('onRequest', createProxyAuthRateLimitHook({
+      bucket: 'proxy-authenticated-production-search-fallback-test',
+      max: 10,
+      windowMs: 60_000,
+    }));
+    await fallbackApp.register(responsesProxyRoute);
+    await fallbackApp.register(searchProxyRoute);
+    await fallbackApp.listen({ port: 0, host: '127.0.0.1' });
+    const fallbackAddress = fallbackApp.server.address() as AddressInfo;
+    const fallbackBaseUrl = `ws://127.0.0.1:${fallbackAddress.port}`;
+    authorizeDownstreamTokenMock.mockResolvedValue({
+      ok: true,
+      source: 'managed',
+      token: 'managed-search-global-token',
+      key: { id: 213, name: 'managed-search-global-key' },
+      policy: {
+        supportedModels: [],
+        allowedRouteIds: [],
+        siteWeightMultipliers: {},
+        excludedSiteIds: [],
+        excludedCredentialRefs: [],
+      },
+    });
+    consumeManagedKeyRequestMock.mockResolvedValue(undefined);
+    const selectedChannel = createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    fetchMock.mockResolvedValue(createSseResponse([
+      'event: response.completed\\n',
+      'data: {"type":"response.completed","response":{"id":"resp_search_global_fallback","model":"gpt-4.1","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\\n\\n',
+      'data: [DONE]\\n\\n',
+    ]));
+
+    let socket: WebSocket | null = null;
+    try {
+      socket = createClientSocket(fallbackBaseUrl, {
+        Authorization: 'Bearer managed-search-global-token',
+      });
+      await waitForSocketOpen(socket);
+      const responsePromise = waitForSocketMessageMatching(
+        socket,
+        (message) => message?.type === 'response.completed' || message?.type === 'error',
+      );
+      socket.send(JSON.stringify({
+        type: 'response.create',
+        model: 'gpt-4.1',
+        tools: [{ type: 'web_search_preview' }],
+        input: [{
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: 'search once in the production fixture' }],
+        }],
+      }));
+      const response = await responsePromise;
+
+      expect(response?.type).toBe('response.completed');
+      expect(authorizeDownstreamTokenMock).toHaveBeenCalledTimes(2);
+      expect(consumeManagedKeyRequestMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      const externalFirst = await fallbackApp.inject({
+        method: 'POST',
+        url: '/v1/search',
+        remoteAddress: 'metapi-internal-forged',
+        headers: { Authorization: 'Bearer managed-search-global-token' },
+        payload: { model: '__search', query: 'external search', max_results: 1 },
+      });
+      const externalSecond = await fallbackApp.inject({
+        method: 'POST',
+        url: '/v1/search',
+        remoteAddress: 'metapi-internal-forged',
+        headers: { Authorization: 'Bearer managed-search-global-token' },
+        payload: { model: '__search', query: 'external search', max_results: 1 },
+      });
+
+      expect(externalFirst.statusCode).toBe(200);
+      expect(externalSecond.statusCode).toBe(429);
+      expect(externalSecond.headers['retry-after']).toMatch(/^\d+$/);
+    } finally {
+      if (socket && socket.readyState !== WebSocket.CLOSED) {
+        socket.terminate();
+        await waitForSocketClose(socket);
+      }
+      await fallbackApp.close();
+    }
+  });
+
   it('revalidates a managed key for each persistent frame before HTTP fallback', async () => {
     (config as any).codexUpstreamWebsocketEnabled = false;
     (config as any).authenticatedRateLimitMax = 10;
@@ -1166,6 +1275,11 @@ describe('responses websocket transport', () => {
         id: 45,
       },
     };
+    selectPreferredChannelMock.mockImplementation(async (
+      _model: string,
+      _channelId: number,
+      policy: { excludedSiteIds?: number[] },
+    ) => policy?.excludedSiteIds?.includes(44) ? null : selectedChannelA);
     selectChannelMock.mockImplementation((_model: string, policy: { excludedSiteIds?: number[] }) => (
       policy?.excludedSiteIds?.includes(44) ? selectedChannelB : selectedChannelA
     ));
@@ -1206,8 +1320,12 @@ describe('responses websocket transport', () => {
     socket.close();
 
     expect(authorizeCalls).toBe(3);
-    expect(selectChannelMock).toHaveBeenCalledTimes(3);
-    expect(selectChannelMock.mock.calls[1]?.[1]).toMatchObject({ excludedSiteIds: [44] });
+    expect(selectPreferredChannelMock).toHaveBeenCalledTimes(1);
+    expect(selectPreferredChannelMock.mock.calls[0]).toMatchObject([
+      'gpt-5.4',
+      selectedChannelA.channel.id,
+      { excludedSiteIds: [44] },
+    ]);
     expect(upstreamRequests).toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
