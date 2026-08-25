@@ -228,11 +228,12 @@ Metapi 当前有三类主要配置入口：
 - **全局层**使用 `REQUEST_RATE_LIMIT_MAX` 和 `REQUEST_RATE_LIMIT_WINDOW_MS`，按 TCP socket 的 `remoteAddress` 计数。这是有意保守的粗粒度保护：同一个 socket 共享一个桶，不按用户、Token 或 provider 细分。
 - **管理员 API**在管理员认证成功后，使用固定的 `admin` 身份计数。因此当前进程内所有已认证的管理员 API 请求共享一个 `AUTHENTICATED_RATE_LIMIT_MAX` 桶。
 - **下游代理**在代理认证成功后按认证结果计数：托管下游密钥使用 `managed:<managed-key-id>` 身份，各托管密钥相互独立；全局 `PROXY_TOKEN` 使用 `global` 身份，使用该全局 Token 的代理请求共享一个桶。
+- **Responses 原始 WebSocket**升级在提取令牌和数据库认证之前，先按 TCP socket `remoteAddress` 进入全局粗粒度边界；认证成功后，连接创建和每个请求 frame 分别使用认证身份桶，并共享 `AUTHENTICATED_RATE_LIMIT_MAX` 上限。连接桶与 frame 桶相互独立，frame 被拒绝时返回 WebSocket `429` 错误和重试秒数，不会继续路由或消耗托管配额。
 - 认证失败的请求不会进入上述认证身份桶，但仍会受到全局层保护。
 
 全局层直接使用 socket 地址，不使用 `X-Forwarded-For` 作为限流身份；管理员、托管密钥和全局代理 Token 的认证身份也不由 `X-Forwarded-For` 决定。反向代理即使改变该请求头，也不会为这些限流边界生成新的桶。现有的 IP 白名单和路由专属保护仍按各自既有语义工作。
 
-限流计数器保存在当前 Node.js 进程内。多进程、多容器或多副本部署时，每个实例都有独立计数，不能自动形成集群级上限；需要跨实例统一限制时，建议接入共享限流存储（例如 Redis），或在服务前使用具备共享状态的网关、WAF 或负载均衡器。
+限流计数器和 Responses WebSocket 的内部 HTTP fallback 上下文都保存在当前 Node.js 进程内。多进程、多容器或多副本部署时，每个实例都有独立计数，不能自动形成集群级上限；需要跨实例统一限制时，建议接入共享限流存储（例如 Redis），或在服务前使用具备共享状态的网关、WAF 或负载均衡器。
 
 `GET /api/desktop/health` 是健康探测例外，不要求认证，也不参与全局限流。其他更靠近敏感操作的路由仍保留更严格的路由级 guard；例如修改管理员 Token 的路由仍限制为每个来源地址每 60 秒最多 3 次。这些更严格的限制与全局、认证边界叠加，不会因新增全局限流而取消。
 

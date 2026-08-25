@@ -34,6 +34,50 @@ describe('proxyAuthMiddleware', () => {
     await app.close();
   });
 
+  it('does not trust a synthetic execution key without the matching active context', async () => {
+    const {
+      createProxyAuthRateLimitHook,
+      runWithProxyAuthExecutionContext,
+    } = await import('./auth.js');
+    const app = Fastify();
+    app.addHook('onRequest', createProxyAuthRateLimitHook({
+      bucket: 'proxy-authenticated-execution-context-test',
+      max: 10,
+      windowMs: 60_000,
+    }));
+    app.post('/v1/responses', async () => ({ ok: true }));
+
+    const authResult = {
+      ok: true as const,
+      source: 'global' as const,
+      token: 'global-token',
+      key: null,
+      policy: {},
+    };
+    let resolveExecutionKey!: (executionKey: string) => void;
+    const executionKeyPromise = new Promise<string>((resolve) => {
+      resolveExecutionKey = resolve;
+    });
+    const externalRequest = (async () => {
+      const executionKey = await executionKeyPromise;
+      return app.inject({
+        method: 'POST',
+        url: '/v1/responses',
+        remoteAddress: executionKey,
+        payload: {},
+      });
+    })();
+
+    await runWithProxyAuthExecutionContext(authResult, '198.51.100.42', async (executionKey) => {
+      resolveExecutionKey(executionKey);
+      const response = await externalRequest;
+      expect(response.statusCode).toBe(401);
+      return undefined;
+    });
+
+    await app.close();
+  });
+
   it('returns no proxy rate-limit identity before authentication', async () => {
     const { getProxyRateLimitIdentity } = await import('./auth.js');
     const app = Fastify();
@@ -47,6 +91,7 @@ describe('proxyAuthMiddleware', () => {
     expect(response.json()).toEqual({ identity: null });
     await app.close();
   });
+
   it('stores managed key context without consuming quota in the auth hook', async () => {
     authorizeDownstreamTokenMock.mockResolvedValue({
       ok: true,

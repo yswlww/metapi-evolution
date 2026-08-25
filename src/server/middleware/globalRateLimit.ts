@@ -1,5 +1,6 @@
 import fastifyRateLimit from '@fastify/rate-limit';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { resolveProxyAuthSocketAddress } from './auth.js';
 
 export type GlobalRateLimitOptions = {
   max: number;
@@ -14,7 +15,7 @@ export async function registerGlobalRateLimit(
     global: true,
     max: options.max,
     timeWindow: options.windowMs,
-    keyGenerator: (request) => request.raw.socket.remoteAddress || 'unknown',
+    keyGenerator: (request) => resolveProxyAuthSocketAddress(request),
     errorResponseBuilder: (_request, context) => ({
       statusCode: context.statusCode,
       error: 'Too many requests',
