@@ -58,6 +58,7 @@ import {
   parseBatchApiKeys,
 } from "../../services/apiKeyBatch.js";
 import { createManualAccount } from "../../services/manualAccountCreationService.js";
+import { normalizePlatformUserId } from "../../services/platformUserId.js";
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -536,7 +537,7 @@ export async function accountsRoutes(app: FastifyInstance) {
       }
 
       const guessedPlatformUserId = guessPlatformUserIdFromUsername(username);
-      const platformUserId = loginResult.platformUserId ?? guessedPlatformUserId;
+      const platformUserId = normalizePlatformUserId(loginResult.platformUserId) ?? guessedPlatformUserId;
 
       // Auto-fetch API token(s)
       let apiToken: string | null = null;

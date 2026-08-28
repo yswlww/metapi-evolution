@@ -6,6 +6,7 @@ const adapterMock = {
 };
 
 const selectAllMock = vi.fn();
+const selectGetMock = vi.fn();
 const updateSetMock = vi.fn();
 const insertValuesMock = vi.fn();
 const reportTokenExpiredMock = vi.fn();
@@ -18,13 +19,14 @@ const undiciFetchMock = vi.fn();
 vi.mock('../db/index.js', () => {
   const selectChain = {
     all: () => selectAllMock(),
+    get: () => selectGetMock(),
     where: () => selectChain,
     innerJoin: () => selectChain,
     from: () => selectChain,
   };
 
   const updateWhereChain = {
-    run: () => ({}),
+    run: () => ({ changes: 1 }),
   };
 
   const updateSetChain = {
@@ -88,6 +90,7 @@ describe('balanceService auto relogin', () => {
     adapterMock.getBalance.mockReset();
     adapterMock.login.mockReset();
     selectAllMock.mockReset();
+    selectGetMock.mockReset();
     updateSetMock.mockReset();
     insertValuesMock.mockReset();
     reportTokenExpiredMock.mockReset();
@@ -130,6 +133,7 @@ describe('balanceService auto relogin', () => {
         },
       },
     ]);
+    selectGetMock.mockImplementation(() => selectAllMock()[0]?.accounts ?? null);
 
     adapterMock.getBalance
       .mockRejectedValueOnce(new Error('HTTP 401: access token required'))

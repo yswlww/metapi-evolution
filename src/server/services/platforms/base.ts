@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
+import { normalizePlatformUserId } from '../platformUserId.js';
 
 export interface CheckinResult {
   success: boolean;
@@ -51,15 +52,6 @@ function getRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function parsePositiveSafeInteger(value: unknown): number | undefined {
-  if (typeof value === 'number') {
-    return Number.isSafeInteger(value) && value > 0 ? value : undefined;
-  }
-  if (typeof value !== 'string' || !/^\d+$/.test(value)) return undefined;
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
-}
-
 export function extractPlatformUserIdFromLoginPayload(payload: unknown): number | undefined {
   const response = getRecord(payload);
   const data = getRecord(response?.data);
@@ -68,7 +60,7 @@ export function extractPlatformUserIdFromLoginPayload(payload: unknown): number 
   const candidates = [data?.id, dataUser?.id, user?.id, response?.id];
 
   for (const candidate of candidates) {
-    const id = parsePositiveSafeInteger(candidate);
+    const id = normalizePlatformUserId(candidate);
     if (id) return id;
   }
   return undefined;

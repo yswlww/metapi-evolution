@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import {
   getAutoReloginConfig,
@@ -9,12 +9,14 @@ import {
 import { decryptAccountPassword } from './accountCredentialService.js';
 import { getAdapter } from './platforms/index.js';
 import { withAccountProxyOverride } from './siteProxy.js';
+import { normalizePlatformUserId } from './platformUserId.js';
 
 type AutoReloginAccount = {
   id: number;
   username?: string | null;
   extraConfig?: string | null;
   status?: string | null;
+  updatedAt?: string | null;
 };
 
 type AutoReloginSite = {
@@ -28,8 +30,17 @@ export type AutoReloginResult = {
   extraConfig: string | null | undefined;
 };
 
-function isPositiveSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+const AUTO_RELOGIN_PERSIST_MAX_ATTEMPTS = 3;
+
+function hasSameAutoReloginCredentials(
+  left: { username: string; passwordCipher: string; updatedAt?: string } | null,
+  right: { username: string; passwordCipher: string; updatedAt?: string } | null,
+): boolean {
+  return !!left
+    && !!right
+    && left.username === right.username
+    && left.passwordCipher === right.passwordCipher
+    && left.updatedAt === right.updatedAt;
 }
 
 export async function autoReloginAccount(
@@ -51,31 +62,48 @@ export async function autoReloginAccount(
   );
   if (!loginResult.success || !loginResult.accessToken) return null;
 
-  const authoritativePlatformUserId = isPositiveSafeInteger(loginResult.platformUserId)
-    ? loginResult.platformUserId
-    : undefined;
-  const platformUserId = authoritativePlatformUserId
-    ?? resolvePlatformUserId(account.extraConfig, account.username);
-  const extraConfig = authoritativePlatformUserId
-    ? mergeAccountExtraConfig(account.extraConfig, { platformUserId: authoritativePlatformUserId })
-    : account.extraConfig;
-  const updates: Record<string, unknown> = {
-    accessToken: loginResult.accessToken,
-    updatedAt: new Date().toISOString(),
-    status: account.status === 'expired' ? 'active' : account.status,
-  };
-  if (extraConfig !== account.extraConfig) {
-    updates.extraConfig = extraConfig;
+  for (let attempt = 0; attempt < AUTO_RELOGIN_PERSIST_MAX_ATTEMPTS; attempt += 1) {
+    const currentAccount = await db.select()
+      .from(schema.accounts)
+      .where(eq(schema.accounts.id, account.id))
+      .get();
+    if (!currentAccount) return null;
+
+    if (!hasSameAutoReloginCredentials(relogin, getAutoReloginConfig(currentAccount.extraConfig))) {
+      return null;
+    }
+
+    const authoritativePlatformUserId = normalizePlatformUserId(loginResult.platformUserId);
+    const platformUserId = authoritativePlatformUserId
+      ?? resolvePlatformUserId(currentAccount.extraConfig, currentAccount.username);
+    const extraConfig = authoritativePlatformUserId
+      ? mergeAccountExtraConfig(currentAccount.extraConfig, { platformUserId: authoritativePlatformUserId })
+      : currentAccount.extraConfig;
+    const updates: Record<string, unknown> = {
+      accessToken: loginResult.accessToken,
+      updatedAt: new Date().toISOString(),
+      status: currentAccount.status === 'expired' ? 'active' : currentAccount.status,
+    };
+    if (extraConfig !== currentAccount.extraConfig) {
+      updates.extraConfig = extraConfig;
+    }
+
+    const result = await db.update(schema.accounts)
+      .set(updates)
+      .where(and(
+        eq(schema.accounts.id, currentAccount.id),
+        eq(schema.accounts.extraConfig, currentAccount.extraConfig),
+        eq(schema.accounts.updatedAt, currentAccount.updatedAt),
+      ))
+      .run();
+    if (result.changes > 0) {
+      return {
+        accessToken: loginResult.accessToken,
+        ...(platformUserId ? { platformUserId } : {}),
+        extraConfig,
+      };
+    }
   }
 
-  await db.update(schema.accounts)
-    .set(updates)
-    .where(eq(schema.accounts.id, account.id))
-    .run();
-
-  return {
-    accessToken: loginResult.accessToken,
-    ...(platformUserId ? { platformUserId } : {}),
-    extraConfig,
-  };
+  return null;
 }

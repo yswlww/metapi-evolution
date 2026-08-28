@@ -112,4 +112,30 @@ describe('accounts password login user ID persistence', () => {
       platformUserId: 7659,
     }));
   });
+
+  it('falls back to a safe username suffix when an adapter returns an invalid runtime login ID', async () => {
+    loginMock.mockResolvedValue({
+      success: true,
+      accessToken: 'session-token',
+      platformUserId: '80312abc',
+    });
+    const site = await db.insert(schema.sites).values({
+      name: 'Login Site',
+      url: 'https://login.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/accounts/login',
+      payload: { siteId: site.id, username: 'demo-user_7659', password: 'demo-password' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const account = await db.select().from(schema.accounts).get();
+    expect(JSON.parse(String(account?.extraConfig))).toEqual(expect.objectContaining({
+      platformUserId: 7659,
+    }));
+    expect(getApiTokenMock).toHaveBeenCalledWith(site.url, 'session-token', 7659);
+  });
 });

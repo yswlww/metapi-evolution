@@ -11,6 +11,7 @@ const refreshBalanceMock = vi.fn();
 const decryptPasswordMock = vi.fn();
 
 const selectAllMock = vi.fn();
+const selectGetMock = vi.fn();
 const insertValuesMock = vi.fn();
 const updateSetMock = vi.fn();
 
@@ -37,6 +38,7 @@ async function getRewardBalanceFreshnessWindow(): Promise<number | undefined> {
 vi.mock('../db/index.js', () => {
   const selectChain = {
     all: () => selectAllMock(),
+    get: () => selectGetMock(),
     where: () => selectChain,
     innerJoin: () => selectChain,
     from: () => selectChain,
@@ -51,7 +53,7 @@ vi.mock('../db/index.js', () => {
   };
 
   const updateWhereChain = {
-    run: () => ({}),
+    run: () => ({ changes: 1 }),
   };
 
   const updateSetChain = {
@@ -110,6 +112,13 @@ describe('checkinService auto relogin', () => {
     expect(isFresh?.(10, new Date(checkinStartedAt - freshnessWindow! - 1).toISOString(), checkinStartedAt)).toBe(false);
   });
 
+  it('evaluates explicit-offset balance refresh timestamps as absolute time', async () => {
+    const isFresh = await getRewardBalanceFreshnessChecker();
+    const checkinStartedAt = Date.parse('2026-08-28T10:10:00.000Z');
+
+    expect(isFresh?.(10, '2026-08-28T12:00:00.000+02:00', checkinStartedAt)).toBe(true);
+  });
+
   it('rejects missing, invalid, and future balance refresh timestamps for reward inference', async () => {
     const isFresh = await getRewardBalanceFreshnessChecker();
     const checkinStartedAt = 1_000_000_000;
@@ -128,6 +137,7 @@ describe('checkinService auto relogin', () => {
     refreshBalanceMock.mockReset();
     decryptPasswordMock.mockReset();
     selectAllMock.mockReset();
+    selectGetMock.mockReset();
     insertValuesMock.mockReset();
     updateSetMock.mockReset();
   });
@@ -157,6 +167,7 @@ describe('checkinService auto relogin', () => {
         },
       },
     ]);
+    selectGetMock.mockImplementation(() => selectAllMock()[0]?.accounts ?? null);
 
     adapterMock.checkin
       .mockResolvedValueOnce({ success: false, message: '无权进行此操作，未登录且未提供 access token' })
@@ -238,6 +249,7 @@ describe('checkinService auto relogin', () => {
         },
       },
     ]);
+    selectGetMock.mockImplementation(() => selectAllMock()[0]?.accounts ?? null);
 
     adapterMock.checkin
       .mockResolvedValueOnce({ success: false, message: 'access token expired' })
@@ -309,6 +321,7 @@ describe('checkinService auto relogin', () => {
 
     const firstInsertPayload = insertValuesMock.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(Number(firstInsertPayload?.reward)).toBeCloseTo(2.5, 6);
+    expect(refreshBalanceMock).toHaveBeenCalledTimes(1);
   });
 
   it('does not infer a reward from a stale balance after a successful checkin', async () => {
@@ -339,6 +352,7 @@ describe('checkinService auto relogin', () => {
     const result = await checkinAccount(19);
 
     expect(result.success).toBe(true);
+    expect(refreshBalanceMock).toHaveBeenCalledTimes(1);
     expect(refreshBalanceMock).toHaveBeenCalledWith(19);
     const firstInsertPayload = insertValuesMock.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(firstInsertPayload?.reward).toBeUndefined();

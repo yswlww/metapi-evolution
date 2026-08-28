@@ -1,4 +1,5 @@
 import { config } from '../config.js';
+import { normalizePlatformUserId } from './platformUserId.js';
 import type { SubscriptionPlanSummary, SubscriptionSummary } from './platforms/base.js';
 
 type AutoReloginConfig = {
@@ -70,12 +71,7 @@ function parseExtraConfig(extraConfig?: ExtraConfigInput): AccountExtraConfig {
 }
 
 function normalizeUserId(raw: unknown): number | undefined {
-  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return Math.trunc(raw);
-  if (typeof raw === 'string') {
-    const n = Number.parseInt(raw.trim(), 10);
-    if (!Number.isNaN(n) && n > 0) return n;
-  }
-  return undefined;
+  return normalizePlatformUserId(raw);
 }
 
 function normalizeNonEmptyString(raw: unknown): string | undefined {
@@ -359,6 +355,7 @@ export function mergeAccountExtraConfig(
 export function getAutoReloginConfig(extraConfig?: ExtraConfigInput): {
   username: string;
   passwordCipher: string;
+  updatedAt?: string;
 } | null {
   const parsed = parseExtraConfig(extraConfig);
   const relogin = parsed.autoRelogin;
@@ -367,6 +364,11 @@ export function getAutoReloginConfig(extraConfig?: ExtraConfigInput): {
   const username = typeof relogin.username === 'string' ? relogin.username.trim() : '';
   const passwordCipher = typeof relogin.passwordCipher === 'string' ? relogin.passwordCipher.trim() : '';
   if (!username || !passwordCipher) return null;
+  const updatedAt = normalizeNonEmptyString(relogin.updatedAt);
 
-  return { username, passwordCipher };
+  return {
+    username,
+    passwordCipher,
+    ...(updatedAt ? { updatedAt } : {}),
+  };
 }
