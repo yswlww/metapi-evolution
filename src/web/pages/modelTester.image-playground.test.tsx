@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import ModelTester from './ModelTester.js';
+import ImageResultGallery from './model-tester/ImageResultGallery.js';
 import ModernSelect from '../components/ModernSelect.js';
 import {
   DEBUG_TABS,
@@ -191,6 +192,91 @@ describe('ModelTester image generation integration', () => {
       `data:image/webp;base64,${WEBP_BASE64}`,
     ]);
     expect(collectText(root?.root.findByType('pre'))).toContain(WEBP_BASE64);
+  });
+
+  it('allows a valid custom image-generation body without a marketplace model selection', async () => {
+    apiMock.getModelsMarketplace.mockResolvedValue({ models: [] });
+
+    await act(async () => { root = create(<ModelTester />); });
+    await flush();
+
+    const modeSelect = root?.root.findAllByType(ModernSelect)
+      .find((select) => select.props.value === 'conversation');
+    await act(async () => {
+      modeSelect?.props.onChange('images.generate');
+    });
+    const customToggle = root?.root.findAllByType('input')
+      .filter((input) => input.props.type === 'checkbox')[1];
+    await act(async () => {
+      customToggle?.props.onChange({ target: { checked: true } });
+    });
+    const customBody = root?.root.findAllByType('textarea')[0];
+    await act(async () => {
+      customBody?.props.onChange({ target: { value: '{"model":"custom-image","prompt":"fox"}' } });
+    });
+
+    const send = root?.root.findAllByType('button').find((button) => collectText(button).includes('发送请求'));
+    expect(send?.props.disabled).toBe(false);
+    await act(async () => {
+      send?.props.onClick();
+      await Promise.resolve();
+    });
+
+    expect(apiMock.proxyTest).toHaveBeenCalledWith(expect.objectContaining({
+      path: '/v1/images/generations',
+      rawMode: true,
+      rawJsonText: '{"model":"custom-image","prompt":"fox"}',
+    }));
+  });
+
+  it('uses the requested generation output format snapshot after the selector changes', async () => {
+    let resolveProxyResult: ((result: unknown) => void) | undefined;
+    apiMock.proxyTest.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveProxyResult = resolve;
+    }));
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key: string) => key === MODEL_TESTER_STORAGE_KEY
+        ? serializeModelTesterSession({
+          input: '',
+          inputs: { ...DEFAULT_INPUTS, mode: 'images.generate', model: 'gpt-image-1' },
+          parameterEnabled: DEFAULT_PARAMETER_ENABLED,
+          imageParameterEnabled: { ...DEFAULT_IMAGE_PARAMETER_ENABLED, output_format: true },
+          messages: [],
+          conversationFiles: [],
+          pendingPayload: null,
+          customRequestMode: false,
+          customRequestBody: '',
+          showDebugPanel: false,
+          activeDebugTab: DEBUG_TABS.PREVIEW,
+          modeState: {
+            ...DEFAULT_MODE_STATE,
+            imagesPrompt: 'draw a fox',
+            imagesOutputFormat: 'webp',
+          },
+        })
+        : null),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    });
+
+    await act(async () => { root = create(<ModelTester />); });
+    await flush();
+    const send = root?.root.findAllByType('button').find((button) => collectText(button).includes('发送请求'));
+    await act(async () => {
+      send?.props.onClick();
+      await Promise.resolve();
+    });
+    const outputFormat = root?.root.findByProps({ 'aria-label': 'output_format' });
+    await act(async () => {
+      outputFormat?.props.onChange({ target: { value: 'jpeg' } });
+    });
+    await act(async () => {
+      resolveProxyResult?.({ data: [{ url: 'https://cdn.example/generated-image' }] });
+      await Promise.resolve();
+    });
+    await flush();
+
+    expect(root?.root.findByType(ImageResultGallery).props.outputFormat).toBe('webp');
   });
 
   it('restores the asset prompt for the saved video mode instead of a different mode', async () => {

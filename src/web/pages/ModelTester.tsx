@@ -138,6 +138,18 @@ const formatJson = (value: unknown): string => {
   }
 };
 
+const getImageGenerationOutputFormat = (envelope: ProxyTestEnvelope): string | null => {
+  if (envelope.path !== '/v1/images/generations') return null;
+  const body = envelope.rawMode
+    ? parseCustomRequestBody(envelope.rawJsonText || '')
+    : envelope.jsonBody;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const outputFormat = (body as Record<string, unknown>).output_format;
+  return typeof outputFormat === 'string' && outputFormat.trim()
+    ? outputFormat.trim()
+    : null;
+};
+
 const extractErrorMessage = (error: unknown): string => {
   const data = error as any;
   return data?.error?.message || data?.message || 'request failed';
@@ -693,6 +705,7 @@ export default function ModelTester() {
   const [debugTimeline, setDebugTimeline] = useState<DebugTimelineEntry[]>([]);
   const [debugTimestamp, setDebugTimestamp] = useState('');
   const [nonConversationResult, setNonConversationResult] = useState<unknown>(null);
+  const [imageResultOutputFormat, setImageResultOutputFormat] = useState<string | null>(null);
 
   const [searchQueryValue, setSearchQueryValue] = useState('');
   const [searchAllowedDomains, setSearchAllowedDomains] = useState('');
@@ -1527,12 +1540,15 @@ export default function ModelTester() {
     [filteredModels],
   );
   const canSend = useMemo(() => {
-    if (sending || pendingJobId || !inputs.model) return false;
+    const hasCustomImageGenerationBody = inputs.mode === 'images.generate'
+      && customRequestMode
+      && parseCustomRequestBody(customRequestBody) !== null;
+    if (sending || pendingJobId || (!inputs.model && !hasCustomImageGenerationBody)) return false;
     if (inputs.mode !== 'conversation') {
       if (inputs.mode === 'embeddings') return Boolean(embeddingInputText.trim());
       if (inputs.mode === 'search') return Boolean(searchQueryValue.trim());
       if (inputs.mode === 'images.generate') return customRequestMode
-        ? Boolean(customRequestBody.trim())
+        ? hasCustomImageGenerationBody
         : Boolean(modeState.imagesPrompt.trim());
       if (inputs.mode === 'images.edit') return Boolean(assetPrompt.trim()) && Boolean(imageSourceFile);
       if (inputs.mode === 'videos.create') return Boolean(assetPrompt.trim());
@@ -1884,7 +1900,10 @@ export default function ModelTester() {
 
   const dispatchProxyEnvelope = useCallback(async (envelope: ProxyTestEnvelope, nextMessages?: ChatMessage[]) => {
     const effectiveEnvelope = attachEnvelopeForcedChannel(envelope);
+    const requestedImageOutputFormat = getImageGenerationOutputFormat(effectiveEnvelope);
     setError('');
+    setNonConversationResult(null);
+    setImageResultOutputFormat(null);
     setDebugRequest(formatJson(effectiveEnvelope.rawMode
       ? { path: effectiveEnvelope.path, rawJsonText: effectiveEnvelope.rawJsonText, forcedChannelId: effectiveEnvelope.forcedChannelId }
       : effectiveEnvelope));
@@ -1903,6 +1922,7 @@ export default function ModelTester() {
       setDebugResponse(formatJson(result));
       setActiveDebugTab(DEBUG_TABS.RESPONSE);
       setNonConversationResult(result);
+      setImageResultOutputFormat(requestedImageOutputFormat);
 
       if (nextMessages) {
         setMessages((prev) => applyAssistantSuccess(nextMessages, result));
@@ -2145,6 +2165,7 @@ export default function ModelTester() {
     setDebugTimeline([]);
     setDebugTimestamp('');
     setNonConversationResult(null);
+    setImageResultOutputFormat(null);
     setSearchQueryValue('');
     setSearchAllowedDomains('');
     setSearchBlockedDomains('');
@@ -2808,7 +2829,9 @@ export default function ModelTester() {
                 {(inputs.mode === 'images.generate' || inputs.mode === 'images.edit') && (
                   <ImageResultGallery
                     result={nonConversationResult}
-                    outputFormat={modeState.imagesOutputFormat}
+                    outputFormat={inputs.mode === 'images.generate'
+                      ? imageResultOutputFormat
+                      : modeState.imagesOutputFormat}
                     isMobile={isMobile}
                   />
                 )}

@@ -49,7 +49,7 @@ const getErrorMessage = (payload: Record<string, unknown>): string | null => {
   return null;
 };
 
-const isActionableImageUrl = (value: string): boolean => {
+export const isActionableImageUrl = (value: string): boolean => {
   try {
     const parsed = new URL(value);
     return (parsed.protocol === 'http:' || parsed.protocol === 'https:')
@@ -60,11 +60,13 @@ const isActionableImageUrl = (value: string): boolean => {
   }
 };
 
-const decodeBase64 = (value: string): Uint8Array | null => {
+export const decodeBase64SignaturePrefix = (value: string): Uint8Array | null => {
   if (!BASE64_PATTERN.test(value)) return null;
 
-  const bytes: number[] = [];
-  for (let index = 0; index < value.length; index += 4) {
+  const bytes = new Uint8Array(12);
+  let byteCount = 0;
+  const encodedPrefixLength = Math.min(value.length, 16);
+  for (let index = 0; index < encodedPrefixLength; index += 4) {
     const first = BASE64_ALPHABET.indexOf(value[index]);
     const second = BASE64_ALPHABET.indexOf(value[index + 1]);
     const third = value[index + 2] === '=' ? 0 : BASE64_ALPHABET.indexOf(value[index + 2]);
@@ -72,16 +74,23 @@ const decodeBase64 = (value: string): Uint8Array | null => {
     if (first < 0 || second < 0 || third < 0 || fourth < 0) return null;
 
     const group = (first << 18) | (second << 12) | (third << 6) | fourth;
-    bytes.push((group >> 16) & 0xff);
-    if (value[index + 2] !== '=') bytes.push((group >> 8) & 0xff);
-    if (value[index + 3] !== '=') bytes.push(group & 0xff);
+    bytes[byteCount] = (group >> 16) & 0xff;
+    byteCount += 1;
+    if (value[index + 2] !== '=' && byteCount < bytes.length) {
+      bytes[byteCount] = (group >> 8) & 0xff;
+      byteCount += 1;
+    }
+    if (value[index + 3] !== '=' && byteCount < bytes.length) {
+      bytes[byteCount] = group & 0xff;
+      byteCount += 1;
+    }
   }
 
-  return Uint8Array.from(bytes);
+  return bytes.slice(0, byteCount);
 };
 
 const inferBase64ImageMimeType = (value: string): string | null => {
-  const bytes = decodeBase64(value);
+  const bytes = decodeBase64SignaturePrefix(value);
   if (!bytes) return null;
 
   if (

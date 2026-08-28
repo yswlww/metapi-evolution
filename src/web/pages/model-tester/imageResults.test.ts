@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { imageMimeType, normalizeImageResults } from './imageResults.js';
+import * as imageResults from './imageResults.js';
+import {
+  imageMimeType,
+  normalizeImageResults,
+} from './imageResults.js';
 
 const PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==';
 const WEBP_BASE64 = 'UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoBAAEAAUAmJaACdLoB+AADsAD+8ut//NgVzXPv9//S4P0uD9Lg/9KQAAA=';
@@ -102,6 +106,22 @@ describe('image result normalization', () => {
       kind: 'url',
       mimeType: 'image/jpeg',
       downloadName: 'generated-1.jpeg',
+    });
+  });
+
+  it('decodes only the bounded base64 prefix needed for image signature checks', () => {
+    const largeWebpPayload = `UklGRgAAAABXRUJQ${'AAAA'.repeat(100_000)}`;
+    const decodeBase64SignaturePrefix = (imageResults as Record<string, unknown>).decodeBase64SignaturePrefix;
+
+    expect(decodeBase64SignaturePrefix).toBeTypeOf('function');
+    if (typeof decodeBase64SignaturePrefix !== 'function') return;
+
+    expect(decodeBase64SignaturePrefix(largeWebpPayload)).toEqual(new Uint8Array([
+      0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50,
+    ]));
+    expect(normalizeImageResults({ data: [{ b64_json: largeWebpPayload }] }).images[0]).toMatchObject({
+      mimeType: 'image/webp',
+      src: `data:image/webp;base64,${largeWebpPayload}`,
     });
   });
 

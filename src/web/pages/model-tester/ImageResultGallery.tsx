@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import {
+  isActionableImageUrl,
   normalizeImageResults,
   type NormalizedImageResult,
 } from './imageResults.js';
@@ -10,15 +11,37 @@ type ImageResultGalleryProps = {
   isMobile?: boolean;
 };
 
+const triggerImageDownload = (src: string, downloadName: string): boolean => {
+  if (typeof document === 'undefined') return false;
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = src;
+    anchor.download = downloadName;
+    anchor.rel = 'noopener';
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export const copyImageText = async (text: string): Promise<boolean> => {
   const value = text.trim();
   if (!value) return false;
-  try {
-    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
       await navigator.clipboard.writeText(value);
       return true;
+    } catch {
+      // Fall through to the legacy copy boundary when clipboard permission is unavailable.
     }
-    if (typeof document === 'undefined') return false;
+  }
+
+  if (typeof document === 'undefined') return false;
+  try {
     const area = document.createElement('textarea');
     area.value = value;
     area.setAttribute('readonly', '');
@@ -34,30 +57,39 @@ export const copyImageText = async (text: string): Promise<boolean> => {
   }
 };
 
-export const downloadImageResult = (image: NormalizedImageResult): boolean => {
-  if (typeof document === 'undefined') return false;
-  try {
-    const anchor = document.createElement('a');
-    anchor.href = image.src;
-    anchor.download = image.downloadName;
-    anchor.rel = 'noopener';
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
 export const openImageUrl = (url: string): boolean => {
-  if (typeof window === 'undefined' || !url.trim()) return false;
+  if (typeof window === 'undefined' || !isActionableImageUrl(url)) return false;
   try {
     window.open(url, '_blank', 'noopener,noreferrer');
     return true;
   } catch {
     return false;
   }
+};
+
+export const downloadImageResult = async (image: NormalizedImageResult): Promise<boolean> => {
+  if (image.kind !== 'url' || !image.url) {
+    return triggerImageDownload(image.src, image.downloadName);
+  }
+  if (!isActionableImageUrl(image.url)) return false;
+
+  try {
+    if (typeof fetch !== 'function' || typeof URL.createObjectURL !== 'function') {
+      throw new Error('Blob download unavailable');
+    }
+    const response = await fetch(image.url, { credentials: 'omit' });
+    if (!response.ok) throw new Error(`Image download failed: ${response.status}`);
+    const objectUrl = URL.createObjectURL(await response.blob());
+    try {
+      if (triggerImageDownload(objectUrl, image.downloadName)) return true;
+    } finally {
+      if (typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(objectUrl);
+    }
+  } catch {
+    // CORS blocks and browser download limitations fall back to a safe new tab.
+  }
+
+  return openImageUrl(image.url);
 };
 
 export default function ImageResultGallery({ result, outputFormat = 'png', isMobile = false }: ImageResultGalleryProps) {
@@ -112,6 +144,8 @@ export default function ImageResultGallery({ result, outputFormat = 'png', isMob
           <img
             src={image.src}
             alt={image.revisedPrompt || `generated-${index + 1}`}
+            loading="lazy"
+            decoding="async"
             style={{ width: '100%', display: 'block', aspectRatio: '1 / 1', objectFit: 'contain', background: 'var(--color-bg)' }}
           />
           <div style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -127,7 +161,7 @@ export default function ImageResultGallery({ result, outputFormat = 'png', isMob
                 className="btn btn-ghost"
                 style={{ border: '1px solid var(--color-border)', padding: '4px 8px', fontSize: 11 }}
                 aria-label={`下载图片 ${index + 1}`}
-                onClick={() => { downloadImageResult(image); }}
+                onClick={() => { void downloadImageResult(image); }}
               >
                 下载
               </button>
