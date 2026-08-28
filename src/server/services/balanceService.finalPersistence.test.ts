@@ -90,6 +90,14 @@ function configureInitialRow(accountRow: ReturnType<typeof account>, siteRow = s
   selectAllMock.mockReturnValue([{ accounts: accountRow, sites: siteRow }]);
 }
 
+function conditionContains(condition: unknown, expected: string): boolean {
+  if (condition === expected) return true;
+  if (!condition || typeof condition !== 'object') return false;
+  const queryChunks = (condition as { queryChunks?: unknown }).queryChunks;
+  if (!Array.isArray(queryChunks)) return false;
+  return queryChunks.some((chunk) => conditionContains(chunk, expected));
+}
+
 describe('balanceService final config persistence', () => {
   beforeEach(() => {
     adapterMock.getBalance.mockReset();
@@ -328,11 +336,17 @@ describe('balanceService final config persistence', () => {
       .mockResolvedValueOnce(current)
       .mockResolvedValueOnce(current)
       .mockResolvedValueOnce(current);
-    updateRunMock
-      .mockResolvedValueOnce({ changes: 0 })
-      .mockResolvedValueOnce({ changes: 0 })
-      .mockResolvedValueOnce({ changes: 0 })
-      .mockResolvedValueOnce({ changes: 0 });
+    let currentToken = 'old-token';
+    updateRunMock.mockImplementation(() => {
+      if (updateSetMock.mock.calls.length <= 3) return { changes: 0 };
+
+      currentToken = 'replacement-token';
+      const condition = updateWhereMock.mock.calls.at(-1)?.[0];
+      const requiresOldRequestToken = currentToken === 'replacement-token'
+        && conditionContains(condition, 'accessToken')
+        && conditionContains(condition, 'old-token');
+      return { changes: requiresOldRequestToken ? 0 : 1 };
+    });
 
     const { refreshBalance } = await import('./balanceService.js');
     await expect(refreshBalance(1)).resolves.toEqual(expect.objectContaining({ balance: 12 }));
