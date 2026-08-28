@@ -27,9 +27,10 @@ describe('platformIdentity', () => {
     expect(detectPlatformByUrlHint('https://evil.example.com/?next=https://api.openai.com/v1/models')).toBeUndefined();
   });
 
-  it('recognizes only exact official OrcaRouter HTTP(S) hostnames', () => {
+  it('recognizes only exact official HTTPS OrcaRouter hostnames', () => {
     expect(detectPlatformByUrlHint('https://api.orcarouter.ai/v1')).toBe('orcarouter');
     expect(detectPlatformByUrlHint('api.orcarouter.ai/v1')).toBe('orcarouter');
+    expect(detectPlatformByUrlHint('http://api.orcarouter.ai/v1')).toBeUndefined();
 
     expect(detectPlatformByUrlHint('https://evil-api.orcarouter.ai/v1')).toBeUndefined();
     expect(detectPlatformByUrlHint('https://api.orcarouter.ai.attacker.test/v1')).toBeUndefined();

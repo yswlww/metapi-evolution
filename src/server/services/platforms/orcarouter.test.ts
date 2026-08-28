@@ -29,6 +29,16 @@ describe('OrcaRouterAdapter', () => {
     expect(adapter.requests).toEqual([]);
   });
 
+  it('rejects unsafe token-bearing base URLs before model discovery starts', async () => {
+    const adapter = new InspectableOrcaRouterAdapter();
+
+    await expect(adapter.getModels('http://api.orcarouter.ai/v1', 'orc-key')).rejects.toThrow();
+    await expect(adapter.getModels('https://key:secret@api.orcarouter.ai/v1', 'orc-key')).rejects.toThrow();
+    await expect(adapter.getModels('ftp://api.orcarouter.ai/v1', 'orc-key')).rejects.toThrow();
+
+    expect(adapter.requests).toEqual([]);
+  });
+
   it('gets normalized model IDs from the configured OpenAI-compatible models endpoint', async () => {
     const adapter = new InspectableOrcaRouterAdapter();
     adapter.response = {

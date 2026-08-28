@@ -88,7 +88,7 @@ export function detectPlatformByUrlHint(url) {
     return 'gemini';
   }
   if (host === 'cloudcode-pa.googleapis.com') return 'gemini-cli';
-  if (host === 'api.orcarouter.ai' && (parsed?.protocol === 'http:' || parsed?.protocol === 'https:')) return 'orcarouter';
+  if (host === 'api.orcarouter.ai' && parsed?.protocol === 'https:') return 'orcarouter';
   if ((host === '127.0.0.1' || host === 'localhost') && port === '8317') return 'cliproxyapi';
   if (host.includes('anyrouter')) return 'anyrouter';
   if (host.includes('donehub') || host.includes('done-hub')) return 'done-hub';
