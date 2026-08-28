@@ -111,7 +111,10 @@ function normalizeSitePlatform(value: string | undefined): string | null {
   if (value === undefined) return null;
   const normalized = value.trim().toLowerCase();
   if (!normalized) return null;
-  return normalizePlatformAlias(normalized);
+  const canonicalPlatform = normalizePlatformAlias(normalized);
+  return canonicalPlatform === 'cliproxyapi' || canonicalPlatform === 'orcarouter'
+    ? canonicalPlatform
+    : normalized;
 }
 
 type SiteApiEndpointInputRow = {

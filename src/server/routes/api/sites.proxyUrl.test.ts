@@ -696,6 +696,47 @@ describe('sites proxy settings', () => {
     expect(persisted?.platform).toBe('cliproxyapi');
   });
 
+  it.each(['orca-router', 'orca router'])('persists create platform alias %s as orcarouter', async (platform) => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: `OrcaRouter Create ${platform}`,
+        url: `https://create-${platform.replaceAll(' ', '-')}.example.com`,
+        platform,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ platform: 'orcarouter' });
+    const [persisted] = await db.select().from(schema.sites).all();
+    expect(persisted?.platform).toBe('orcarouter');
+  });
+
+  it.each(['orca-router', 'orca router'])('persists update platform alias %s as orcarouter', async (platform) => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: `OrcaRouter Update ${platform}`,
+        url: `https://update-${platform.replaceAll(' ', '-')}.example.com`,
+        platform: 'new-api',
+      },
+    });
+    expect(created.statusCode).toBe(200);
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${(created.json() as { id: number }).id}`,
+      payload: { platform },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ platform: 'orcarouter' });
+    const [persisted] = await db.select().from(schema.sites).all();
+    expect(persisted?.platform).toBe('orcarouter');
+  });
+
   it.each(NON_CPA_PLATFORM_ALIAS_CASES)(
     'preserves pre-fix create persistence for non-CPA alias $input',
     async ({ input, persisted }) => {
