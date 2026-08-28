@@ -1,5 +1,6 @@
 import type { PlatformAdapter } from './base.js';
 import { AnyRouterAdapter } from './anyrouter.js';
+import { OrcaRouterAdapter } from './orcarouter.js';
 import { NewApiAdapter } from './newApi.js';
 import { OneApiAdapter } from './oneApi.js';
 import { VeloeraAdapter } from './veloera.js';
@@ -25,6 +26,7 @@ const adapters: PlatformAdapter[] = [
   new GeminiCliAdapter(),
   new AntigravityAdapter(),
   new CliProxyApiAdapter(),
+  new OrcaRouterAdapter(),
   new AnyRouterAdapter(),
   new DoneHubAdapter(),
   new OneHubAdapter(),

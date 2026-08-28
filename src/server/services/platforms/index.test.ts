@@ -48,6 +48,11 @@ describe('getAdapter platform aliases', () => {
     expect(adapter?.platformName).toBe('veloera');
   });
 
+  it('returns dedicated OrcaRouter adapter for OrcaRouter aliases', () => {
+    expect(getAdapter('orcarouter')?.platformName).toBe('orcarouter');
+    expect(getAdapter('orca-router')?.platformName).toBe('orcarouter');
+  });
+
   it('returns undefined for unknown platforms', () => {
     expect(getAdapter('unknown-platform')).toBeUndefined();
   });
