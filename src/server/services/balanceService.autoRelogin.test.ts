@@ -53,7 +53,13 @@ vi.mock('../db/index.js', () => {
       insert: () => insertChain,
     },
     schema: {
-      accounts: { id: 'id', siteId: 'siteId', status: 'status' },
+      accounts: {
+        id: 'id',
+        siteId: 'siteId',
+        status: 'status',
+        extraConfig: 'extraConfig',
+        updatedAt: 'updatedAt',
+      },
       sites: { id: 'id' },
       events: {},
     },
@@ -115,6 +121,7 @@ describe('balanceService auto relogin', () => {
           username: 'linuxdo_11494',
           accessToken: 'stale-token',
           status: 'active',
+          updatedAt: '2026-08-28T00:00:00.000Z',
           extraConfig: JSON.stringify({
             platformUserId: 11494,
             credentialMode: 'session',
@@ -498,6 +505,7 @@ describe('balanceService auto relogin', () => {
           username: 'linuxdo_7659',
           accessToken: 'active-token',
           status: 'active',
+          updatedAt: '2026-08-28T00:00:00.000Z',
           extraConfig: null,
         },
         sites: {
@@ -508,6 +516,7 @@ describe('balanceService auto relogin', () => {
         },
       },
     ]);
+    selectGetMock.mockImplementation(() => selectAllMock()[0]?.accounts ?? null);
 
     adapterMock.getBalance.mockResolvedValueOnce({ balance: 12, used: 1, quota: 13 });
     undiciFetchMock

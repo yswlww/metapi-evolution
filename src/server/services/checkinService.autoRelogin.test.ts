@@ -150,6 +150,7 @@ describe('checkinService auto relogin', () => {
           username: 'linuxdo_7659',
           accessToken: 'expired-token',
           status: 'active',
+          updatedAt: '2026-08-28T00:00:00.000Z',
           extraConfig: JSON.stringify({
             credentialMode: 'session',
             proxyUrl: 'http://proxy.example:8080',
@@ -237,6 +238,7 @@ describe('checkinService auto relogin', () => {
           username: 'linuxdo_7659',
           accessToken: 'expired-token',
           status: 'active',
+          updatedAt: '2026-08-28T00:00:00.000Z',
           extraConfig: JSON.stringify({
             autoRelogin: { username: 'linuxdo_7659', passwordCipher: 'cipher' },
           }),

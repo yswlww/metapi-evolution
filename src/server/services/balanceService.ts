@@ -1,6 +1,6 @@
 import { db, schema } from '../db/index.js';
 import { getAdapter } from './platforms/index.js';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { appendSessionTokenRebindHint, isTokenExpiredError } from './alertRules.js';
 import { reportTokenExpired } from './alertService.js';
 import {
@@ -67,6 +67,32 @@ function isUnsupportedCheckinRuntimeHealth(health: ReturnType<typeof extractRunt
 const INCOME_LOG_TYPES = [1, 4] as const;
 const LOG_PAGE_SIZE = 100;
 const LOG_MAX_PAGES = 6;
+const BALANCE_CONFIG_PERSIST_MAX_ATTEMPTS = 3;
+
+type BalanceConfigPatch = {
+  todayIncome?: number;
+  sub2apiSubscription?: NonNullable<BalanceInfo['subscriptionSummary']>;
+};
+
+function hasBalanceConfigPatch(patch: BalanceConfigPatch): boolean {
+  return patch.todayIncome !== undefined || patch.sub2apiSubscription !== undefined;
+}
+
+function mergeBalanceConfigPatch(
+  extraConfig: string | null | undefined,
+  patch: BalanceConfigPatch,
+): string | null {
+  let merged = extraConfig;
+  if (patch.todayIncome !== undefined) {
+    merged = updateTodayIncomeSnapshot(merged, patch.todayIncome);
+  }
+  if (patch.sub2apiSubscription) {
+    merged = mergeAccountExtraConfig(merged, {
+      sub2apiSubscription: buildStoredSub2ApiSubscriptionSummary(patch.sub2apiSubscription),
+    });
+  }
+  return merged ?? null;
+}
 
 function supportsTodayIncomeLogFallback(platform?: string | null): boolean {
   const normalized = (platform || '').toLowerCase();
@@ -353,35 +379,83 @@ export async function refreshBalance(accountId: number) {
     } catch {}
   }
 
-  let nextExtraConfig = activeExtraConfig;
+  const balanceConfigPatch: BalanceConfigPatch = {};
   if (typeof balanceInfo.todayIncome === 'number' && Number.isFinite(balanceInfo.todayIncome)) {
-    nextExtraConfig = updateTodayIncomeSnapshot(nextExtraConfig, balanceInfo.todayIncome);
+    balanceConfigPatch.todayIncome = balanceInfo.todayIncome;
   }
   if (balanceInfo.subscriptionSummary && isSub2ApiPlatform(site.platform)) {
-    nextExtraConfig = mergeAccountExtraConfig(nextExtraConfig, {
-      sub2apiSubscription: buildStoredSub2ApiSubscriptionSummary(balanceInfo.subscriptionSummary),
-    });
+    balanceConfigPatch.sub2apiSubscription = balanceInfo.subscriptionSummary;
   }
 
-  const existingRuntimeHealth = extractRuntimeHealth(nextExtraConfig);
-  const keepUnsupportedCheckinDegraded = isUnsupportedCheckinRuntimeHealth(existingRuntimeHealth);
-
-  const updates: Record<string, unknown> = {
+  const buildBalanceUpdates = (status: string | null | undefined): Record<string, unknown> => ({
     balance: balanceInfo.balance,
     balanceUsed: balanceInfo.used,
     quota: balanceInfo.quota,
-    status: account.status === 'expired' ? 'active' : account.status,
+    status: status === 'expired' ? 'active' : status,
     lastBalanceRefresh: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-  };
-  if (nextExtraConfig !== account.extraConfig) {
-    updates.extraConfig = nextExtraConfig;
+  });
+
+  let finalExtraConfig = activeExtraConfig;
+  if (hasBalanceConfigPatch(balanceConfigPatch)) {
+    let latestAccount: typeof schema.accounts.$inferSelect | undefined;
+    let persistedConfigPatch = false;
+
+    for (let attempt = 0; attempt < BALANCE_CONFIG_PERSIST_MAX_ATTEMPTS; attempt += 1) {
+      const currentAccount = await db.select()
+        .from(schema.accounts)
+        .where(eq(schema.accounts.id, accountId))
+        .get();
+      if (!currentAccount) break;
+      latestAccount = currentAccount;
+
+      const mergedExtraConfig = mergeBalanceConfigPatch(currentAccount.extraConfig, balanceConfigPatch);
+      const extraConfigCondition = currentAccount.extraConfig == null
+        ? isNull(schema.accounts.extraConfig)
+        : eq(schema.accounts.extraConfig, currentAccount.extraConfig);
+      const updatedAtCondition = currentAccount.updatedAt == null
+        ? isNull(schema.accounts.updatedAt)
+        : eq(schema.accounts.updatedAt, currentAccount.updatedAt);
+      const result = await db.update(schema.accounts)
+        .set({
+          ...buildBalanceUpdates(currentAccount.status),
+          extraConfig: mergedExtraConfig,
+        })
+        .where(and(
+          eq(schema.accounts.id, accountId),
+          extraConfigCondition,
+          updatedAtCondition,
+        ))
+        .run();
+      if (result.changes > 0) {
+        finalExtraConfig = mergedExtraConfig;
+        persistedConfigPatch = true;
+        break;
+      }
+    }
+
+    if (!persistedConfigPatch) {
+      await db.update(schema.accounts)
+        .set(buildBalanceUpdates(latestAccount?.status ?? account.status))
+        .where(eq(schema.accounts.id, accountId))
+        .run();
+      finalExtraConfig = latestAccount?.extraConfig ?? activeExtraConfig;
+    }
+  } else {
+    await db.update(schema.accounts)
+      .set(buildBalanceUpdates(account.status))
+      .where(eq(schema.accounts.id, accountId))
+      .run();
+
+    const currentAccount = await db.select()
+      .from(schema.accounts)
+      .where(eq(schema.accounts.id, accountId))
+      .get();
+    finalExtraConfig = currentAccount?.extraConfig ?? activeExtraConfig;
   }
 
-  await db.update(schema.accounts)
-    .set(updates)
-    .where(eq(schema.accounts.id, accountId))
-    .run();
+  const existingRuntimeHealth = extractRuntimeHealth(finalExtraConfig);
+  const keepUnsupportedCheckinDegraded = isUnsupportedCheckinRuntimeHealth(existingRuntimeHealth);
 
   setAccountRuntimeHealth(account.id, {
     state: keepUnsupportedCheckinDegraded ? 'degraded' : 'healthy',

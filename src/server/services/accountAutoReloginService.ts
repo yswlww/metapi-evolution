@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import {
   getAutoReloginConfig,
@@ -88,12 +88,18 @@ export async function autoReloginAccount(
       updates.extraConfig = extraConfig;
     }
 
+    const extraConfigCondition = currentAccount.extraConfig == null
+      ? isNull(schema.accounts.extraConfig)
+      : eq(schema.accounts.extraConfig, currentAccount.extraConfig);
+    const updatedAtCondition = currentAccount.updatedAt == null
+      ? isNull(schema.accounts.updatedAt)
+      : eq(schema.accounts.updatedAt, currentAccount.updatedAt);
     const result = await db.update(schema.accounts)
       .set(updates)
       .where(and(
         eq(schema.accounts.id, currentAccount.id),
-        eq(schema.accounts.extraConfig, currentAccount.extraConfig),
-        eq(schema.accounts.updatedAt, currentAccount.updatedAt),
+        extraConfigCondition,
+        updatedAtCondition,
       ))
       .run();
     if (result.changes > 0) {

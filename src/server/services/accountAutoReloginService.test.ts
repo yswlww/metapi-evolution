@@ -63,7 +63,7 @@ const initialAccount = {
   }),
 };
 
-function currentAccount(extraConfig: Record<string, unknown>, updatedAt: string) {
+function currentAccount(extraConfig: Record<string, unknown>, updatedAt: string | null) {
   return {
     ...initialAccount,
     extraConfig: JSON.stringify(extraConfig),
@@ -185,5 +185,20 @@ describe('accountAutoReloginService', () => {
 
     expect(result).toEqual(expect.objectContaining({ platformUserId: 7659 }));
     expect(updateSetMock.mock.calls[0]?.[0]).not.toHaveProperty('extraConfig');
+  });
+
+  it('uses a nullable updatedAt compare-and-swap predicate for auto-relogin persistence', async () => {
+    reloadAccountMock.mockResolvedValue(currentAccount({
+      autoRelogin: { username: 'demo-user', passwordCipher: 'old-cipher', updatedAt: 'generation-1' },
+    }, null));
+    updateRunMock.mockResolvedValue({ changes: 1 });
+
+    const { autoReloginAccount } = await import('./accountAutoReloginService.js');
+    await expect(autoReloginAccount(initialAccount, {
+      platform: 'new-api',
+      url: 'https://example.com',
+    })).resolves.toEqual(expect.objectContaining({ accessToken: 'fresh-token' }));
+
+    expect(updateWhereMock).toHaveBeenCalledTimes(1);
   });
 });
