@@ -111,7 +111,7 @@ function normalizeSitePlatform(value: string | undefined): string | null {
   if (value === undefined) return null;
   const normalized = value.trim().toLowerCase();
   if (!normalized) return null;
-  return normalizePlatformAlias(normalized) === 'cliproxyapi' ? 'cliproxyapi' : normalized;
+  return normalizePlatformAlias(normalized);
 }
 
 type SiteApiEndpointInputRow = {

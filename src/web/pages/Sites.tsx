@@ -231,6 +231,7 @@ const platformColors: Record<string, string> = {
   'one-hub': 'badge-muted',
   'done-hub': 'badge-muted',
   sub2api: 'badge-muted',
+  orcarouter: 'badge-info',
   openai: 'badge-success',
   codex: 'badge-success',
   claude: 'badge-warning',
@@ -238,7 +239,7 @@ const platformColors: Record<string, string> = {
   cliproxyapi: 'badge-info',
 };
 
-const SITE_PLATFORM_OPTIONS = [
+export const SITE_PLATFORM_OPTIONS = [
   { value: '', label: '平台类型（可自动检测）' },
   { value: 'new-api', label: 'new-api', description: '聚合面板，适合多渠道统一管理' },
   { value: 'one-api', label: 'one-api', description: '经典聚合面板，常见于通用 OpenAI 中转' },
@@ -247,6 +248,7 @@ const SITE_PLATFORM_OPTIONS = [
   { value: 'one-hub', label: 'one-hub', description: '聚合面板，偏向多账号统一管理' },
   { value: 'done-hub', label: 'done-hub', description: '聚合面板，适合统一转发与管理' },
   { value: 'sub2api', label: 'sub2api', description: '订阅式中转面板，可同步套餐与余额信息' },
+  { value: 'orcarouter', label: 'OrcaRouter', description: 'OpenAI 兼容 API 中转，使用 API Key 发现和调用模型' },
   { value: 'openai', label: 'openai', description: '通用 OpenAI 兼容接口，手填 Base URL 即可' },
   { value: 'codex', label: 'codex', description: 'Codex OAuth / Session 优先入口' },
   { value: 'claude', label: 'claude', description: '通用 Claude / Anthropic 兼容接口' },

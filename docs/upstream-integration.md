@@ -11,7 +11,7 @@
 Metapi 当前支持三类上游接入方式：
 
 1. **中转聚合平台** — New API / One API / OneHub / DoneHub / Veloera / AnyRouter / Sub2API / CPA 等
-2. **官方 API 端点** — OpenAI / Claude (Anthropic) / Gemini (Google) 直连
+2. **API Key 兼容端点** — OrcaRouter、OpenAI / Claude (Anthropic) / Gemini (Google) 直连或兼容入口
 3. **官方预设与 OAuth 连接** — Coding Plan / DeepSeek / Moonshot / MiniMax / ModelScope 等官方兼容入口，以及 Codex / Claude / Gemini CLI / Antigravity 的浏览器授权登录
 
 其中：
@@ -244,6 +244,29 @@ CPA 这类站点推荐直接使用 **API Key**：
 
 ## 🌐 官方 API 端点接入
 
+### OrcaRouter
+
+**适用场景：** OrcaRouter 官方 OpenAI 兼容代理；使用 API Key 发现模型并代理调用。
+
+#### 站点配置
+
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| **站点名称** | 自定义名称 | `OrcaRouter` |
+| **站点 URL** | 官方端点 | `https://api.orcarouter.ai/v1` |
+| **平台类型** | 选择 `orcarouter`，或选择 OrcaRouter / OpenAI 预设 | - |
+
+仅精确官方主机名 `api.orcarouter.ai` 会被自动识别；自定义兼容域名请手动选择 `orcarouter` 并填写对应 Base URL。
+
+#### API Key 与可用能力
+
+- 在「API Key 管理」中填入 OrcaRouter API Key；请求使用 `Bearer <API Key>` 授权。
+- Metapi 通过 `GET /models` 发现模型；预设推荐模型为 `orcarouter/auto`。
+- 支持 OpenAI 兼容代理调用。
+- 不支持用户名密码登录、签到、余额查询、Session Token 管理，或上游 Token 创建/删除。
+
+---
+
 ### OpenAI
 
 **适用场景：** 直连 OpenAI 官方 API 或 OpenAI 兼容端点
@@ -353,6 +376,7 @@ CPA 这类站点推荐直接使用 **API Key**：
 
 | 预设 | 底层平台 | 默认地址 | 推荐说明 |
 |------|------|------|------|
+| OrcaRouter / OpenAI | `orcarouter` | `https://api.orcarouter.ai/v1` | API Key 优先，推荐 `orcarouter/auto` |
 | 阿里云 CodingPlan / OpenAI | `openai` | `https://coding.dashscope.aliyuncs.com/v1` | 推荐先加 API Key，再补编程模型 |
 | 阿里云 CodingPlan / Claude | `claude` | `https://coding.dashscope.aliyuncs.com/apps/anthropic` | 适合 Claude Code 一类工具直连 |
 | 智谱 Coding Plan / OpenAI | `openai` | `https://open.bigmodel.cn/api/coding/paas/v4` | 推荐先加 API Key，再补 GLM 编程模型 |

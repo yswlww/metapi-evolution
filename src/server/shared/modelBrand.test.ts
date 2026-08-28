@@ -11,4 +11,11 @@ describe('modelBrand matching helpers', () => {
     expect(getBrand('openrouter/anthropic/claude-3-7-sonnet')?.name).toBe('Anthropic');
     expect(getBrand('deepinfra/meta-llama/llama-3.3-70b-instruct')?.name).toBe('Meta');
   });
+
+  it('recognizes OrcaRouter only through its exact model namespace', () => {
+    expect(getBrand('orcarouter/auto')?.name).toBe('OrcaRouter');
+    expect(getMatchingBrandNames('orcarouter/auto')).toContain('OrcaRouter');
+    expect(getBrand('orca-vision')?.name).not.toBe('OrcaRouter');
+    expect(getBrand('my-orcarouter-model')?.name).not.toBe('OrcaRouter');
+  });
 });

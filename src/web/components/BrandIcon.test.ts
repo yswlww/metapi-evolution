@@ -88,6 +88,11 @@ describe('getBrand', () => {
     expect(getBrand('azureai/gpt-4o')?.name).toBe('OpenAI');
   });
 
+  it('uses the OrcaRouter provider brand only for its namespaced models', () => {
+    expect(getBrand('orcarouter/auto')?.name).toBe('OrcaRouter');
+    expect(getBrand('orca-unrelated-model')?.name).not.toBe('OrcaRouter');
+  });
+
   it('returns null for unknown model names', () => {
     expect(getBrand('totally-unknown-model')).toBeNull();
   });

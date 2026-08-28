@@ -232,4 +232,29 @@ describe('siteInitializationPresets', () => {
       platform: 'openai',
     });
   });
+
+  it('exposes an API-key-first OrcaRouter preset only for the exact official endpoint', () => {
+    expect(getSiteInitializationPreset('orcarouter-openai')).toMatchObject({
+      id: 'orcarouter-openai',
+      platform: 'orcarouter',
+      defaultUrl: 'https://api.orcarouter.ai/v1',
+      initialSegment: 'apikey',
+      recommendedSkipModelFetch: false,
+      recommendedModels: ['orcarouter/auto'],
+    });
+
+    expect(detectSiteInitializationPreset('https://api.orcarouter.ai/v1')).toMatchObject({
+      id: 'orcarouter-openai',
+      platform: 'orcarouter',
+    });
+    expect(detectSiteInitializationPreset('api.orcarouter.ai/v1')).toMatchObject({
+      id: 'orcarouter-openai',
+      platform: 'orcarouter',
+    });
+
+    expect(detectSiteInitializationPreset('https://evil-api.orcarouter.ai/v1')).toBeNull();
+    expect(detectSiteInitializationPreset('https://api.orcarouter.ai.attacker.test/v1')).toBeNull();
+    expect(detectSiteInitializationPreset('https://attacker.test/api.orcarouter.ai/v1')).toBeNull();
+    expect(detectSiteInitializationPreset('https://api.orcarouter.ai@attacker.test/v1')).toBeNull();
+  });
 });

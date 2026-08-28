@@ -7,11 +7,16 @@ vi.mock('../../components/BrandIcon.js', () => ({
 
 import {
   ROUTE_ICON_NONE_VALUE,
+  inferEndpointTypesFromPlatform,
   normalizeRouteDisplayIconValue,
   resolveRouteIcon,
 } from './utils.js';
 
 describe('token route icon helpers', () => {
+  it('uses OpenAI endpoints for OrcaRouter site fallbacks', () => {
+    expect(inferEndpointTypesFromPlatform('orcarouter')).toEqual(['openai']);
+  });
+
   it('preserves the explicit no-icon sentinel during normalization', () => {
     expect(normalizeRouteDisplayIconValue(ROUTE_ICON_NONE_VALUE)).toBe(ROUTE_ICON_NONE_VALUE);
   });
