@@ -719,10 +719,21 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (body.platform !== undefined && !nextPlatform) {
       return reply.code(400).send({ error: 'Invalid platform. Expected non-empty string.' });
     }
+    const retainedApiEndpoints = (
+      !normalizedApiEndpoints.present && normalizePlatformAlias(nextPlatform) === 'orcarouter'
+    )
+      ? await db.select({
+        url: schema.siteApiEndpoints.url,
+        enabled: schema.siteApiEndpoints.enabled,
+        sortOrder: schema.siteApiEndpoints.sortOrder,
+      }).from(schema.siteApiEndpoints)
+        .where(eq(schema.siteApiEndpoints.siteId, id))
+        .all()
+      : [];
     const transportError = getOrcaRouterSiteTransportError(
       nextPlatform || '',
       body.url !== undefined ? body.url : existingSite.url,
-      normalizedApiEndpoints.present ? normalizedApiEndpoints.apiEndpoints : [],
+      normalizedApiEndpoints.present ? normalizedApiEndpoints.apiEndpoints : retainedApiEndpoints,
     );
     if (transportError) {
       return reply.code(400).send({ error: transportError });

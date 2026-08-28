@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getBrand } from './BrandIcon.js';
+import { getBrand, normalizeBrandIconKey } from './BrandIcon.js';
 
 describe('getBrand', () => {
   it('detects simple prefixed model names', () => {
@@ -89,7 +89,10 @@ describe('getBrand', () => {
   });
 
   it('uses the OrcaRouter provider brand only for its namespaced models', () => {
-    expect(getBrand('orcarouter/auto')?.name).toBe('OrcaRouter');
+    const brand = getBrand('orcarouter/auto');
+
+    expect(brand?.name).toBe('OrcaRouter');
+    expect(normalizeBrandIconKey(brand?.icon)).toBeNull();
     expect(getBrand('orca-unrelated-model')?.name).not.toBe('OrcaRouter');
   });
 

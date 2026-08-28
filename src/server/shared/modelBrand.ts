@@ -505,7 +505,7 @@ const BRAND_DEFINITIONS: BrandDefinition[] = [
   },
   {
     name: 'OrcaRouter',
-    icon: 'orcarouter',
+    icon: '',
     color: 'linear-gradient(135deg, #0f766e, #14b8a6)',
     allowNameFallback: false,
     rules: [

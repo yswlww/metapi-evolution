@@ -228,6 +228,31 @@ describe('sites api endpoints', () => {
     expect(await db.select().from(schema.siteApiEndpoints).all()).toEqual([]);
   });
 
+  it('rejects conversion to OrcaRouter when a retained alternate endpoint is insecure', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'convert-with-legacy-endpoint',
+      url: 'https://safe.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'http://legacy.orcarouter.example/v1',
+      enabled: true,
+      sortOrder: 0,
+    }).run();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}`,
+      payload: { platform: 'orcarouter' },
+    });
+
+    expect(response.statusCode).toBe(400);
+    const stored = await db.select().from(schema.sites).where(eq(schema.sites.id, site.id)).get();
+    expect(stored?.platform).toBe('new-api');
+  });
+
   it('rejects duplicate api endpoint urls under the same site after normalization', async () => {
     const response = await app.inject({
       method: 'POST',

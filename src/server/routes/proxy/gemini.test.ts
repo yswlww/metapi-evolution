@@ -2230,4 +2230,69 @@ describe('gemini native proxy routes', () => {
     }));
     expect(recordSuccessMock).toHaveBeenCalledWith(12, expect.any(Number), 0, 'gemini-2.5-flash');
   });
+
+  it.each(['orca-router', 'orca router'])('does not dispatch Gemini-compatible %s requests to insecure OrcaRouter sites', async (platform) => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 97, routeId: 98 },
+      site: { id: 99, name: 'legacy-orcarouter', url: 'http://legacy.orcarouter.example', platform },
+      account: { id: 96, username: 'orcarouter-user' },
+      tokenName: 'default',
+      tokenValue: 'orc-gemini-key',
+      actualModel: 'orcarouter/auto',
+    });
+    selectNextChannelMock.mockReturnValue(null);
+    fetchMock.mockResolvedValue(new Response('unexpected fetch', { status: 500 }));
+
+    await app.inject({
+      method: 'POST',
+      url: '/v1beta/models/gemini-2.5-flash:generateContent',
+      headers: { 'x-goog-api-key': 'downstream-key' },
+      payload: {
+        contents: [{ role: 'user', parts: [{ text: 'hello' }] }],
+      },
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('dispatches Gemini-compatible HTTPS OrcaRouter aliases with their API key', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 95, routeId: 94 },
+      site: { id: 93, name: 'secure-orcarouter', url: 'https://custom.orcarouter.example', platform: 'orca-router' },
+      account: { id: 92, username: 'orcarouter-user' },
+      tokenName: 'default',
+      tokenValue: 'orc-gemini-key',
+      actualModel: 'orcarouter/auto',
+    });
+    selectNextChannelMock.mockReturnValue(null);
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'resp-orca',
+      object: 'response',
+      model: 'orcarouter/auto',
+      status: 'completed',
+      output: [{
+        id: 'msg-orca',
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        content: [{ type: 'output_text', text: 'ok' }],
+      }],
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    await app.inject({
+      method: 'POST',
+      url: '/v1beta/models/gemini-2.5-flash:generateContent',
+      headers: { 'x-goog-api-key': 'downstream-key' },
+      payload: {
+        contents: [{ role: 'user', parts: [{ text: 'hello' }] }],
+      },
+    });
+
+    expect(fetchMock).toHaveBeenCalled();
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({ Authorization: 'Bearer orc-gemini-key' });
+  });
 });

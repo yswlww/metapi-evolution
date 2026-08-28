@@ -1,4 +1,5 @@
 import { asc, eq } from 'drizzle-orm';
+import { normalizePlatformAlias } from '../../shared/platformIdentity.js';
 import { db, schema } from '../db/index.js';
 import { RETRYABLE_TIMEOUT_PATTERNS } from './proxyRetryPolicy.js';
 import { assertOrcaRouterTokenTransport } from './orcarouterTransport.js';
@@ -209,6 +210,18 @@ export async function requireSiteApiBaseUrl(
   const baseUrl = await resolveSiteApiBaseUrl(site, now);
   if (baseUrl) return baseUrl;
   throw new Error('当前站点的 API 请求地址均不可用');
+}
+
+export async function assertConfiguredOrcaRouterTransport(site: SiteRow): Promise<void> {
+  if (normalizePlatformAlias(site.platform) !== 'orcarouter') return;
+
+  assertOrcaRouterTokenTransport(site.platform, site.url);
+  const endpoints = await db.select().from(schema.siteApiEndpoints)
+    .where(eq(schema.siteApiEndpoints.siteId, site.id))
+    .all();
+  for (const endpoint of endpoints) {
+    assertOrcaRouterTokenTransport(site.platform, endpoint.url);
+  }
 }
 
 export async function recordSiteApiEndpointFailure(
