@@ -42,6 +42,7 @@ vi.mock('../db/index.js', () => {
       accounts: {
         id: 'id',
         siteId: 'siteId',
+        accessToken: 'accessToken',
         status: 'status',
         extraConfig: 'extraConfig',
         updatedAt: 'updatedAt',
@@ -315,5 +316,49 @@ describe('balanceService final config persistence', () => {
       state: 'degraded',
       source: 'checkin',
     }));
+  });
+
+  it('skips atomic telemetry fallback and old-response health when the token changes after CAS reads', async () => {
+    configureInitialRow(account({ custom: 'initial' }));
+    adapterMock.getBalance.mockResolvedValue({ balance: 12, used: 1, quota: 13, todayIncome: 4.5 });
+    const current = account({ custom: 'still-current-at-read' }, '2026-08-28T00:00:01.000Z');
+    selectGetMock
+      .mockResolvedValueOnce(current)
+      .mockResolvedValueOnce(current)
+      .mockResolvedValueOnce(current)
+      .mockResolvedValueOnce(current)
+      .mockResolvedValueOnce(current);
+    updateRunMock
+      .mockResolvedValueOnce({ changes: 0 })
+      .mockResolvedValueOnce({ changes: 0 })
+      .mockResolvedValueOnce({ changes: 0 })
+      .mockResolvedValueOnce({ changes: 0 });
+
+    const { refreshBalance } = await import('./balanceService.js');
+    await expect(refreshBalance(1)).resolves.toEqual(expect.objectContaining({ balance: 12 }));
+
+    expect(updateSetMock).toHaveBeenCalledTimes(4);
+    const atomicFallback = updateSetMock.mock.calls[3]?.[0] as Record<string, unknown>;
+    expect(atomicFallback).not.toHaveProperty('status');
+    expect(atomicFallback).not.toHaveProperty('extraConfig');
+    expect(setAccountRuntimeHealthMock).not.toHaveBeenCalled();
+  });
+
+  it('persists ordinary exhaustion telemetry through the atomic fallback predicate', async () => {
+    configureInitialRow(account({ custom: 'initial' }));
+    adapterMock.getBalance.mockResolvedValue({ balance: 12, used: 1, quota: 13, todayIncome: 4.5 });
+    const current = account({ custom: 'current' }, '2026-08-28T00:00:01.000Z');
+    selectGetMock.mockResolvedValue(current);
+    updateRunMock
+      .mockResolvedValueOnce({ changes: 0 })
+      .mockResolvedValueOnce({ changes: 0 })
+      .mockResolvedValueOnce({ changes: 0 })
+      .mockResolvedValueOnce({ changes: 1 });
+
+    const { refreshBalance } = await import('./balanceService.js');
+    await refreshBalance(1);
+
+    expect(updateSetMock).toHaveBeenCalledTimes(4);
+    expect(setAccountRuntimeHealthMock).toHaveBeenCalledTimes(1);
   });
 });

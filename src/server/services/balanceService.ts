@@ -438,16 +438,14 @@ export async function refreshBalance(accountId: number) {
   }
 
   if (!persistedBalance) {
-    const currentAccount = await db.select()
-      .from(schema.accounts)
-      .where(eq(schema.accounts.id, accountId))
-      .get();
-    if (!currentAccount || currentAccount.accessToken !== activeAccessToken) return balanceInfo;
-
-    await db.update(schema.accounts)
+    const result = await db.update(schema.accounts)
       .set(buildBalanceTelemetryUpdates())
-      .where(eq(schema.accounts.id, accountId))
+      .where(and(
+        eq(schema.accounts.id, accountId),
+        eq(schema.accounts.accessToken, activeAccessToken),
+      ))
       .run();
+    if (result.changes <= 0) return balanceInfo;
 
     const finalAccount = await db.select()
       .from(schema.accounts)

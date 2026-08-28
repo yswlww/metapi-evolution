@@ -56,6 +56,7 @@ vi.mock('../db/index.js', () => {
       accounts: {
         id: 'id',
         siteId: 'siteId',
+        accessToken: 'accessToken',
         status: 'status',
         extraConfig: 'extraConfig',
         updatedAt: 'updatedAt',
