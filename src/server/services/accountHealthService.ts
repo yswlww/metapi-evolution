@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import {
   getCredentialModeFromExtraConfig,
@@ -22,6 +22,7 @@ const VALID_RUNTIME_HEALTH_STATES = new Set<RuntimeHealthState>([
   'unknown',
   'disabled',
 ]);
+const RUNTIME_HEALTH_PERSIST_MAX_ATTEMPTS = 3;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -198,22 +199,37 @@ export async function setAccountRuntimeHealth(
   },
 ): Promise<RuntimeHealthInfo | null> {
   try {
-    const query = db.select().from(schema.accounts).where(eq(schema.accounts.id, accountId)) as any;
-    const account = typeof query?.get === 'function' ? await query.get() : null;
-    if (!account) return null;
-
     const health = buildRuntimeHealthPatch(input);
-    const nextExtraConfig = applyRuntimeHealthToExtraConfig(account.extraConfig, health);
 
-    await db.update(schema.accounts)
-      .set({
-        extraConfig: nextExtraConfig,
-        updatedAt: new Date().toISOString(),
-      })
-      .where(eq(schema.accounts.id, accountId))
-      .run();
+    for (let attempt = 0; attempt < RUNTIME_HEALTH_PERSIST_MAX_ATTEMPTS; attempt += 1) {
+      const account = await db.select()
+        .from(schema.accounts)
+        .where(eq(schema.accounts.id, accountId))
+        .get();
+      if (!account) return null;
 
-    return health;
+      const nextExtraConfig = applyRuntimeHealthToExtraConfig(account.extraConfig, health);
+      const extraConfigCondition = account.extraConfig == null
+        ? isNull(schema.accounts.extraConfig)
+        : eq(schema.accounts.extraConfig, account.extraConfig);
+      const updatedAtCondition = account.updatedAt == null
+        ? isNull(schema.accounts.updatedAt)
+        : eq(schema.accounts.updatedAt, account.updatedAt);
+      const result = await db.update(schema.accounts)
+        .set({
+          extraConfig: nextExtraConfig,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(and(
+          eq(schema.accounts.id, accountId),
+          extraConfigCondition,
+          updatedAtCondition,
+        ))
+        .run();
+      if (result.changes > 0) return health;
+    }
+
+    return null;
   } catch {
     return null;
   }

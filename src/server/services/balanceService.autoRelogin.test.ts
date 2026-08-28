@@ -105,6 +105,7 @@ describe('balanceService auto relogin', () => {
     setAccountRuntimeHealthMock.mockReset();
     extractRuntimeHealthMock.mockReset();
     undiciFetchMock.mockReset();
+    selectGetMock.mockImplementation(() => selectAllMock()[0]?.accounts ?? null);
 
     extractRuntimeHealthMock.mockReturnValue(null);
     undiciFetchMock.mockResolvedValue({

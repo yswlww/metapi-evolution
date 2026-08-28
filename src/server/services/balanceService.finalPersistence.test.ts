@@ -7,6 +7,7 @@ const selectGetMock = vi.fn();
 const updateSetMock = vi.fn();
 const updateWhereMock = vi.fn();
 const updateRunMock = vi.fn();
+const extractRuntimeHealthMock = vi.fn();
 const setAccountRuntimeHealthMock = vi.fn();
 
 vi.mock('../db/index.js', () => {
@@ -59,7 +60,7 @@ vi.mock('./accountAutoReloginService.js', () => ({
 }));
 
 vi.mock('./accountHealthService.js', () => ({
-  extractRuntimeHealth: vi.fn(() => null),
+  extractRuntimeHealth: (...args: unknown[]) => extractRuntimeHealthMock(...args),
   setAccountRuntimeHealth: (...args: unknown[]) => setAccountRuntimeHealthMock(...args),
 }));
 
@@ -97,18 +98,23 @@ describe('balanceService final config persistence', () => {
     updateSetMock.mockReset();
     updateWhereMock.mockReset();
     updateRunMock.mockReset();
+    extractRuntimeHealthMock.mockReset();
+    extractRuntimeHealthMock.mockReturnValue(null);
     setAccountRuntimeHealthMock.mockReset();
   });
 
   it('preserves a concurrent config edit after auto-relogin while merging balance-owned metadata', async () => {
     const initial = account({ custom: 'initial' });
-    const concurrent = account({
-      platformUserId: 80315,
-      proxyUrl: 'http://concurrent-proxy.example',
-      oauth: { provider: 'concurrent-oauth' },
-      autoRelogin: { username: 'demo-user', passwordCipher: 'new-cipher', updatedAt: 'generation-2' },
-      custom: 'concurrent-edit',
-    }, '2026-08-28T00:00:02.000Z');
+    const concurrent = {
+      ...account({
+        platformUserId: 80315,
+        proxyUrl: 'http://concurrent-proxy.example',
+        oauth: { provider: 'concurrent-oauth' },
+        autoRelogin: { username: 'demo-user', passwordCipher: 'new-cipher', updatedAt: 'generation-2' },
+        custom: 'concurrent-edit',
+      }, '2026-08-28T00:00:02.000Z'),
+      accessToken: 'fresh-token',
+    };
     configureInitialRow(initial, site('sub2api'));
     autoReloginMock.mockResolvedValue({
       accessToken: 'fresh-token',
@@ -189,7 +195,9 @@ describe('balanceService final config persistence', () => {
   });
 
   it('does not write extraConfig when a successful balance has no metadata patch', async () => {
-    configureInitialRow(account({ custom: 'preserve-me' }));
+    const current = account({ custom: 'preserve-me' });
+    configureInitialRow(current);
+    selectGetMock.mockResolvedValue(current);
     adapterMock.getBalance.mockResolvedValue({ balance: 12, used: 1, quota: 13 });
     updateRunMock.mockResolvedValue({ changes: 1 });
 
@@ -211,5 +219,101 @@ describe('balanceService final config persistence', () => {
 
     expect(updateSetMock.mock.calls[0]?.[0]).toHaveProperty('extraConfig');
     expect(updateWhereMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a concurrent disable after balance config CAS exhaustion', async () => {
+    configureInitialRow(account({ custom: 'initial' }));
+    adapterMock.getBalance.mockResolvedValue({ balance: 12, used: 1, quota: 13, todayIncome: 4.5 });
+    const active = account({ custom: 'active-at-cas-read' }, '2026-08-28T00:00:01.000Z');
+    const disabled = { ...account({ custom: 'disabled-after-conflict' }, '2026-08-28T00:00:04.000Z'), status: 'disabled' };
+    selectGetMock
+      .mockResolvedValueOnce(active)
+      .mockResolvedValueOnce(active)
+      .mockResolvedValueOnce(active)
+      .mockResolvedValueOnce(disabled)
+      .mockResolvedValueOnce(disabled);
+    updateRunMock
+      .mockResolvedValueOnce({ changes: 0 })
+      .mockResolvedValueOnce({ changes: 0 })
+      .mockResolvedValueOnce({ changes: 0 })
+      .mockResolvedValueOnce({ changes: 1 });
+
+    const { refreshBalance } = await import('./balanceService.js');
+    await refreshBalance(1);
+
+    const telemetryFallback = updateSetMock.mock.calls[3]?.[0] as Record<string, unknown>;
+    expect(telemetryFallback).not.toHaveProperty('status');
+    expect(telemetryFallback).not.toHaveProperty('extraConfig');
+  });
+
+  it('does not revert a concurrent status change on a no-metadata balance refresh', async () => {
+    configureInitialRow(account({ custom: 'initial' }));
+    adapterMock.getBalance.mockResolvedValue({ balance: 12, used: 1, quota: 13 });
+    const active = account({ custom: 'active-at-cas-read' }, '2026-08-28T00:00:01.000Z');
+    const expired = { ...account({ custom: 'expired-concurrently' }, '2026-08-28T00:00:02.000Z'), status: 'expired' };
+    selectGetMock
+      .mockResolvedValueOnce(active)
+      .mockResolvedValueOnce(expired);
+    updateRunMock
+      .mockResolvedValueOnce({ changes: 0 })
+      .mockResolvedValueOnce({ changes: 1 });
+
+    const { refreshBalance } = await import('./balanceService.js');
+    await refreshBalance(1);
+
+    expect(updateSetMock).toHaveBeenCalledTimes(2);
+    for (const [updates] of updateSetMock.mock.calls) {
+      expect(updates).not.toHaveProperty('status');
+      expect(updates).not.toHaveProperty('extraConfig');
+    }
+  });
+
+  it('skips persistence when the access token changed during the balance request', async () => {
+    configureInitialRow(account({ custom: 'initial' }));
+    adapterMock.getBalance.mockResolvedValue({ balance: 12, used: 1, quota: 13, todayIncome: 4.5 });
+    selectGetMock.mockResolvedValue({
+      ...account({ custom: 'replacement-credential-config' }, '2026-08-28T00:00:01.000Z'),
+      accessToken: 'replacement-token',
+    });
+
+    const { refreshBalance } = await import('./balanceService.js');
+    await expect(refreshBalance(1)).resolves.toEqual(expect.objectContaining({ balance: 12 }));
+
+    expect(updateSetMock).not.toHaveBeenCalled();
+    expect(setAccountRuntimeHealthMock).not.toHaveBeenCalled();
+  });
+
+  it('uses the actual reloaded config after exhaustion for the health decision', async () => {
+    configureInitialRow(account({ custom: 'initial' }));
+    adapterMock.getBalance.mockResolvedValue({ balance: 12, used: 1, quota: 13, todayIncome: 4.5 });
+    const active = account({ custom: 'active-at-cas-read' }, '2026-08-28T00:00:01.000Z');
+    const finalConfig = account({
+      custom: 'actual-final-config',
+      runtimeHealth: { state: 'degraded', reason: 'checkin endpoint not found', source: 'checkin' },
+    }, '2026-08-28T00:00:04.000Z');
+    selectGetMock
+      .mockResolvedValueOnce(active)
+      .mockResolvedValueOnce(active)
+      .mockResolvedValueOnce(active)
+      .mockResolvedValueOnce(finalConfig)
+      .mockResolvedValueOnce(finalConfig);
+    updateRunMock
+      .mockResolvedValueOnce({ changes: 0 })
+      .mockResolvedValueOnce({ changes: 0 })
+      .mockResolvedValueOnce({ changes: 0 })
+      .mockResolvedValueOnce({ changes: 1 });
+    extractRuntimeHealthMock.mockImplementation((extraConfig: string) => {
+      return extraConfig.includes('actual-final-config')
+        ? { state: 'degraded', reason: 'checkin endpoint not found', source: 'checkin' }
+        : null;
+    });
+
+    const { refreshBalance } = await import('./balanceService.js');
+    await refreshBalance(1);
+
+    expect(setAccountRuntimeHealthMock).toHaveBeenCalledWith(1, expect.objectContaining({
+      state: 'degraded',
+      source: 'checkin',
+    }));
   });
 });

@@ -247,7 +247,7 @@ export async function refreshBalance(accountId: number) {
   const site = rows[0].sites;
 
   if (isSiteDisabled(site.status)) {
-    setAccountRuntimeHealth(account.id, {
+    await setAccountRuntimeHealth(account.id, {
       state: 'disabled',
       reason: '站点已禁用',
       source: 'balance',
@@ -300,7 +300,7 @@ export async function refreshBalance(accountId: number) {
     () => adapter.getBalance(site.url, token, activePlatformUserId));
   const handleBalanceError = async (err: any) => {
     const message = appendSessionTokenRebindHint(err?.message || 'unknown error');
-    setAccountRuntimeHealth(account.id, {
+    await setAccountRuntimeHealth(account.id, {
       state: 'unhealthy',
       reason: message,
       source: 'balance',
@@ -387,77 +387,80 @@ export async function refreshBalance(accountId: number) {
     balanceConfigPatch.sub2apiSubscription = balanceInfo.subscriptionSummary;
   }
 
-  const buildBalanceUpdates = (status: string | null | undefined): Record<string, unknown> => ({
+  const buildBalanceTelemetryUpdates = (): Record<string, unknown> => ({
     balance: balanceInfo.balance,
     balanceUsed: balanceInfo.used,
     quota: balanceInfo.quota,
-    status: status === 'expired' ? 'active' : status,
     lastBalanceRefresh: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   });
 
   let finalExtraConfig = activeExtraConfig;
-  if (hasBalanceConfigPatch(balanceConfigPatch)) {
-    let latestAccount: typeof schema.accounts.$inferSelect | undefined;
-    let persistedConfigPatch = false;
-
-    for (let attempt = 0; attempt < BALANCE_CONFIG_PERSIST_MAX_ATTEMPTS; attempt += 1) {
-      const currentAccount = await db.select()
-        .from(schema.accounts)
-        .where(eq(schema.accounts.id, accountId))
-        .get();
-      if (!currentAccount) break;
-      latestAccount = currentAccount;
-
-      const mergedExtraConfig = mergeBalanceConfigPatch(currentAccount.extraConfig, balanceConfigPatch);
-      const extraConfigCondition = currentAccount.extraConfig == null
-        ? isNull(schema.accounts.extraConfig)
-        : eq(schema.accounts.extraConfig, currentAccount.extraConfig);
-      const updatedAtCondition = currentAccount.updatedAt == null
-        ? isNull(schema.accounts.updatedAt)
-        : eq(schema.accounts.updatedAt, currentAccount.updatedAt);
-      const result = await db.update(schema.accounts)
-        .set({
-          ...buildBalanceUpdates(currentAccount.status),
-          extraConfig: mergedExtraConfig,
-        })
-        .where(and(
-          eq(schema.accounts.id, accountId),
-          extraConfigCondition,
-          updatedAtCondition,
-        ))
-        .run();
-      if (result.changes > 0) {
-        finalExtraConfig = mergedExtraConfig;
-        persistedConfigPatch = true;
-        break;
-      }
-    }
-
-    if (!persistedConfigPatch) {
-      await db.update(schema.accounts)
-        .set(buildBalanceUpdates(latestAccount?.status ?? account.status))
-        .where(eq(schema.accounts.id, accountId))
-        .run();
-      finalExtraConfig = latestAccount?.extraConfig ?? activeExtraConfig;
-    }
-  } else {
-    await db.update(schema.accounts)
-      .set(buildBalanceUpdates(account.status))
-      .where(eq(schema.accounts.id, accountId))
-      .run();
-
+  let persistedBalance = false;
+  for (let attempt = 0; attempt < BALANCE_CONFIG_PERSIST_MAX_ATTEMPTS; attempt += 1) {
     const currentAccount = await db.select()
       .from(schema.accounts)
       .where(eq(schema.accounts.id, accountId))
       .get();
-    finalExtraConfig = currentAccount?.extraConfig ?? activeExtraConfig;
+    if (!currentAccount) break;
+    if (currentAccount.accessToken !== activeAccessToken) return balanceInfo;
+
+    const mergedExtraConfig = hasBalanceConfigPatch(balanceConfigPatch)
+      ? mergeBalanceConfigPatch(currentAccount.extraConfig, balanceConfigPatch)
+      : currentAccount.extraConfig;
+    const extraConfigCondition = currentAccount.extraConfig == null
+      ? isNull(schema.accounts.extraConfig)
+      : eq(schema.accounts.extraConfig, currentAccount.extraConfig);
+    const updatedAtCondition = currentAccount.updatedAt == null
+      ? isNull(schema.accounts.updatedAt)
+      : eq(schema.accounts.updatedAt, currentAccount.updatedAt);
+    const updates = buildBalanceTelemetryUpdates();
+    if (account.status === 'expired' && currentAccount.status === 'expired') {
+      updates.status = 'active';
+    }
+    if (hasBalanceConfigPatch(balanceConfigPatch)) {
+      updates.extraConfig = mergedExtraConfig;
+    }
+
+    const result = await db.update(schema.accounts)
+      .set(updates)
+      .where(and(
+        eq(schema.accounts.id, accountId),
+        extraConfigCondition,
+        updatedAtCondition,
+      ))
+      .run();
+    if (result.changes > 0) {
+      finalExtraConfig = mergedExtraConfig;
+      persistedBalance = true;
+      break;
+    }
+  }
+
+  if (!persistedBalance) {
+    const currentAccount = await db.select()
+      .from(schema.accounts)
+      .where(eq(schema.accounts.id, accountId))
+      .get();
+    if (!currentAccount || currentAccount.accessToken !== activeAccessToken) return balanceInfo;
+
+    await db.update(schema.accounts)
+      .set(buildBalanceTelemetryUpdates())
+      .where(eq(schema.accounts.id, accountId))
+      .run();
+
+    const finalAccount = await db.select()
+      .from(schema.accounts)
+      .where(eq(schema.accounts.id, accountId))
+      .get();
+    if (!finalAccount || finalAccount.accessToken !== activeAccessToken) return balanceInfo;
+    finalExtraConfig = finalAccount.extraConfig;
   }
 
   const existingRuntimeHealth = extractRuntimeHealth(finalExtraConfig);
   const keepUnsupportedCheckinDegraded = isUnsupportedCheckinRuntimeHealth(existingRuntimeHealth);
 
-  setAccountRuntimeHealth(account.id, {
+  await setAccountRuntimeHealth(account.id, {
     state: keepUnsupportedCheckinDegraded ? 'degraded' : 'healthy',
     reason: keepUnsupportedCheckinDegraded
       ? (existingRuntimeHealth?.reason || '\u7ad9\u70b9\u4e0d\u652f\u6301\u7b7e\u5230\u63a5\u53e3')
