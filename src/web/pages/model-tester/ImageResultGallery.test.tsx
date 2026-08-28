@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { act, create } from 'react-test-renderer';
 import ImageResultGallery from './ImageResultGallery.js';
 
+const WEBP_BASE64 = 'UklGRgAAAABXRUJQ';
+
 describe('ImageResultGallery', () => {
   it('renders each valid image and exposes URL/download/revised prompt actions', () => {
     const root = create(
@@ -9,8 +11,8 @@ describe('ImageResultGallery', () => {
         result={{
           data: [
             { url: 'https://cdn.example/a.png', revised_prompt: 'revised a' },
-            { b64_json: 'WEBP', output_format: 'webp' },
-            { invalid: true },
+            { b64_json: WEBP_BASE64, output_format: 'png' },
+            { url: 'javascript:alert(1)' },
           ],
         }}
         outputFormat="png"
@@ -18,7 +20,7 @@ describe('ImageResultGallery', () => {
     );
 
     expect(root.root.findAllByType('img')).toHaveLength(2);
-    expect(root.root.findAllByType('img')[1].props.src).toBe('data:image/webp;base64,WEBP');
+    expect(root.root.findAllByType('img')[1].props.src).toBe(`data:image/webp;base64,${WEBP_BASE64}`);
     const labels = root.root.findAllByType('button').map((button) => button.props['aria-label']);
     expect(labels).toEqual([
       '下载图片 1',
@@ -30,7 +32,7 @@ describe('ImageResultGallery', () => {
   });
 
   it('does not render broken images for empty or error payloads', () => {
-    const empty = create(<ImageResultGallery result={{ data: [{ nope: true }] }} />);
+    const empty = create(<ImageResultGallery result={{ data: [{ b64_json: 'not-base64!' }] }} />);
     expect(empty.root.findAllByType('img')).toHaveLength(0);
     expect(empty.root.findByProps({ role: 'status' })).toBeTruthy();
 

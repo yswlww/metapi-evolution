@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   normalizeImageResults,
   type NormalizedImageResult,
@@ -61,7 +61,7 @@ export const openImageUrl = (url: string): boolean => {
 };
 
 export default function ImageResultGallery({ result, outputFormat = 'png', isMobile = false }: ImageResultGalleryProps) {
-  const normalized = normalizeImageResults(result, outputFormat);
+  const normalized = useMemo(() => normalizeImageResults(result, outputFormat), [result, outputFormat]);
 
   if (normalized.errorMessage) {
     return (

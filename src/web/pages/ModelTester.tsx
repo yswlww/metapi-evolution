@@ -780,7 +780,7 @@ export default function ModelTester() {
     setInput(restored.input);
     setInputs(restored.inputs);
     setModeState(restored.modeState);
-    setImageParameterEnabled(restored.imageParameterEnabled || restored.modeState.imagesParameterEnabled || DEFAULT_IMAGE_PARAMETER_ENABLED);
+    setImageParameterEnabled(restored.imageParameterEnabled || DEFAULT_IMAGE_PARAMETER_ENABLED);
     setParameterEnabled(restored.parameterEnabled);
     setPendingPayload(restored.pendingPayload);
     setPendingJobId(restored.pendingJobId || null);
@@ -793,7 +793,13 @@ export default function ModelTester() {
     setSearchQueryValue(restored.modeState.searchQuery);
     setSearchAllowedDomains(restored.modeState.searchAllowedDomains);
     setSearchBlockedDomains(restored.modeState.searchBlockedDomains);
-    setAssetPrompt(restored.modeState.imagesEditPrompt || restored.modeState.imagesPrompt || restored.modeState.videosPrompt);
+    setAssetPrompt(
+      restored.inputs.mode === 'images.edit'
+        ? (restored.modeState.imagesEditPrompt || restored.modeState.imagesPrompt)
+        : restored.inputs.mode === 'videos.create'
+          ? restored.modeState.videosPrompt
+          : '',
+    );
     setVideoInspectId(restored.modeState.videosInspectId);
     setVideoInspectAction(restored.inputs.videoInspectAction === 'delete' ? 'DELETE' : 'GET');
     setConversationFiles(restored.conversationFiles);
@@ -933,10 +939,9 @@ export default function ModelTester() {
         searchAllowedDomains,
         searchBlockedDomains,
         imagesPrompt: modeState.imagesPrompt,
-        imagesEditPrompt: inputs.mode === 'images.edit' ? assetPrompt : (modeState.imagesEditPrompt || ''),
-        imagesParameterEnabled: imageParameterEnabled,
+        imagesEditPrompt: inputs.mode === 'images.edit' ? assetPrompt : modeState.imagesEditPrompt,
         imagesMaskDataUrl: imageMaskFile?.dataUrl || '',
-        videosPrompt: inputs.mode === 'videos.create' ? assetPrompt : '',
+        videosPrompt: inputs.mode === 'videos.create' ? assetPrompt : modeState.videosPrompt,
         videosInspectId: videoInspectId,
         extraJson: customRequestBody,
       },

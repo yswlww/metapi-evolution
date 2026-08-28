@@ -79,4 +79,25 @@ describe('ImageGenerationPanel', () => {
     );
     expect(custom.toJSON()).toBeNull();
   });
+
+  it('disables custom size, quality, and moderation inputs with their parent fields', () => {
+    const root = create(
+      <ImageGenerationPanel
+        isMobile={false}
+        settings={{
+          ...DEFAULT_MODE_STATE,
+          imagesSize: '2048x2048',
+          imagesQuality: 'provider-quality',
+          imagesModeration: 'provider-moderation',
+        }}
+        enabled={DEFAULT_IMAGE_PARAMETER_ENABLED}
+        onSettingsChange={vi.fn()}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    expect(root.root.findByProps({ 'aria-label': 'size-custom' }).props.disabled).toBe(true);
+    expect(root.root.findByProps({ 'aria-label': 'quality-custom' }).props.disabled).toBe(true);
+    expect(root.root.findByProps({ 'aria-label': 'moderation-custom' }).props.disabled).toBe(true);
+  });
 });

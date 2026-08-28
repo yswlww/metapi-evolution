@@ -80,11 +80,13 @@ function CustomValueInput({
   id,
   value,
   placeholder,
+  disabled,
   onChange,
 }: {
   id: string;
   value: string;
   placeholder: string;
+  disabled: boolean;
   onChange: (value: string) => void;
 }) {
   return (
@@ -93,6 +95,7 @@ function CustomValueInput({
       aria-label={`${id}-custom`}
       value={value}
       placeholder={placeholder}
+      disabled={disabled}
       onChange={(event) => onChange(event.target.value)}
       style={inputBaseStyle}
     />
@@ -174,7 +177,13 @@ export default function ImageGenerationPanel({
           </select>
           {sizeIsCustom && (
             <div style={{ marginTop: 6 }}>
-              <CustomValueInput id="size" value={settings.imagesSize} placeholder="例如 2048x2048" onChange={(value) => onSettingsChange({ imagesSize: value })} />
+              <CustomValueInput
+                id="size"
+                value={settings.imagesSize}
+                placeholder="例如 2048x2048"
+                disabled={!enabled.size}
+                onChange={(value) => onSettingsChange({ imagesSize: value })}
+              />
             </div>
           )}
         </ParameterRow>
@@ -193,7 +202,13 @@ export default function ImageGenerationPanel({
           </select>
           {qualityIsCustom && (
             <div style={{ marginTop: 6 }}>
-              <CustomValueInput id="quality" value={settings.imagesQuality} placeholder="provider-compatible quality" onChange={(value) => onSettingsChange({ imagesQuality: value })} />
+              <CustomValueInput
+                id="quality"
+                value={settings.imagesQuality}
+                placeholder="provider-compatible quality"
+                disabled={!enabled.quality}
+                onChange={(value) => onSettingsChange({ imagesQuality: value })}
+              />
             </div>
           )}
         </ParameterRow>
@@ -289,7 +304,13 @@ export default function ImageGenerationPanel({
           </select>
           {moderationIsCustom && (
             <div style={{ marginTop: 6 }}>
-              <CustomValueInput id="moderation" value={settings.imagesModeration} placeholder="provider-compatible moderation" onChange={(value) => onSettingsChange({ imagesModeration: value })} />
+              <CustomValueInput
+                id="moderation"
+                value={settings.imagesModeration}
+                placeholder="provider-compatible moderation"
+                disabled={!enabled.moderation}
+                onChange={(value) => onSettingsChange({ imagesModeration: value })}
+              />
             </div>
           )}
         </ParameterRow>

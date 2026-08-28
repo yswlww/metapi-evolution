@@ -1,15 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeImageResults } from './imageResults.js';
+import { imageMimeType, normalizeImageResults } from './imageResults.js';
+
+const PNG_BASE64 = 'iVBORw0KGgo=';
+const WEBP_BASE64 = 'UklGRgAAAABXRUJQ';
+const JPEG_BASE64 = '/9j/2Q==';
 
 describe('image result normalization', () => {
-  it('keeps URL and PNG/WebP/JPEG base64 items while skipping malformed siblings', () => {
+  it('keeps secure URLs and signature-valid PNG/WebP/JPEG base64 items while skipping invalid siblings', () => {
     const result = normalizeImageResults({
       data: [
+        { url: 'javascript:alert(1)' },
+        { url: 'data:image/png;base64,iVBORw0KGgo=' },
+        { url: 'file:///private/image.png' },
+        { url: 'https://person:secret@cdn.example/private.png' },
+        { url: 'not a URL' },
         { url: 'https://cdn.example/one.png', revised_prompt: 'one' },
-        { b64_json: 'WEBPDATA', output_format: 'webp', revised_prompt: 'two' },
-        { b64_json: 'JPEGDATA', output_format: 'jpeg' },
-        { b64_json: 'PNGDATA' },
-        { url: '', b64_json: '' },
+        { b64_json: PNG_BASE64, output_format: 'webp', revised_prompt: 'two' },
+        { b64_json: WEBP_BASE64, output_format: 'png' },
+        { b64_json: JPEG_BASE64, output_format: 'jpg' },
+        { b64_json: 'not-base64!' },
+        { b64_json: 'QUFBQQ==' },
+        { url: 'javascript:alert(1)', b64_json: PNG_BASE64, revised_prompt: 'fallback image' },
         null,
         { revised_prompt: 'no image' },
       ],
@@ -17,7 +28,7 @@ describe('image result normalization', () => {
 
     expect(result.images).toEqual([
       {
-        id: 'image-0',
+        id: 'image-5',
         kind: 'url',
         src: 'https://cdn.example/one.png',
         url: 'https://cdn.example/one.png',
@@ -26,42 +37,61 @@ describe('image result normalization', () => {
         downloadName: 'generated-1.png',
       },
       {
-        id: 'image-1',
+        id: 'image-6',
         kind: 'b64_json',
-        src: 'data:image/webp;base64,WEBPDATA',
-        b64Json: 'WEBPDATA',
-        mimeType: 'image/webp',
+        src: `data:image/png;base64,${PNG_BASE64}`,
+        b64Json: PNG_BASE64,
+        mimeType: 'image/png',
         revisedPrompt: 'two',
-        downloadName: 'generated-2.webp',
+        downloadName: 'generated-2.png',
       },
       {
-        id: 'image-2',
+        id: 'image-7',
         kind: 'b64_json',
-        src: 'data:image/jpeg;base64,JPEGDATA',
-        b64Json: 'JPEGDATA',
+        src: `data:image/webp;base64,${WEBP_BASE64}`,
+        b64Json: WEBP_BASE64,
+        mimeType: 'image/webp',
+        revisedPrompt: null,
+        downloadName: 'generated-3.webp',
+      },
+      {
+        id: 'image-8',
+        kind: 'b64_json',
+        src: `data:image/jpeg;base64,${JPEG_BASE64}`,
+        b64Json: JPEG_BASE64,
         mimeType: 'image/jpeg',
         revisedPrompt: null,
-        downloadName: 'generated-3.jpeg',
+        downloadName: 'generated-4.jpeg',
       },
       {
-        id: 'image-3',
+        id: 'image-11',
         kind: 'b64_json',
-        src: 'data:image/png;base64,PNGDATA',
-        b64Json: 'PNGDATA',
+        src: `data:image/png;base64,${PNG_BASE64}`,
+        b64Json: PNG_BASE64,
         mimeType: 'image/png',
-        revisedPrompt: null,
-        downloadName: 'generated-4.png',
+        revisedPrompt: 'fallback image',
+        downloadName: 'generated-5.png',
       },
     ]);
     expect(result.errorMessage).toBeNull();
   });
 
-  it('uses the selected format for base64 MIME and handles empty/error payloads', () => {
-    expect(normalizeImageResults({ data: [{ b64_json: 'DATA' }] }, 'jpeg').images[0]).toMatchObject({
-      mimeType: 'image/jpeg',
-      src: 'data:image/jpeg;base64,DATA',
-      downloadName: 'generated-1.jpeg',
+  it('derives base64 MIME from actual bytes instead of selected or returned metadata', () => {
+    expect(normalizeImageResults({
+      data: [{
+        b64_json: WEBP_BASE64,
+        output_format: 'png',
+        mime_type: 'image/jpeg',
+      }],
+    }, 'jpeg').images[0]).toMatchObject({
+      mimeType: 'image/webp',
+      src: `data:image/webp;base64,${WEBP_BASE64}`,
+      downloadName: 'generated-1.webp',
     });
+    expect(imageMimeType('jpg')).toBe('image/jpeg');
+  });
+
+  it('handles empty and error payloads without normalizing image elements', () => {
     expect(normalizeImageResults({ data: [] }, 'png')).toEqual({ images: [], errorMessage: null });
     expect(normalizeImageResults({ error: { message: 'provider rejected prompt' } }, 'png')).toEqual({
       images: [],

@@ -156,7 +156,6 @@ export type ModelTesterModeState = {
   imagesOutputCompression: number | null;
   imagesModeration: string;
   imagesUser: string;
-  imagesParameterEnabled?: ImageGenerationParameterEnabled;
   imagesMaskDataUrl: string;
   videosPrompt: string;
   videosInspectId: string;
@@ -243,7 +242,6 @@ export const DEFAULT_MODE_STATE: ModelTesterModeState = {
   imagesOutputCompression: null,
   imagesModeration: 'auto',
   imagesUser: '',
-  imagesParameterEnabled: { ...DEFAULT_IMAGE_PARAMETER_ENABLED },
   imagesMaskDataUrl: '',
   videosPrompt: '',
   videosInspectId: '',
@@ -867,8 +865,7 @@ const parseNullableBoundedInteger = (value: unknown, min: number, max: number): 
 };
 
 const parseModeState = (value: unknown): ModelTesterModeState => {
-  if (!isRecord(value)) return { ...DEFAULT_MODE_STATE, imagesParameterEnabled: { ...DEFAULT_IMAGE_PARAMETER_ENABLED } };
-  const imagesParameterEnabled = parseImageParameterEnabled(value.imagesParameterEnabled);
+  if (!isRecord(value)) return { ...DEFAULT_MODE_STATE };
   return {
     embeddingsInput: sanitizeString(value.embeddingsInput),
     searchQuery: sanitizeString(value.searchQuery),
@@ -886,7 +883,6 @@ const parseModeState = (value: unknown): ModelTesterModeState => {
     imagesOutputCompression: parseNullableBoundedInteger(value.imagesOutputCompression, 0, 100),
     imagesModeration: sanitizeString(value.imagesModeration, DEFAULT_MODE_STATE.imagesModeration),
     imagesUser: sanitizeString(value.imagesUser),
-    imagesParameterEnabled,
     imagesMaskDataUrl: sanitizeString(value.imagesMaskDataUrl),
     videosPrompt: sanitizeString(value.videosPrompt),
     videosInspectId: sanitizeString(value.videosInspectId),
@@ -1173,11 +1169,16 @@ export const createLoadingAssistantMessage = (): ChatMessage =>
     hasAutoCollapsed: false,
   });
 
-export const serializeModelTesterSession = (state: ModelTesterSessionState): string =>
-  JSON.stringify({
+export const serializeModelTesterSession = (state: ModelTesterSessionState): string => {
+  const { imagesParameterEnabled: _legacyImageParameterEnabled, ...modeState } = state.modeState as ModelTesterModeState & {
+    imagesParameterEnabled?: ImageGenerationParameterEnabled;
+  };
+  return JSON.stringify({
     ...state,
+    modeState,
     version: MODEL_TESTER_SESSION_VERSION,
   });
+};
 
 export const processThinkTags = (content: string, reasoningContent = ''): { content: string; reasoningContent: string } => {
   if (!content || !content.includes('<think>')) {
@@ -1379,7 +1380,7 @@ export const buildSearchRequestEnvelope = (
 export const buildImagesGenerationsRequestEnvelope = (
   inputs: ModelTesterInputs,
   modeState: ModelTesterModeState,
-  imageParameterEnabled: ImageGenerationParameterEnabled = modeState.imagesParameterEnabled || DEFAULT_IMAGE_PARAMETER_ENABLED,
+  imageParameterEnabled: ImageGenerationParameterEnabled = DEFAULT_IMAGE_PARAMETER_ENABLED,
 ): TesterProxyEnvelope => {
   const jsonBody: Record<string, unknown> = {
     model: inputs.model.trim(),

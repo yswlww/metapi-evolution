@@ -5,6 +5,7 @@ import {
   DEFAULT_INPUTS,
   DEFAULT_MODE_STATE,
   DEFAULT_PARAMETER_ENABLED,
+  DEFAULT_IMAGE_PARAMETER_ENABLED,
   MODEL_TESTER_SESSION_VERSION,
   MESSAGE_STATUS,
   buildApiPayload,
@@ -120,18 +121,6 @@ describe('modelTesterSession', () => {
         imagesOutputCompression: 68,
         imagesModeration: 'low',
         imagesUser: 'user-1',
-        imagesParameterEnabled: {
-          n: true,
-          size: false,
-          quality: true,
-          style: false,
-          response_format: true,
-          output_format: true,
-          background: false,
-          output_compression: true,
-          moderation: false,
-          user: true,
-        },
         searchQuery: 'hello',
         searchAllowedDomains: 'openai.com, google.com',
       },
@@ -1102,5 +1091,57 @@ describe('modelTesterSession', () => {
       moderation: false,
       user: false,
     });
+  });
+
+  it('migrates legacy nested image switches into one canonical state without retaining a second source', () => {
+    const restored = parseModelTesterSession(JSON.stringify({
+      input: '',
+      inputs: { ...DEFAULT_INPUTS, model: 'gpt-image-1', mode: 'images.generate' },
+      parameterEnabled: DEFAULT_PARAMETER_ENABLED,
+      imageParameterEnabled: { ...DEFAULT_IMAGE_PARAMETER_ENABLED, n: false },
+      messages: [],
+      conversationFiles: [],
+      pendingPayload: null,
+      customRequestMode: false,
+      customRequestBody: '',
+      showDebugPanel: false,
+      activeDebugTab: DEBUG_TABS.PREVIEW,
+      modeState: {
+        ...DEFAULT_MODE_STATE,
+        imagesPrompt: 'fox',
+        imagesN: 2,
+        imagesParameterEnabled: { ...DEFAULT_IMAGE_PARAMETER_ENABLED, n: true },
+      },
+    })) as any;
+
+    expect(restored.imageParameterEnabled.n).toBe(false);
+    expect(restored.modeState).not.toHaveProperty('imagesParameterEnabled');
+    expect(JSON.parse(serializeModelTesterSession(restored)).modeState).not.toHaveProperty('imagesParameterEnabled');
+
+    const staleModeState = {
+      ...DEFAULT_MODE_STATE,
+      imagesPrompt: 'fox',
+      imagesN: 2,
+      imagesParameterEnabled: { ...DEFAULT_IMAGE_PARAMETER_ENABLED, n: true },
+    } as any;
+    const envelope = buildImagesGenerationsRequestEnvelope(
+      { ...DEFAULT_INPUTS, model: 'gpt-image-1' },
+      staleModeState,
+    );
+    expect(envelope.jsonBody).toEqual({ model: 'gpt-image-1', prompt: 'fox' });
+  });
+
+  it('ranks filtered model names by match position, then name length, then original order', () => {
+    expect(filterModelTesterModelNames([
+      'openai/gpt-4o',
+      'gpt-4',
+      'my-gpt-mini',
+      'gpt-4.1-mini',
+    ], 'gpt')).toEqual([
+      'gpt-4',
+      'gpt-4.1-mini',
+      'my-gpt-mini',
+      'openai/gpt-4o',
+    ]);
   });
 });
