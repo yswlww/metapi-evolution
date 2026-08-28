@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { act, create } from 'react-test-renderer';
 import ImageResultGallery from './ImageResultGallery.js';
 
-const WEBP_BASE64 = 'UklGRgAAAABXRUJQ';
+const WEBP_BASE64 = 'UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoBAAEAAUAmJaACdLoB+AADsAD+8ut//NgVzXPv9//S4P0uD9Lg/9KQAAA=';
 
 describe('ImageResultGallery', () => {
   it('renders each valid image and exposes URL/download/revised prompt actions', () => {
@@ -46,7 +46,7 @@ describe('ImageResultGallery', () => {
     const click = vi.fn();
     const appendChild = vi.fn();
     const removeChild = vi.fn();
-    const createElement = vi.fn(() => ({
+    const anchor = {
       href: '',
       download: '',
       rel: '',
@@ -54,12 +54,20 @@ describe('ImageResultGallery', () => {
       setAttribute: vi.fn(),
       select: vi.fn(),
       style: {},
-    }));
+    };
+    const createElement = vi.fn(() => anchor);
     vi.stubGlobal('navigator', { clipboard: { writeText } });
     vi.stubGlobal('document', { createElement, body: { appendChild, removeChild }, execCommand: vi.fn(() => true) });
     vi.stubGlobal('window', { open: vi.fn() });
 
-    const root = create(<ImageResultGallery result={{ data: [{ url: 'https://cdn.example/a.png', revised_prompt: 'revised' }] }} />);
+    const root = create(<ImageResultGallery result={{
+      data: [{
+        url: 'https://cdn.example/a.png',
+        output_format: 'jpg',
+        mime_type: 'image/png',
+        revised_prompt: 'revised',
+      }],
+    }} />);
     const buttons = root.root.findAllByType('button');
     await act(async () => {
       buttons[0].props.onClick();
@@ -70,6 +78,7 @@ describe('ImageResultGallery', () => {
     });
 
     expect(click).toHaveBeenCalledTimes(1);
+    expect(anchor.download).toBe('generated-1.jpeg');
     expect((globalThis.window as any).open).toHaveBeenCalledWith('https://cdn.example/a.png', '_blank', 'noopener,noreferrer');
     expect(writeText).toHaveBeenCalledWith('https://cdn.example/a.png');
     expect(writeText).toHaveBeenCalledWith('revised');

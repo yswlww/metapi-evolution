@@ -26,6 +26,13 @@ export const imageMimeType = (format: unknown): string => {
       : 'image/png';
 };
 
+const outputFormatMimeType = (format: unknown): string | null => {
+  const normalized = typeof format === 'string' ? format.trim().toLowerCase() : '';
+  return normalized === 'png' || normalized === 'webp' || normalized === 'jpeg' || normalized === 'jpg'
+    ? imageMimeType(normalized)
+    : null;
+};
+
 const imageExtension = (mimeType: string): string => {
   if (mimeType === 'image/webp') return 'webp';
   if (mimeType === 'image/jpeg') return 'jpeg';
@@ -130,16 +137,17 @@ export const normalizeImageResults = (
       : null;
 
     if (url && isActionableImageUrl(url)) {
+      const returnedOutputFormatMime = outputFormatMimeType(item.output_format);
       const returnedMime = typeof item.mime_type === 'string' && item.mime_type.trim().toLowerCase().startsWith('image/')
         ? item.mime_type.trim().toLowerCase()
         : null;
-      const mimeType = returnedMime || imageMimeType(selectedOutputFormat);
+      const mimeType = returnedOutputFormatMime || returnedMime || imageMimeType(selectedOutputFormat);
       images.push({
         id: `image-${index}`,
         kind: 'url',
         src: url,
         url,
-        mimeType: returnedMime,
+        mimeType: returnedOutputFormatMime || returnedMime,
         revisedPrompt,
         downloadName: `generated-${images.length + 1}.${imageExtension(mimeType)}`,
       });

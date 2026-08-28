@@ -794,11 +794,13 @@ export default function ModelTester() {
     setSearchAllowedDomains(restored.modeState.searchAllowedDomains);
     setSearchBlockedDomains(restored.modeState.searchBlockedDomains);
     setAssetPrompt(
-      restored.inputs.mode === 'images.edit'
-        ? (restored.modeState.imagesEditPrompt || restored.modeState.imagesPrompt)
-        : restored.inputs.mode === 'videos.create'
-          ? restored.modeState.videosPrompt
-          : '',
+      restored.inputs.mode === 'images.generate'
+        ? restored.modeState.imagesPrompt
+        : restored.inputs.mode === 'images.edit'
+          ? (restored.modeState.imagesEditPrompt || restored.modeState.imagesPrompt)
+          : restored.inputs.mode === 'videos.create'
+            ? restored.modeState.videosPrompt
+            : '',
     );
     setVideoInspectId(restored.modeState.videosInspectId);
     setVideoInspectAction(restored.inputs.videoInspectAction === 'delete' ? 'DELETE' : 'GET');

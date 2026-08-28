@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { imageMimeType, normalizeImageResults } from './imageResults.js';
 
-const PNG_BASE64 = 'iVBORw0KGgo=';
-const WEBP_BASE64 = 'UklGRgAAAABXRUJQ';
-const JPEG_BASE64 = '/9j/2Q==';
+const PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==';
+const WEBP_BASE64 = 'UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoBAAEAAUAmJaACdLoB+AADsAD+8ut//NgVzXPv9//S4P0uD9Lg/9KQAAA=';
+const JPEG_BASE64 = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK+ZP3E//Z';
 
 describe('image result normalization', () => {
   it('keeps secure URLs and signature-valid PNG/WebP/JPEG base64 items while skipping invalid siblings', () => {
@@ -89,6 +89,20 @@ describe('image result normalization', () => {
       downloadName: 'generated-1.webp',
     });
     expect(imageMimeType('jpg')).toBe('image/jpeg');
+  });
+
+  it('prioritizes a URL result output_format for JPEG semantics and download naming', () => {
+    expect(normalizeImageResults({
+      data: [{
+        url: 'http://127.0.0.1:4000/image',
+        output_format: 'jpg',
+        mime_type: 'image/png',
+      }],
+    }, 'png').images[0]).toMatchObject({
+      kind: 'url',
+      mimeType: 'image/jpeg',
+      downloadName: 'generated-1.jpeg',
+    });
   });
 
   it('handles empty and error payloads without normalizing image elements', () => {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import ModelTester from './ModelTester.js';
+import ModernSelect from '../components/ModernSelect.js';
 import {
   DEBUG_TABS,
   DEFAULT_INPUTS,
@@ -11,7 +12,7 @@ import {
   serializeModelTesterSession,
 } from './helpers/modelTesterSession.js';
 
-const WEBP_BASE64 = 'UklGRgAAAABXRUJQ';
+const WEBP_BASE64 = 'UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoBAAEAAUAmJaACdLoB+AADsAD+8ut//NgVzXPv9//S4P0uD9Lg/9KQAAA=';
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
@@ -192,7 +193,7 @@ describe('ModelTester image generation integration', () => {
     expect(collectText(root?.root.findByType('pre'))).toContain(WEBP_BASE64);
   });
 
-  it('restores the asset prompt for the saved active mode instead of a different mode', async () => {
+  it('restores the asset prompt for the saved video mode instead of a different mode', async () => {
     vi.stubGlobal('localStorage', {
       getItem: vi.fn((key: string) => key === MODEL_TESTER_STORAGE_KEY
         ? serializeModelTesterSession({
@@ -223,5 +224,44 @@ describe('ModelTester image generation integration', () => {
     await flush();
 
     expect(root?.root.findByProps({ placeholder: '输入视频生成提示词' }).props.value).toBe('video prompt');
+  });
+
+  it('restores the generation prompt into the shared asset prompt for subsequent mode changes', async () => {
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key: string) => key === MODEL_TESTER_STORAGE_KEY
+        ? serializeModelTesterSession({
+          input: '',
+          inputs: { ...DEFAULT_INPUTS, mode: 'images.generate', model: 'gpt-image-1' },
+          parameterEnabled: DEFAULT_PARAMETER_ENABLED,
+          imageParameterEnabled: DEFAULT_IMAGE_PARAMETER_ENABLED,
+          messages: [],
+          conversationFiles: [],
+          pendingPayload: null,
+          customRequestMode: false,
+          customRequestBody: '',
+          showDebugPanel: false,
+          activeDebugTab: DEBUG_TABS.PREVIEW,
+          modeState: {
+            ...DEFAULT_MODE_STATE,
+            imagesPrompt: 'generate-image prompt',
+            imagesEditPrompt: 'edit-image prompt',
+            videosPrompt: 'video prompt',
+          },
+        })
+        : null),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    });
+
+    await act(async () => { root = create(<ModelTester />); });
+    await flush();
+
+    const modeSelect = root?.root.findAllByType(ModernSelect)
+      .find((select) => select.props.value === 'images.generate');
+    await act(async () => {
+      modeSelect?.props.onChange('images.edit');
+    });
+
+    expect(root?.root.findByProps({ placeholder: '输入图片提示词' }).props.value).toBe('generate-image prompt');
   });
 });
