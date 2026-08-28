@@ -20,6 +20,26 @@ import { withAccountProxyOverride } from './siteProxy.js';
 
 type CheckinExecutionStatus = 'success' | 'failed' | 'skipped';
 
+export const CHECKIN_REWARD_BALANCE_FRESHNESS_MS = 10 * 60 * 1000;
+
+export function isCheckinRewardBalanceFresh(
+  balance: unknown,
+  lastBalanceRefresh: unknown,
+  checkinStartedAt: number,
+): boolean {
+  if (typeof balance !== 'number' || !Number.isFinite(balance)) return false;
+  if (!Number.isFinite(checkinStartedAt)) return false;
+
+  const refreshTime = lastBalanceRefresh instanceof Date
+    ? lastBalanceRefresh.getTime()
+    : (typeof lastBalanceRefresh === 'number'
+      ? lastBalanceRefresh
+      : (typeof lastBalanceRefresh === 'string' ? Date.parse(lastBalanceRefresh) : Number.NaN));
+  if (!Number.isFinite(refreshTime) || refreshTime > checkinStartedAt) return false;
+
+  return checkinStartedAt - refreshTime <= CHECKIN_REWARD_BALANCE_FRESHNESS_MS;
+}
+
 function isSiteDisabled(status?: string | null): boolean {
   return (status || 'active') === 'disabled';
 }
@@ -151,6 +171,7 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
 
   const accountProxyUrl = resolveProxyUrlFromExtraConfig(account.extraConfig);
   let activeAccessToken = account.accessToken;
+  const checkinStartedAt = Date.now();
   let result = await withAccountProxyOverride(accountProxyUrl,
     () => adapter.checkin(site.url, activeAccessToken, activePlatformUserId));
 
@@ -222,7 +243,11 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
     }
 
     const parsedReward = parseCheckinRewardAmount(logReward) || parseCheckinRewardAmount(result.message);
-    if (directCheckinSuccess && parsedReward <= 0) {
+    if (
+      directCheckinSuccess &&
+      parsedReward <= 0 &&
+      isCheckinRewardBalanceFresh(account.balance, account.lastBalanceRefresh, checkinStartedAt)
+    ) {
       const inferredReward = inferRewardFromBalanceDelta(account.balance, refreshedBalanceInfo?.balance);
       if (inferredReward > 0) {
         logReward = inferredReward.toString();

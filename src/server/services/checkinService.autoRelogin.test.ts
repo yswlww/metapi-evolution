@@ -14,6 +14,26 @@ const selectAllMock = vi.fn();
 const insertValuesMock = vi.fn();
 const updateSetMock = vi.fn();
 
+type RewardBalanceFreshnessChecker = (
+  balance: unknown,
+  lastBalanceRefresh: unknown,
+  checkinStartedAt: number,
+) => boolean;
+
+async function getRewardBalanceFreshnessChecker(): Promise<RewardBalanceFreshnessChecker | undefined> {
+  const service = await import('./checkinService.js') as typeof import('./checkinService.js') & {
+    isCheckinRewardBalanceFresh?: RewardBalanceFreshnessChecker;
+  };
+  return service.isCheckinRewardBalanceFresh;
+}
+
+async function getRewardBalanceFreshnessWindow(): Promise<number | undefined> {
+  const service = await import('./checkinService.js') as typeof import('./checkinService.js') & {
+    CHECKIN_REWARD_BALANCE_FRESHNESS_MS?: number;
+  };
+  return service.CHECKIN_REWARD_BALANCE_FRESHNESS_MS;
+}
+
 vi.mock('../db/index.js', () => {
   const selectChain = {
     all: () => selectAllMock(),
@@ -79,6 +99,27 @@ vi.mock('./accountCredentialService.js', () => ({
 }));
 
 describe('checkinService auto relogin', () => {
+  it('allows balance-delta reward inference at exactly the 10-minute freshness boundary', async () => {
+    const isFresh = await getRewardBalanceFreshnessChecker();
+    const freshnessWindow = await getRewardBalanceFreshnessWindow();
+    const checkinStartedAt = 1_000_000_000;
+
+    expect(isFresh).toBeTypeOf('function');
+    expect(freshnessWindow).toBe(10 * 60 * 1000);
+    expect(isFresh?.(10, new Date(checkinStartedAt - freshnessWindow!).toISOString(), checkinStartedAt)).toBe(true);
+    expect(isFresh?.(10, new Date(checkinStartedAt - freshnessWindow! - 1).toISOString(), checkinStartedAt)).toBe(false);
+  });
+
+  it('rejects missing, invalid, and future balance refresh timestamps for reward inference', async () => {
+    const isFresh = await getRewardBalanceFreshnessChecker();
+    const checkinStartedAt = 1_000_000_000;
+
+    expect(isFresh?.(10, undefined, checkinStartedAt)).toBe(false);
+    expect(isFresh?.(10, 'not-a-date', checkinStartedAt)).toBe(false);
+    expect(isFresh?.(10, new Date(checkinStartedAt + 1).toISOString(), checkinStartedAt)).toBe(false);
+    expect(isFresh?.(Number.NaN, new Date(checkinStartedAt).toISOString(), checkinStartedAt)).toBe(false);
+  });
+
   beforeEach(() => {
     adapterMock.checkin.mockReset();
     adapterMock.login.mockReset();
@@ -248,6 +289,7 @@ describe('checkinService auto relogin', () => {
           accessToken: 'token',
           status: 'active',
           balance: 10,
+          lastBalanceRefresh: new Date().toISOString(),
           extraConfig: null,
         },
         sites: {
@@ -267,6 +309,70 @@ describe('checkinService auto relogin', () => {
 
     const firstInsertPayload = insertValuesMock.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(Number(firstInsertPayload?.reward)).toBeCloseTo(2.5, 6);
+  });
+
+  it('does not infer a reward from a stale balance after a successful checkin', async () => {
+    selectAllMock.mockReturnValue([
+      {
+        accounts: {
+          id: 19,
+          username: 'stale-user',
+          accessToken: 'token',
+          status: 'active',
+          balance: 10,
+          lastBalanceRefresh: new Date(Date.now() - 10 * 60 * 1000 - 1).toISOString(),
+          extraConfig: null,
+        },
+        sites: {
+          id: 19,
+          name: 'demo',
+          url: 'https://example.com',
+          platform: 'new-api',
+        },
+      },
+    ]);
+
+    adapterMock.checkin.mockResolvedValue({ success: true, message: 'checkin success' });
+    refreshBalanceMock.mockResolvedValue({ balance: 12.5, used: 0, quota: 12.5 });
+
+    const { checkinAccount } = await import('./checkinService.js');
+    const result = await checkinAccount(19);
+
+    expect(result.success).toBe(true);
+    expect(refreshBalanceMock).toHaveBeenCalledWith(19);
+    const firstInsertPayload = insertValuesMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(firstInsertPayload?.reward).toBeUndefined();
+  });
+
+  it('preserves a direct provider reward even when the cached balance is stale', async () => {
+    selectAllMock.mockReturnValue([
+      {
+        accounts: {
+          id: 20,
+          username: 'direct-reward-user',
+          accessToken: 'token',
+          status: 'active',
+          balance: 10,
+          lastBalanceRefresh: new Date(Date.now() - 10 * 60 * 1000 - 1).toISOString(),
+          extraConfig: null,
+        },
+        sites: {
+          id: 20,
+          name: 'demo',
+          url: 'https://example.com',
+          platform: 'new-api',
+        },
+      },
+    ]);
+
+    adapterMock.checkin.mockResolvedValue({ success: true, message: 'checkin success', reward: '3.25' });
+    refreshBalanceMock.mockResolvedValue({ balance: 12.5, used: 0, quota: 12.5 });
+
+    const { checkinAccount } = await import('./checkinService.js');
+    await checkinAccount(20);
+
+    const firstInsertPayload = insertValuesMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(firstInsertPayload?.reward).toBe('3.25');
   });
 
   it('treats already checked in responses as successful checkins', async () => {
