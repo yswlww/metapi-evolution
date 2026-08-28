@@ -251,6 +251,9 @@ describe('siteInitializationPresets', () => {
       id: 'orcarouter-openai',
       platform: 'orcarouter',
     });
+    expect(detectSiteInitializationPreset('http://api.orcarouter.ai/v1')).toBeNull();
+    expect(detectSiteInitializationPreset('https://key:secret@api.orcarouter.ai/v1')).toBeNull();
+    expect(detectSiteInitializationPreset('https://key:secret@api.orcarouter.ai', 'orcarouter')).toBeNull();
 
     expect(detectSiteInitializationPreset('https://evil-api.orcarouter.ai/v1')).toBeNull();
     expect(detectSiteInitializationPreset('https://api.orcarouter.ai.attacker.test/v1')).toBeNull();

@@ -19,6 +19,7 @@ import { getSiteInitializationPreset } from '../../../shared/siteInitializationP
 import { normalizeSiteApiEndpointBaseUrl } from '../../services/siteApiEndpointService.js';
 import { analyzePrimarySiteUrl } from '../../../shared/sitePrimaryUrl.js';
 import { normalizePlatformAlias } from '../../../shared/platformIdentity.js';
+import { getOrcaRouterTokenTransportError } from '../../services/orcarouterTransport.js';
 import { probeSiteModels } from '../../services/modelService.js';
 
 function sseWrite(raw: import('http').ServerResponse, event: string, data: unknown) {
@@ -233,6 +234,21 @@ function normalizeSiteApiEndpointsInput(input: unknown): {
   }
 
   return { valid: true, present: true, apiEndpoints };
+}
+
+function getOrcaRouterSiteTransportError(
+  platform: string,
+  primaryUrl: string,
+  apiEndpoints: SiteApiEndpointInputRow[] = [],
+): string | null {
+  const primaryError = getOrcaRouterTokenTransportError(platform, primaryUrl);
+  if (primaryError) return primaryError;
+
+  for (const endpoint of apiEndpoints) {
+    const endpointError = getOrcaRouterTokenTransportError(platform, endpoint.url);
+    if (endpointError) return endpointError;
+  }
+  return null;
 }
 
 async function loadSiteApiEndpointsBySiteIds(siteIds: number[]) {
@@ -565,6 +581,14 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (!detectedPlatform) {
       return reply.code(400).send({ error: 'Could not detect platform. Please specify manually.' });
     }
+    const transportError = getOrcaRouterSiteTransportError(
+      detectedPlatform,
+      url,
+      normalizedApiEndpoints.apiEndpoints,
+    );
+    if (transportError) {
+      return reply.code(400).send({ error: transportError });
+    }
     const conflictingSite = findExistingSiteBinding(existingSites, detectedPlatform, canonicalUrl);
     if (conflictingSite) {
       return sendSiteBindingConflict(reply, detectedPlatform, canonicalUrl);
@@ -694,6 +718,14 @@ export async function sitesRoutes(app: FastifyInstance) {
       : existingSite.platform;
     if (body.platform !== undefined && !nextPlatform) {
       return reply.code(400).send({ error: 'Invalid platform. Expected non-empty string.' });
+    }
+    const transportError = getOrcaRouterSiteTransportError(
+      nextPlatform || '',
+      body.url !== undefined ? body.url : existingSite.url,
+      normalizedApiEndpoints.present ? normalizedApiEndpoints.apiEndpoints : [],
+    );
+    if (transportError) {
+      return reply.code(400).send({ error: transportError });
     }
     const siteIdentityChanged = nextUrl !== existingSite.url || nextPlatform !== existingSite.platform;
     if (siteIdentityChanged) {

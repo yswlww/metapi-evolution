@@ -1,6 +1,7 @@
 import { asc, eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { RETRYABLE_TIMEOUT_PATTERNS } from './proxyRetryPolicy.js';
+import { assertOrcaRouterTokenTransport } from './orcarouterTransport.js';
 
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
 const NON_RETRYABLE_STATUS_CODES = new Set([400, 401, 403, 404, 422]);
@@ -263,6 +264,15 @@ export async function runWithSiteApiEndpointPool<T>(
     if (target.endpointId && attemptedEndpointIds.has(target.endpointId)) {
       if (lastError) throw lastError;
       throw new Error('当前站点的 API 请求地址均不可用');
+    }
+
+    try {
+      assertOrcaRouterTokenTransport(site.platform, target.baseUrl);
+    } catch (error) {
+      throw new SiteApiEndpointRequestError(
+        error instanceof Error ? error.message : 'unsafe OrcaRouter API transport',
+        { status: 400, cause: error },
+      );
     }
 
     try {

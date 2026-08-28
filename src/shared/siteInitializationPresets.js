@@ -36,6 +36,16 @@ function matchesHostAndPaths(url, hostname, paths) {
   return parsed.hostname === hostname && paths.includes(normalizePathname(parsed.pathname));
 }
 
+function matchesSecureOrcaRouterEndpoint(url, paths) {
+  const parsed = parseUrlCandidate(url);
+  if (!parsed) return false;
+  return parsed.protocol === 'https:'
+    && parsed.hostname === 'api.orcarouter.ai'
+    && !parsed.username
+    && !parsed.password
+    && paths.includes(normalizePathname(parsed.pathname));
+}
+
 const CODINGPLAN_RECOMMENDED_MODELS = Object.freeze([
   'qwen3-coder-plus',
   'qwen3-coder-next',
@@ -101,7 +111,7 @@ const SITE_INITIALIZATION_PRESETS = Object.freeze([
     recommendedSkipModelFetch: false,
     recommendedModels: ORCAROUTER_RECOMMENDED_MODELS,
     matches(url) {
-      return matchesHostAndPaths(url, 'api.orcarouter.ai', ['/v1']);
+      return matchesSecureOrcaRouterEndpoint(url, ['/v1']);
     },
   }),
   Object.freeze({
@@ -361,6 +371,10 @@ export function detectSiteInitializationPreset(url, platform) {
   const analyzed = analyzePrimarySiteUrl(url);
   for (const preset of SITE_INITIALIZATION_PRESETS) {
     if (preset.platform !== normalizedPlatform) continue;
+    if (
+      preset.id === 'orcarouter-openai'
+      && !matchesSecureOrcaRouterEndpoint(url, ['/', '/v1'])
+    ) continue;
     if (!preset.defaultUrl) continue;
     const presetAnalyzed = analyzePrimarySiteUrl(preset.defaultUrl);
     if (!presetAnalyzed.persistedUrl) continue;
