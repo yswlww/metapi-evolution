@@ -5,14 +5,13 @@ import { appendSessionTokenRebindHint, isTokenExpiredError } from './alertRules.
 import { reportTokenExpired } from './alertService.js';
 import {
   buildStoredSub2ApiSubscriptionSummary,
-  getAutoReloginConfig,
   getCredentialModeFromExtraConfig,
   getSub2ApiAuthFromExtraConfig,
   mergeAccountExtraConfig,
   resolveProxyUrlFromExtraConfig,
   resolvePlatformUserId,
 } from './accountExtraConfig.js';
-import { decryptAccountPassword } from './accountCredentialService.js';
+import { autoReloginAccount } from './accountAutoReloginService.js';
 import { extractRuntimeHealth, setAccountRuntimeHealth } from './accountHealthService.js';
 import { updateTodayIncomeSnapshot } from './todayIncomeRewardService.js';
 import type { BalanceInfo } from './platforms/base.js';
@@ -208,34 +207,6 @@ async function fetchTodayIncomeFromLogs(params: {
   return Math.round(totalIncome * 1_000_000) / 1_000_000;
 }
 
-async function tryAutoRelogin(account: any, site: any): Promise<string | null> {
-  const adapter = getAdapter(site.platform);
-  if (!adapter) return null;
-
-  const relogin = getAutoReloginConfig(account.extraConfig);
-  if (!relogin) return null;
-
-  const password = decryptAccountPassword(relogin.passwordCipher);
-  if (!password) return null;
-
-  const loginResult = await withAccountProxyOverride(
-    resolveProxyUrlFromExtraConfig(account.extraConfig),
-    () => adapter.login(site.url, relogin.username, password),
-  );
-  if (!loginResult.success || !loginResult.accessToken) return null;
-
-  await db.update(schema.accounts)
-    .set({
-      accessToken: loginResult.accessToken,
-      status: account.status === 'expired' ? 'active' : account.status,
-      updatedAt: new Date().toISOString(),
-    })
-    .where(eq(schema.accounts.id, account.id))
-    .run();
-
-  return loginResult.accessToken;
-}
-
 export async function refreshBalance(accountId: number) {
   const rows = await db
     .select()
@@ -277,7 +248,7 @@ export async function refreshBalance(accountId: number) {
     };
   }
 
-  const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
+  let activePlatformUserId = resolvePlatformUserId(account.extraConfig, account.username);
   let activeAccessToken = account.accessToken;
   let activeExtraConfig = account.extraConfig;
   let balanceInfo: BalanceInfo | null = null;
@@ -300,7 +271,7 @@ export async function refreshBalance(accountId: number) {
     }
   }
   const readBalance = async (token: string) => withAccountProxyOverride(accountProxyUrl,
-    () => adapter.getBalance(site.url, token, platformUserId));
+    () => adapter.getBalance(site.url, token, activePlatformUserId));
   const handleBalanceError = async (err: any) => {
     const message = appendSessionTokenRebindHint(err?.message || 'unknown error');
     setAccountRuntimeHealth(account.id, {
@@ -343,9 +314,11 @@ export async function refreshBalance(accountId: number) {
         await handleBalanceError(retryErr);
       }
     } else if (shouldAttemptAutoRelogin(message)) {
-      const refreshedAccessToken = await tryAutoRelogin(account, site);
-      if (refreshedAccessToken) {
-        activeAccessToken = refreshedAccessToken;
+      const refreshed = await autoReloginAccount(account, site);
+      if (refreshed) {
+        activeAccessToken = refreshed.accessToken;
+        activePlatformUserId = refreshed.platformUserId;
+        activeExtraConfig = refreshed.extraConfig;
         try {
           balanceInfo = await readBalance(activeAccessToken);
         } catch (retryErr: any) {
@@ -372,7 +345,7 @@ export async function refreshBalance(accountId: number) {
         baseUrl: site.url,
         accessToken: activeAccessToken,
         platform: site.platform,
-        platformUserId,
+        platformUserId: activePlatformUserId,
       }));
       if (typeof fallbackIncome === 'number' && Number.isFinite(fallbackIncome)) {
         balanceInfo.todayIncome = fallbackIncome;

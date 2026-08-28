@@ -91,7 +91,7 @@ describe('checkinService auto relogin', () => {
     updateSetMock.mockReset();
   });
 
-  it('retries checkin once after auto relogin when access token is missing', async () => {
+  it('retries checkin with the authoritative login ID and preserves merged auto-relogin config', async () => {
     selectAllMock.mockReturnValue([
       {
         accounts: {
@@ -100,6 +100,11 @@ describe('checkinService auto relogin', () => {
           accessToken: 'expired-token',
           status: 'active',
           extraConfig: JSON.stringify({
+            credentialMode: 'session',
+            proxyUrl: 'http://proxy.example:8080',
+            oauth: { provider: 'legacy-provider' },
+            sub2apiAuth: { refreshToken: 'keep-me' },
+            unrelated: 'preserve-me',
             autoRelogin: { username: 'linuxdo_7659', passwordCipher: 'cipher' },
           }),
         },
@@ -116,7 +121,7 @@ describe('checkinService auto relogin', () => {
       .mockResolvedValueOnce({ success: false, message: '无权进行此操作，未登录且未提供 access token' })
       .mockResolvedValueOnce({ success: true, message: 'checked in' });
     decryptPasswordMock.mockReturnValue('plain-password');
-    adapterMock.login.mockResolvedValue({ success: true, accessToken: 'fresh-token' });
+    adapterMock.login.mockResolvedValue({ success: true, accessToken: 'fresh-token', platformUserId: 80310 });
 
     const { checkinAccount } = await import('./checkinService.js');
     const result = await checkinAccount(1);
@@ -127,7 +132,21 @@ describe('checkinService auto relogin', () => {
     expect(adapterMock.checkin.mock.calls[0][1]).toBe('expired-token');
     expect(adapterMock.checkin.mock.calls[1][1]).toBe('fresh-token');
     expect(adapterMock.checkin.mock.calls[0][2]).toBe(7659);
-    expect(updateSetMock).toHaveBeenCalledWith(expect.objectContaining({ accessToken: 'fresh-token' }));
+    expect(adapterMock.checkin.mock.calls[1][2]).toBe(80310);
+    const reloginUpdate = updateSetMock.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((updates) => updates.accessToken === 'fresh-token');
+    expect(reloginUpdate).toEqual(expect.objectContaining({ accessToken: 'fresh-token' }));
+    const mergedConfig = JSON.parse(String(reloginUpdate?.extraConfig));
+    expect(mergedConfig).toEqual(expect.objectContaining({
+      platformUserId: 80310,
+      credentialMode: 'session',
+      proxyUrl: 'http://proxy.example:8080',
+      oauth: { provider: 'legacy-provider' },
+      sub2apiAuth: { refreshToken: 'keep-me' },
+      unrelated: 'preserve-me',
+      autoRelogin: { username: 'linuxdo_7659', passwordCipher: 'cipher' },
+    }));
   });
 
   it('passes guessed platform user id when config does not include it', async () => {
@@ -156,6 +175,39 @@ describe('checkinService auto relogin', () => {
 
     expect(adapterMock.checkin).toHaveBeenCalledTimes(1);
     expect(adapterMock.checkin.mock.calls[0][2]).toBe(11494);
+  });
+
+  it('keeps the prior safe fallback ID when login returns no authoritative ID', async () => {
+    selectAllMock.mockReturnValue([
+      {
+        accounts: {
+          id: 3,
+          username: 'linuxdo_7659',
+          accessToken: 'expired-token',
+          status: 'active',
+          extraConfig: JSON.stringify({
+            autoRelogin: { username: 'linuxdo_7659', passwordCipher: 'cipher' },
+          }),
+        },
+        sites: {
+          id: 5,
+          name: 'demo',
+          url: 'https://example.com',
+          platform: 'new-api',
+        },
+      },
+    ]);
+
+    adapterMock.checkin
+      .mockResolvedValueOnce({ success: false, message: 'access token expired' })
+      .mockResolvedValueOnce({ success: true, message: 'checked in' });
+    decryptPasswordMock.mockReturnValue('plain-password');
+    adapterMock.login.mockResolvedValue({ success: true, accessToken: 'fresh-token' });
+
+    const { checkinAccount } = await import('./checkinService.js');
+    await checkinAccount(3);
+
+    expect(adapterMock.checkin.mock.calls[1][2]).toBe(7659);
   });
 
   it('keeps successful checkin as success when message is 签到成功', async () => {

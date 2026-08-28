@@ -104,7 +104,7 @@ describe('balanceService auto relogin', () => {
     });
   });
 
-  it('retries balance fetch once after successful auto relogin', async () => {
+  it('retries balance fetch with the authoritative login ID and preserves merged config', async () => {
     selectAllMock.mockReturnValue([
       {
         accounts: {
@@ -114,6 +114,11 @@ describe('balanceService auto relogin', () => {
           status: 'active',
           extraConfig: JSON.stringify({
             platformUserId: 11494,
+            credentialMode: 'session',
+            proxyUrl: 'http://proxy.example:8080',
+            oauth: { provider: 'legacy-provider' },
+            sub2apiAuth: { refreshToken: 'keep-me' },
+            unrelated: 'preserve-me',
             autoRelogin: { username: 'linuxdo_11494', passwordCipher: 'cipher' },
           }),
         },
@@ -130,7 +135,7 @@ describe('balanceService auto relogin', () => {
       .mockRejectedValueOnce(new Error('HTTP 401: access token required'))
       .mockResolvedValueOnce({ balance: 12, used: 1, quota: 13 });
     decryptPasswordMock.mockReturnValue('plain-password');
-    adapterMock.login.mockResolvedValue({ success: true, accessToken: 'fresh-token' });
+    adapterMock.login.mockResolvedValue({ success: true, accessToken: 'fresh-token', platformUserId: 80311 });
 
     const { refreshBalance } = await import('./balanceService.js');
     const result = await refreshBalance(1);
@@ -140,7 +145,21 @@ describe('balanceService auto relogin', () => {
     expect(adapterMock.getBalance).toHaveBeenCalledTimes(2);
     expect(adapterMock.getBalance.mock.calls[0][1]).toBe('stale-token');
     expect(adapterMock.getBalance.mock.calls[1][1]).toBe('fresh-token');
-    expect(updateSetMock.mock.calls.some((call) => call[0]?.accessToken === 'fresh-token')).toBe(true);
+    expect(adapterMock.getBalance.mock.calls[0][2]).toBe(11494);
+    expect(adapterMock.getBalance.mock.calls[1][2]).toBe(80311);
+    const reloginUpdate = updateSetMock.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((updates) => updates.accessToken === 'fresh-token');
+    expect(reloginUpdate).toEqual(expect.objectContaining({ accessToken: 'fresh-token' }));
+    expect(JSON.parse(String(reloginUpdate?.extraConfig))).toEqual(expect.objectContaining({
+      platformUserId: 80311,
+      credentialMode: 'session',
+      proxyUrl: 'http://proxy.example:8080',
+      oauth: { provider: 'legacy-provider' },
+      sub2apiAuth: { refreshToken: 'keep-me' },
+      unrelated: 'preserve-me',
+      autoRelogin: { username: 'linuxdo_11494', passwordCipher: 'cipher' },
+    }));
     expect(reportTokenExpiredMock).not.toHaveBeenCalled();
   });
 
