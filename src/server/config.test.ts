@@ -125,8 +125,8 @@ describe('buildConfig', () => {
 
   it('uses site concurrency defaults for invalid rather than clamped process settings', () => {
     expect(buildConfig({
-      PROXY_SITE_CONCURRENCY_QUEUE_LIMIT: '-1',
-      PROXY_SITE_CONCURRENCY_QUEUE_WAIT_MS: '600001',
+      PROXY_SITE_CONCURRENCY_QUEUE_LIMIT: '10001',
+      PROXY_SITE_CONCURRENCY_QUEUE_WAIT_MS: '-1',
       PROXY_SITE_CONCURRENCY_LEASE_TTL_MS: '4999',
       PROXY_SITE_CONCURRENCY_LEASE_KEEPALIVE_MS: '90000',
     })).toMatchObject({
@@ -137,8 +137,8 @@ describe('buildConfig', () => {
     });
 
     expect(buildConfig({
-      PROXY_SITE_CONCURRENCY_QUEUE_LIMIT: '1.5',
-      PROXY_SITE_CONCURRENCY_QUEUE_WAIT_MS: 'not-a-number',
+      PROXY_SITE_CONCURRENCY_QUEUE_LIMIT: '-1',
+      PROXY_SITE_CONCURRENCY_QUEUE_WAIT_MS: '600001',
       PROXY_SITE_CONCURRENCY_LEASE_TTL_MS: 'Infinity',
       PROXY_SITE_CONCURRENCY_LEASE_KEEPALIVE_MS: '999',
     })).toMatchObject({
