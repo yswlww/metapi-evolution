@@ -271,6 +271,164 @@ describe('databaseMigrationService', () => {
     expect(siteStatement?.values[postRefreshProbeLatencyThresholdIndex]).toBe(2500);
   });
 
+  it.each(['sqlite', 'mysql', 'postgres'] as const)(
+    'retains site max concurrency in %s migration INSERTs without shifting neighboring values',
+    async (dialect) => {
+      vi.resetModules();
+
+      const rowsByTable = {
+        settings: [],
+        sites: [
+          {
+            id: 101,
+            name: 'bounded-site',
+            url: 'https://bounded.example.com',
+            maxConcurrency: 7,
+            externalCheckinUrl: 'https://bounded.example.com/checkin',
+            platform: 'new-api',
+            proxyUrl: 'http://127.0.0.1:8080',
+            useSystemProxy: true,
+            customHeaders: '{"x-site":"bounded"}',
+            customHeadersOverrideRequestHeaders: true,
+            postRefreshProbeEnabled: true,
+            postRefreshProbeModel: 'gpt-bounded',
+            postRefreshProbeScope: 'all',
+            postRefreshProbeLatencyThresholdMs: 700,
+            status: 'disabled',
+            isPinned: true,
+            sortOrder: 4,
+            globalWeight: 1.5,
+            apiKey: 'bounded-key',
+            createdAt: '2026-08-29T00:00:00.000Z',
+            updatedAt: '2026-08-29T01:00:00.000Z',
+          },
+          {
+            id: 102,
+            name: 'unlimited-site',
+            url: 'https://unlimited.example.com',
+            maxConcurrency: null,
+            externalCheckinUrl: null,
+            platform: 'openai',
+            proxyUrl: null,
+            useSystemProxy: false,
+            customHeaders: null,
+            customHeadersOverrideRequestHeaders: false,
+            postRefreshProbeEnabled: false,
+            postRefreshProbeModel: '',
+            postRefreshProbeScope: 'single',
+            postRefreshProbeLatencyThresholdMs: 0,
+            status: 'active',
+            isPinned: false,
+            sortOrder: 0,
+            globalWeight: 1,
+            apiKey: null,
+            createdAt: '2026-08-29T00:00:00.000Z',
+            updatedAt: '2026-08-29T01:00:00.000Z',
+          },
+        ],
+        siteApiEndpoints: [],
+        siteAnnouncements: [],
+        siteDisabledModels: [],
+        accounts: [],
+        accountTokens: [],
+        checkinLogs: [],
+        modelAvailability: [],
+        tokenModelAvailability: [],
+        tokenRoutes: [],
+        routeChannels: [],
+        routeGroupSources: [],
+        proxyLogs: [],
+        proxyVideoTasks: [],
+        proxyFiles: [],
+        downstreamApiKeys: [],
+        events: [],
+      };
+      const client = {
+        dialect,
+        connectionString: dialect === 'sqlite'
+          ? ':memory:'
+          : `${dialect}://example.invalid/metapi`,
+        ssl: false,
+        begin: vi.fn(async () => {}),
+        commit: vi.fn(async () => {}),
+        rollback: vi.fn(async () => {}),
+        execute: vi.fn(async () => []),
+        queryScalar: vi.fn(async () => 0),
+        close: vi.fn(async () => {}),
+      };
+
+      vi.doMock('../db/index.js', () => ({
+        db: createDbMock(rowsByTable),
+        schema: createDbSchemaMock(),
+      }));
+      vi.doMock('../db/runtimeSchemaBootstrap.js', () => ({
+        createRuntimeSchemaClient: async () => client,
+        ensureRuntimeDatabaseSchema: async () => {},
+      }));
+
+      try {
+        const { migrateCurrentDatabase } = await import('./databaseMigrationService.js');
+        const summary = await migrateCurrentDatabase({
+          dialect,
+          connectionString: client.connectionString,
+          overwrite: true,
+        });
+
+        expect(summary.rows.sites).toBe(2);
+        const siteTable = dialect === 'mysql' ? '`sites`' : '"sites"';
+        const siteInsertCalls = client.execute.mock.calls.filter(([sqlText]) => (
+          typeof sqlText === 'string' && sqlText.startsWith(`INSERT INTO ${siteTable}`)
+        ));
+        expect(siteInsertCalls).toHaveLength(2);
+
+        const expectedColumns = [
+          'id',
+          'name',
+          'url',
+          'max_concurrency',
+          'external_checkin_url',
+          'platform',
+          'proxy_url',
+          'use_system_proxy',
+          'custom_headers',
+          'custom_headers_override_request_headers',
+          'post_refresh_probe_enabled',
+          'post_refresh_probe_model',
+          'post_refresh_probe_scope',
+          'post_refresh_probe_latency_threshold_ms',
+          'status',
+          'is_pinned',
+          'sort_order',
+          'global_weight',
+          'api_key',
+          'created_at',
+          'updated_at',
+        ];
+        const quote = (column: string) => dialect === 'mysql' ? `\`${column}\`` : `"${column}"`;
+        expect(siteInsertCalls[0]?.[0]).toContain(`(${expectedColumns.map(quote).join(', ')})`);
+        expect(siteInsertCalls[0]?.[1]).toEqual(dialect === 'sqlite'
+          ? [
+            101, 'bounded-site', 'https://bounded.example.com', 7,
+            'https://bounded.example.com/checkin', 'new-api', 'http://127.0.0.1:8080', 1,
+            '{"x-site":"bounded"}', 1, 1, 'gpt-bounded', 'all', 700, 'disabled', 1, 4, 1.5,
+            'bounded-key', '2026-08-29T00:00:00.000Z', '2026-08-29T01:00:00.000Z',
+          ]
+          : [
+            101, 'bounded-site', 'https://bounded.example.com', 7,
+            'https://bounded.example.com/checkin', 'new-api', 'http://127.0.0.1:8080', true,
+            '{"x-site":"bounded"}', true, true, 'gpt-bounded', 'all', 700, 'disabled', true, 4, 1.5,
+            'bounded-key', '2026-08-29T00:00:00.000Z', '2026-08-29T01:00:00.000Z',
+          ]);
+        expect(siteInsertCalls[1]?.[1]?.[3]).toBeNull();
+        expect((siteInsertCalls[1]?.[1] as unknown[]).length).toBe(expectedColumns.length);
+      } finally {
+        vi.doUnmock('../db/index.js');
+        vi.doUnmock('../db/runtimeSchemaBootstrap.js');
+        vi.resetModules();
+      }
+    },
+  );
+
   it('includes site api endpoints when building migration statements', () => {
     const statements = __databaseMigrationServiceTestUtils.buildStatements({
       version: 'test',

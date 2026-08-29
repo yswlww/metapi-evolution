@@ -67,6 +67,7 @@ describe('settings database migration api', () => {
       platform: 'new-api',
       status: 'active',
       proxyUrl: null,
+      maxConcurrency: 7,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }).returning().get();
@@ -128,10 +129,14 @@ describe('settings database migration api', () => {
     const targetDb = new Database(targetPath);
     try {
       const targetSites = targetDb.prepare('SELECT COUNT(*) AS cnt FROM sites').get() as { cnt: number };
+      const targetSite = targetDb.prepare('SELECT max_concurrency AS maxConcurrency FROM sites').get() as {
+        maxConcurrency: number | null;
+      };
       const targetAccounts = targetDb.prepare('SELECT COUNT(*) AS cnt FROM accounts').get() as { cnt: number };
       const targetSettings = targetDb.prepare('SELECT COUNT(*) AS cnt FROM settings').get() as { cnt: number };
 
       expect(targetSites.cnt).toBe(1);
+      expect(targetSite.maxConcurrency).toBe(7);
       expect(targetAccounts.cnt).toBe(1);
       expect(targetSettings.cnt).toBe(1);
     } finally {
