@@ -7,6 +7,7 @@ const DEFAULT_CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const DEFAULT_CLAUDE_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 const DEFAULT_GEMINI_CLI_CLIENT_ID = '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com';
 const DEFAULT_GEMINI_CLI_CLIENT_SECRET = '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';
+const NODE_MAX_TIMEOUT_MS = 2_147_483_647;
 export const TOKEN_ROUTER_FAILURE_COOLDOWN_MAX_SEC_CEILING = 30 * 24 * 60 * 60;
 
 function parseBoolean(value: string | undefined, fallback = false): boolean {
@@ -83,11 +84,11 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     env.PROXY_SITE_CONCURRENCY_LEASE_TTL_MS,
     90_000,
     5_000,
-    Number.MAX_SAFE_INTEGER,
+    NODE_MAX_TIMEOUT_MS,
   );
   const proxySiteConcurrencyLeaseKeepaliveMs = parseIntegerInRange(
     env.PROXY_SITE_CONCURRENCY_LEASE_KEEPALIVE_MS,
-    15_000,
+    Math.min(15_000, proxySiteConcurrencyLeaseTtlMs - 1),
     1_000,
     proxySiteConcurrencyLeaseTtlMs - 1,
   );

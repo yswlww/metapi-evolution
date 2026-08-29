@@ -53,6 +53,7 @@ type SiteWaiter = {
   resolve: (lease: ProxySiteLease) => void;
   signal?: AbortSignal;
   timer: ReturnType<typeof setTimeout> | null;
+  waitMs: number;
 };
 
 type SiteLeaseState = {
@@ -108,6 +109,7 @@ export class SiteConcurrencyLimitError extends Error {
 const siteRuntimeStates = new Map<number, SiteRuntimeState>();
 const stickySessionBindings = new Map<string, StickyEntry>();
 const channelRuntimeStates = new Map<number, ChannelRuntimeState>();
+const NODE_MAX_TIMEOUT_MS = 2_147_483_647;
 let nextLeaseId = 1;
 type SessionScopedChannelInput =
   | string
@@ -172,7 +174,7 @@ function getSiteQueueWaitMs(): number {
 }
 
 function getSiteLeaseTtlMs(): number {
-  return Math.max(5_000, Math.trunc(config.proxySiteConcurrencyLeaseTtlMs || 0));
+  return Math.min(NODE_MAX_TIMEOUT_MS, Math.max(5_000, Math.trunc(config.proxySiteConcurrencyLeaseTtlMs || 0)));
 }
 
 function getSiteLeaseKeepaliveMs(): number {
@@ -395,8 +397,8 @@ class ProxyChannelCoordinator {
     const state = this.getOrCreateSiteRuntimeState(siteId, input.maxConcurrency);
     state.limit = normalizeSiteConcurrencyLimit(input.maxConcurrency);
     this.pruneCancelledSiteWaiters(state);
+    this.drainSiteQueue(siteId);
     if (state.limit <= 0) {
-      this.drainSiteQueue(siteId);
       this.maybeDeleteSiteRuntimeState(siteId);
       return createNoopSiteLease(siteId);
     }
@@ -428,20 +430,10 @@ class ProxyChannelCoordinator {
         resolve,
         signal: input.signal,
         timer: null,
+        waitMs,
       };
       const cancel = (reason: SiteConcurrencyLimitReason) => {
-        if (waiter.cancelled) return;
-        waiter.cancelled = true;
-        if (waiter.timer) clearTimeout(waiter.timer);
-        waiter.timer = null;
-        if (waiter.onAbort && waiter.signal) waiter.signal.removeEventListener('abort', waiter.onAbort);
-        waiter.onAbort = null;
-        this.pruneCancelledSiteWaiters(state);
-        this.maybeDeleteSiteRuntimeState(siteId);
-        if (reason === 'wait_timeout') {
-          logSiteConcurrency('wait_timeout', siteId, { waitMs });
-        }
-        reject(createSiteConcurrencyError(siteId, reason));
+        this.cancelSiteWaiter(siteId, state, waiter, reason);
       };
       waiter.timer = setTimeout(() => cancel('wait_timeout'), waitMs);
       shouldUnrefTimer(waiter.timer);
@@ -474,6 +466,26 @@ class ProxyChannelCoordinator {
   private pruneCancelledSiteWaiters(state?: SiteRuntimeState): void {
     if (!state || state.queue.length <= 0) return;
     state.queue = state.queue.filter((waiter) => !waiter.cancelled);
+  }
+
+  private cancelSiteWaiter(
+    siteId: number,
+    state: SiteRuntimeState,
+    waiter: SiteWaiter,
+    reason: SiteConcurrencyLimitReason,
+  ): void {
+    if (waiter.cancelled) return;
+    waiter.cancelled = true;
+    if (waiter.timer) clearTimeout(waiter.timer);
+    waiter.timer = null;
+    if (waiter.onAbort && waiter.signal) waiter.signal.removeEventListener('abort', waiter.onAbort);
+    waiter.onAbort = null;
+    this.pruneCancelledSiteWaiters(state);
+    this.maybeDeleteSiteRuntimeState(siteId);
+    if (reason === 'wait_timeout') {
+      logSiteConcurrency('wait_timeout', siteId, { waitMs: waiter.waitMs });
+    }
+    waiter.reject(createSiteConcurrencyError(siteId, reason));
   }
 
   private maybeDeleteSiteRuntimeState(siteId: number): void {
@@ -538,6 +550,10 @@ class ProxyChannelCoordinator {
     while (state.queue.length > 0 && (state.limit <= 0 || state.activeLeaseIds.size < state.limit)) {
       const waiter = state.queue.shift();
       if (!waiter || waiter.cancelled) continue;
+      if (waiter.deadlineMs <= Date.now()) {
+        this.cancelSiteWaiter(siteId, state, waiter, 'wait_timeout');
+        continue;
+      }
       waiter.cancelled = true;
       if (waiter.timer) clearTimeout(waiter.timer);
       waiter.timer = null;

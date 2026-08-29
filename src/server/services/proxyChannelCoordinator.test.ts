@@ -350,6 +350,20 @@ describe('proxyChannelCoordinator', () => {
     warn.mockRestore();
   });
 
+  it('bounds site lease timers to Node safe timeout range', async () => {
+    config.proxySiteConcurrencyLeaseTtlMs = Number.MAX_SAFE_INTEGER;
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    const lease = await proxyChannelCoordinator.acquireSiteLease({ siteId: 1, maxConcurrency: 1 });
+    const ttlDelay = Number(setTimeoutSpy.mock.calls.at(-1)?.[1]);
+
+    expect(ttlDelay).toBeLessThanOrEqual(2_147_483_647);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(lease.isActive()).toBe(true);
+
+    lease.release();
+    setTimeoutSpy.mockRestore();
+  });
+
   it('limits site lease touch renewals to the keepalive cadence', async () => {
     config.proxySiteConcurrencyLeaseTtlMs = 5_000;
     config.proxySiteConcurrencyLeaseKeepaliveMs = 1_000;
@@ -359,6 +373,46 @@ describe('proxyChannelCoordinator', () => {
     lease.touch();
     await vi.advanceTimersByTimeAsync(4_500);
     expect(lease.isActive()).toBe(false);
+  });
+
+  it('rejects an expired site waiter during drain and continues FIFO processing', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const first = await proxyChannelCoordinator.acquireSiteLease({ siteId: 1, maxConcurrency: 1 });
+    const expiredResult = proxyChannelCoordinator.acquireSiteLease({ siteId: 1, maxConcurrency: 1 })
+      .then((lease) => ({ kind: 'resolved' as const, lease }), (error) => ({ kind: 'rejected' as const, error }));
+    await vi.advanceTimersByTimeAsync(0);
+    vi.setSystemTime(Date.now() + 100);
+    const nextResult = proxyChannelCoordinator.acquireSiteLease({ siteId: 1, maxConcurrency: 1 })
+      .then((lease) => ({ kind: 'resolved' as const, lease }), (error) => ({ kind: 'rejected' as const, error }));
+    await vi.advanceTimersByTimeAsync(0);
+
+    vi.setSystemTime(Date.now() + 101);
+    first.release();
+
+    const expired = await expiredResult;
+    if (expired.kind === 'resolved') expired.lease.release();
+    const next = await nextResult;
+    if (next.kind === 'resolved') next.lease.release();
+
+    expect(expired).toMatchObject({
+      kind: 'rejected',
+      error: {
+        code: 'site_concurrency_limit',
+        reason: 'wait_timeout',
+        statusCode: 503,
+        siteId: 1,
+      },
+    });
+    expect(next.kind).toBe('resolved');
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('[site-concurrency]', expect.objectContaining({
+      event: 'wait_timeout', siteId: 1,
+    }));
+    expect(proxyChannelCoordinator.getSiteConcurrencySnapshot(1)).toMatchObject({
+      activeLeaseCount: 0,
+      waitingCount: 0,
+    });
+    warn.mockRestore();
   });
 
   it('supports idempotent release and transferred ownership for tracked and unlimited leases', async () => {
@@ -396,6 +450,38 @@ describe('proxyChannelCoordinator', () => {
     const granted = await third;
     expect(granted.isActive()).toBe(true);
     granted.release();
+  });
+
+  it('grants existing site waiters before a later caller after a limit increase', async () => {
+    const first = await proxyChannelCoordinator.acquireSiteLease({ siteId: 1, maxConcurrency: 1 });
+    const acquisitionOrder: string[] = [];
+    const olderPromise = proxyChannelCoordinator.acquireSiteLease({ siteId: 1, maxConcurrency: 1 })
+      .then((lease) => {
+        acquisitionOrder.push('older');
+        return lease;
+      });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const laterPromise = proxyChannelCoordinator.acquireSiteLease({ siteId: 1, maxConcurrency: 2 })
+      .then((lease) => {
+        acquisitionOrder.push('later');
+        return lease;
+      });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(acquisitionOrder).toEqual(['older']);
+    expect(proxyChannelCoordinator.getSiteConcurrencySnapshot(1)).toMatchObject({
+      limit: 2,
+      activeLeaseCount: 2,
+      waitingCount: 1,
+    });
+
+    const older = await olderPromise;
+    first.release();
+    older.release();
+    const later = await laterPromise;
+    expect(acquisitionOrder).toEqual(['older', 'later']);
+    later.release();
   });
 
   it('immediately grants queued site waiters as no-op leases when the limit becomes unlimited', async () => {
