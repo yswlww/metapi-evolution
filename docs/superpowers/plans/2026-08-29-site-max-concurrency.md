@@ -38,6 +38,8 @@
 - `drizzle/0029_site_max_concurrency.sql` — additive schema migration.
 - `src/server/routes/proxy/siteConcurrencyBoundary.ts` — Fastify request abort signal and deterministic 503 response helper.
 - `src/server/routes/proxy/siteConcurrencyBoundary.test.ts` — HTTP/error/abort boundary tests.
+- `src/server/services/siteConcurrencyResponse.ts` — explicit response-body lease transfer and stream lifecycle wrapper.
+- `src/server/services/siteConcurrencyResponse.test.ts` — EOF/cancel/error/abort/TTL stream release tests.
 
 ### Existing owners to extend
 
@@ -81,9 +83,9 @@ export type ProxySiteLease = {
   readonly siteId: number;
   isActive(): boolean;
   isTransferred(): boolean;
+  markTransferred(): void;
   touch(): void;
   release(): void;
-  bindResponse(response: Response, signal?: AbortSignal): Response;
 };
 
 proxyChannelCoordinator.acquireSiteLease(input: {
@@ -106,6 +108,12 @@ export async function runWithProxySiteApiEndpointPool<T>(
   operation: (target: SiteApiEndpointTarget, lease: ProxySiteLease) => Promise<T>,
   options?: { signal?: AbortSignal },
 ): Promise<T>;
+
+export function bindSiteLeaseToResponse(
+  response: Response,
+  lease: ProxySiteLease,
+  signal?: AbortSignal,
+): Response;
 
 export function createProxyRequestAbortSignal(
   request: FastifyRequest,
@@ -512,7 +520,7 @@ type SiteRuntimeState = {
 };
 ```
 
-Implement `acquireSiteLease`, `updateSiteConcurrencyLimit`, latest-limit FIFO drain, no-op unlimited lease, queue cap, timeout, abort removal, TTL/touch, and idempotent release. Emit bounded structured diagnostics only for queue-full, wait-timeout, TTL expiry, and explicit dynamic-limit changes; never log credentials, request bodies, prompts, or normal per-request grant/release noise. Add log-spy assertions to the coordinator tests for those four exceptional events.
+Implement `acquireSiteLease`, `updateSiteConcurrencyLimit`, latest-limit FIFO drain, no-op unlimited lease, queue cap, timeout, abort removal, TTL/touch, idempotent release, `markTransferred()`, and `isTransferred()`. A tracked or no-op lease starts untransferred; `markTransferred()` is idempotent and tells Task 4's wrapper not to release in its `finally`. Emit bounded structured diagnostics only for queue-full, wait-timeout, TTL expiry, and explicit dynamic-limit changes; never log credentials, request bodies, prompts, or normal per-request grant/release noise. Add log-spy assertions to the coordinator tests for those four exceptional events.
 
 - [ ] **Step 6: Make reset clear ownership**
 
@@ -544,6 +552,8 @@ git commit -m "feat: add site concurrency coordinator" \
 **Files:**
 - Modify: `src/server/services/siteApiEndpointService.ts:152-296`
 - Modify: `src/server/services/siteApiEndpointService.test.ts`
+- Create: `src/server/services/siteConcurrencyResponse.ts`
+- Create: `src/server/services/siteConcurrencyResponse.test.ts`
 - Create: `src/server/routes/proxy/siteConcurrencyBoundary.ts`
 - Create: `src/server/routes/proxy/siteConcurrencyBoundary.test.ts`
 - Test: `src/server/proxy-core/firstByteTimeout.test.ts`
@@ -598,6 +608,7 @@ expect(reply.send).toHaveBeenCalledWith({
 ```bash
 npx vitest run --root . \
   src/server/services/siteApiEndpointService.test.ts \
+  src/server/services/siteConcurrencyResponse.test.ts \
   src/server/routes/proxy/siteConcurrencyBoundary.test.ts \
   src/server/proxy-core/firstByteTimeout.test.ts
 ```
@@ -618,9 +629,9 @@ async function loadCurrentSiteMaxConcurrency(siteId: number): Promise<number | n
 
 Acquire once, delegate to `runWithSiteApiEndpointPool`, and release in `finally` unless `lease.isTransferred()`.
 
-- [ ] **Step 6: Implement `bindResponse` stream ownership**
+- [ ] **Step 6: Implement explicit response stream ownership**
 
-Wrap `response.body` with a `ReadableStream` that forwards `pull`, `cancel`, source errors, and chunks. Call `lease.touch()` no more often than `keepaliveMs`. Release once on EOF/error/cancel/abort. Return a new `Response` preserving status/statusText/headers.
+Create `bindSiteLeaseToResponse(response, lease, signal)` in `siteConcurrencyResponse.ts`. It must call `lease.markTransferred()` before returning a wrapped `Response`. Wrap `response.body` with a `ReadableStream` that forwards `pull`, `cancel`, source errors, and chunks. Call `lease.touch()` no more often than `keepaliveMs`. Release once on EOF/error/cancel/abort. Return a new `Response` preserving status/statusText/headers. If the response has no body, release immediately and return an equivalent bodyless response.
 
 - [ ] **Step 7: Implement request abort and 503 helpers**
 
@@ -651,6 +662,7 @@ Add `replySiteConcurrencyLimit` and `isSiteConcurrencyLimitError`. The aborted r
 ```bash
 npx vitest run --root . \
   src/server/services/siteApiEndpointService.test.ts \
+  src/server/services/siteConcurrencyResponse.test.ts \
   src/server/routes/proxy/siteConcurrencyBoundary.test.ts \
   src/server/proxy-core/firstByteTimeout.test.ts
 ```
@@ -661,6 +673,7 @@ Expected: PASS.
 
 ```bash
 git add src/server/services/siteApiEndpointService.ts src/server/services/siteApiEndpointService.test.ts \
+  src/server/services/siteConcurrencyResponse.ts src/server/services/siteConcurrencyResponse.test.ts \
   src/server/routes/proxy/siteConcurrencyBoundary.ts src/server/routes/proxy/siteConcurrencyBoundary.test.ts \
   src/server/proxy-core/firstByteTimeout.test.ts
 git commit -m "feat: bind site concurrency to endpoint streams" \
@@ -827,7 +840,7 @@ const result = await runWithProxySiteApiEndpointPool(
   async (target, lease) => {
     const response = await fetch(requestUrl, requestInit);
     return {
-      upstream: lease.bindResponse(response, abort.signal),
+      upstream: bindSiteLeaseToResponse(response, lease, abort.signal),
       upstreamPath,
     };
   },
@@ -919,7 +932,7 @@ Move each surface's current `executeEndpointFlow` call unchanged into the proxy-
 
 ```ts
 if (result.ok) {
-  result.upstream = lease.bindResponse(result.upstream, abortSignal);
+  result.upstream = bindSiteLeaseToResponse(result.upstream, lease, abortSignal);
 }
 return result;
 ```
@@ -1086,6 +1099,7 @@ npx vitest run --root . \
   src/server/config.test.ts \
   src/server/services/proxyChannelCoordinator.test.ts \
   src/server/services/siteApiEndpointService.test.ts \
+  src/server/services/siteConcurrencyResponse.test.ts \
   src/server/routes/proxy/siteConcurrencyBoundary.test.ts \
   src/server/routes/proxy/completions.siteApiEndpoint.test.ts \
   src/server/routes/proxy/embeddings.siteApiEndpoint.test.ts \
