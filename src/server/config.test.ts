@@ -102,6 +102,53 @@ describe('buildConfig', () => {
     await app.close();
   });
 
+  it('normalizes site concurrency process settings', () => {
+    expect(buildConfig({})).toMatchObject({
+      proxySiteConcurrencyQueueLimit: 100,
+      proxySiteConcurrencyQueueWaitMs: 1_500,
+      proxySiteConcurrencyLeaseTtlMs: 90_000,
+      proxySiteConcurrencyLeaseKeepaliveMs: 15_000,
+    });
+
+    expect(buildConfig({
+      PROXY_SITE_CONCURRENCY_QUEUE_LIMIT: '20',
+      PROXY_SITE_CONCURRENCY_QUEUE_WAIT_MS: '2500',
+      PROXY_SITE_CONCURRENCY_LEASE_TTL_MS: '120000',
+      PROXY_SITE_CONCURRENCY_LEASE_KEEPALIVE_MS: '10000',
+    })).toMatchObject({
+      proxySiteConcurrencyQueueLimit: 20,
+      proxySiteConcurrencyQueueWaitMs: 2_500,
+      proxySiteConcurrencyLeaseTtlMs: 120_000,
+      proxySiteConcurrencyLeaseKeepaliveMs: 10_000,
+    });
+  });
+
+  it('uses site concurrency defaults for invalid rather than clamped process settings', () => {
+    expect(buildConfig({
+      PROXY_SITE_CONCURRENCY_QUEUE_LIMIT: '-1',
+      PROXY_SITE_CONCURRENCY_QUEUE_WAIT_MS: '600001',
+      PROXY_SITE_CONCURRENCY_LEASE_TTL_MS: '4999',
+      PROXY_SITE_CONCURRENCY_LEASE_KEEPALIVE_MS: '90000',
+    })).toMatchObject({
+      proxySiteConcurrencyQueueLimit: 100,
+      proxySiteConcurrencyQueueWaitMs: 1_500,
+      proxySiteConcurrencyLeaseTtlMs: 90_000,
+      proxySiteConcurrencyLeaseKeepaliveMs: 15_000,
+    });
+
+    expect(buildConfig({
+      PROXY_SITE_CONCURRENCY_QUEUE_LIMIT: '1.5',
+      PROXY_SITE_CONCURRENCY_QUEUE_WAIT_MS: 'not-a-number',
+      PROXY_SITE_CONCURRENCY_LEASE_TTL_MS: 'Infinity',
+      PROXY_SITE_CONCURRENCY_LEASE_KEEPALIVE_MS: '999',
+    })).toMatchObject({
+      proxySiteConcurrencyQueueLimit: 100,
+      proxySiteConcurrencyQueueWaitMs: 1_500,
+      proxySiteConcurrencyLeaseTtlMs: 90_000,
+      proxySiteConcurrencyLeaseKeepaliveMs: 15_000,
+    });
+  });
+
   it('trusts forwarded client IP headers for reverse-proxy deployments', async () => {
     const app = Fastify(buildFastifyOptions(buildConfig({})));
 
