@@ -6,6 +6,7 @@ import { upsertSetting } from '../db/upsertSetting.js';
 import { mergeAccountExtraConfig } from './accountExtraConfig.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { PLATFORM_ALIASES, detectPlatformByUrlHint } from '../../shared/platformIdentity.js';
+import { normalizeSiteMaxConcurrency } from '../../shared/siteMaxConcurrency.js';
 
 const BACKUP_VERSION = '2.1';
 
@@ -1438,6 +1439,23 @@ export async function exportBackup(type: BackupExportType): Promise<BackupV2> {
   };
 }
 
+function normalizeImportedSiteMaxConcurrency(row: Record<string, unknown>): number | null {
+  if (!Object.prototype.hasOwnProperty.call(row, 'maxConcurrency')) return null;
+  const result = normalizeSiteMaxConcurrency(row.maxConcurrency);
+  if (!result.ok) throw new Error(result.error);
+  return result.value;
+}
+
+function normalizeImportedAccountsSection(section: AccountsBackupSection): AccountsBackupSection {
+  return {
+    ...section,
+    sites: section.sites.map((row) => ({
+      ...row,
+      maxConcurrency: normalizeImportedSiteMaxConcurrency(row),
+    })),
+  };
+}
+
 function coerceAccountsSection(input: unknown): AccountsBackupSection | null {
   if (!isRecord(input)) return null;
 
@@ -1576,6 +1594,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         id: row.id,
         name: row.name,
         url: row.url,
+        maxConcurrency: row.maxConcurrency,
         externalCheckinUrl: row.externalCheckinUrl ?? null,
         platform: row.platform,
         proxyUrl: row.proxyUrl ?? null,
@@ -1923,7 +1942,8 @@ export async function importBackup(data: RawBackupData): Promise<BackupImportRes
     if (!accountsSection) {
       throw new Error('导入数据格式错误：账号数据结构不正确');
     }
-    await importAccountsSection(accountsSection);
+    const normalizedAccountsSection = normalizeImportedAccountsSection(accountsSection);
+    await importAccountsSection(normalizedAccountsSection);
     accountsImported = true;
   }
 

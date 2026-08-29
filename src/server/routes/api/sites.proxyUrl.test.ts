@@ -43,6 +43,59 @@ describe('sites proxy settings', () => {
     delete process.env.DATA_DIR;
   });
 
+  it('persists normalized site max concurrency on create and preserves it when omitted from an update', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'limited-site',
+        url: 'https://limited-site.example.com',
+        platform: 'new-api',
+        maxConcurrency: '12',
+      },
+    });
+
+    expect(created.statusCode).toBe(200);
+    const site = created.json() as { id: number; maxConcurrency?: number | null };
+    expect(site.maxConcurrency).toBe(12);
+
+    const unchanged = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}`,
+      payload: { name: 'still-limited-site' },
+    });
+
+    expect(unchanged.statusCode).toBe(200);
+    expect((unchanged.json() as { maxConcurrency?: number | null }).maxConcurrency).toBe(12);
+
+    const updated = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}`,
+      payload: { maxConcurrency: 0 },
+    });
+
+    expect(updated.statusCode).toBe(200);
+    expect((updated.json() as { maxConcurrency?: number | null }).maxConcurrency).toBeNull();
+  });
+
+  it.each([-1, 1.5, 10001])('rejects invalid maxConcurrency %s', async (maxConcurrency) => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'invalid-limited-site',
+        url: 'https://invalid-limited-site.example.com',
+        platform: 'new-api',
+        maxConcurrency,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      error: 'Invalid maxConcurrency. Expected an integer from 0 to 10000.',
+    });
+  });
+
   it('stores proxy settings, external checkin url, and custom headers when creating a site', async () => {
     const response = await app.inject({
       method: 'POST',
