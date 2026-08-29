@@ -1,6 +1,7 @@
 import { asc, eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { RETRYABLE_TIMEOUT_PATTERNS } from './proxyRetryPolicy.js';
+import { proxyChannelCoordinator, type ProxySiteLease } from './proxyChannelCoordinator.js';
 
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
 const NON_RETRYABLE_STATUS_CODES = new Set([400, 401, 403, 404, 422]);
@@ -292,5 +293,32 @@ export async function runWithSiteApiEndpointPool<T>(
 
       attemptedEndpointIds.add(target.endpointId);
     }
+  }
+}
+
+async function loadCurrentSiteMaxConcurrency(siteId: number): Promise<number | null> {
+  const row = await db.select({ maxConcurrency: schema.sites.maxConcurrency })
+    .from(schema.sites)
+    .where(eq(schema.sites.id, siteId))
+    .get();
+  return row?.maxConcurrency ?? null;
+}
+
+export async function runWithProxySiteApiEndpointPool<T>(
+  site: SiteRow,
+  operation: (target: SiteApiEndpointTarget, lease: ProxySiteLease) => Promise<T>,
+  options?: { signal?: AbortSignal },
+): Promise<T> {
+  const maxConcurrency = await loadCurrentSiteMaxConcurrency(site.id);
+  const lease = await proxyChannelCoordinator.acquireSiteLease({
+    siteId: site.id,
+    maxConcurrency,
+    signal: options?.signal,
+  });
+
+  try {
+    return await runWithSiteApiEndpointPool(site, (target) => operation(target, lease));
+  } finally {
+    if (!lease.isTransferred()) lease.release();
   }
 }
