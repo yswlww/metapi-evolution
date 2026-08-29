@@ -1,0 +1,1 @@
+ALTER TABLE `sites` ADD `max_concurrency` integer;

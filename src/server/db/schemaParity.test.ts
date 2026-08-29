@@ -37,6 +37,18 @@ describe('database schema parity', () => {
     }
   });
 
+  it('keeps the site max concurrency column in generated external-dialect artifacts', () => {
+    const mysqlBootstrap = readFileSync(resolve(generatedDir, 'mysql.bootstrap.sql'), 'utf8');
+    const mysqlUpgrade = readFileSync(resolve(generatedDir, 'mysql.upgrade.sql'), 'utf8');
+    const postgresBootstrap = readFileSync(resolve(generatedDir, 'postgres.bootstrap.sql'), 'utf8');
+    const postgresUpgrade = readFileSync(resolve(generatedDir, 'postgres.upgrade.sql'), 'utf8');
+
+    expect(mysqlBootstrap).toContain('`max_concurrency` INT');
+    expect(mysqlUpgrade).toContain('ALTER TABLE `sites` ADD COLUMN `max_concurrency` INT');
+    expect(postgresBootstrap).toContain('"max_concurrency" INTEGER');
+    expect(postgresUpgrade).toContain('ALTER TABLE "sites" ADD COLUMN "max_concurrency" INTEGER');
+  });
+
   it('keeps runtime support modules scoped to contract-defined tables and indexes', () => {
     const contract = JSON.parse(readFileSync(schemaContractPath, 'utf8')) as SchemaContract;
     const supportContent = supportPaths

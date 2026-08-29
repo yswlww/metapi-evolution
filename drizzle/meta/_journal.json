@@ -197,6 +197,13 @@
       "when": 1786734087675,
       "tag": "0028_route_channel_automatic_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1787996851694,
+      "tag": "0029_site_max_concurrency",
+      "breakpoints": true
     }
   ]
 }
