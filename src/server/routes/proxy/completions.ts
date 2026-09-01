@@ -121,7 +121,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             upstream: boundResponse,
             firstByteLatencyMs: observedFirstByteLatencyMs,
           };
-        });
+        }, { signal: abort.signal });
 
         if (isStream) {
           reply.raw.writeHead(200, {

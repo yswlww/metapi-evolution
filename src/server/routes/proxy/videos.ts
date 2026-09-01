@@ -15,6 +15,7 @@ import {
   getProxyVideoTaskByPublicId,
   refreshProxyVideoTaskSnapshot,
   resolveProxyVideoTaskSite,
+  resolveProxyVideoTaskSiteByUrl,
   saveProxyVideoTask,
 } from '../../services/proxyVideoTaskStore.js';
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
@@ -134,7 +135,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
             upstream: boundResponse,
             text: responseText,
           };
-        });
+        }, { signal: abort.signal });
 
         let data: any = {};
         try { data = JSON.parse(text); } catch { data = {}; }
@@ -277,6 +278,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
       throw error;
     }
     if (upstream.ok) {
+      await upstream.body?.cancel();
       await deleteProxyVideoTaskByPublicId(mapping.publicId);
       return reply.code(upstream.status).send();
     }
@@ -314,18 +316,24 @@ async function requestMappedVideoTaskUpstream(
         });
       }
     }
-    return { upstream };
+    return upstream;
   };
 
-  const site = await resolveProxyVideoTaskSite(mapping.accountId);
-  if (site) {
-    return runWithProxySiteApiEndpointPool(site, async (target, lease) => {
-      const upstream = await buildRequest(target.baseUrl);
-      return { upstream: bindSiteLeaseToResponse(upstream as unknown as Response, lease, signal) as unknown as Awaited<ReturnType<typeof fetch>> };
-    }, { signal });
+  const site = await resolveProxyVideoTaskSite(mapping.accountId)
+    || await resolveProxyVideoTaskSiteByUrl(mapping.siteUrl);
+  if (!site) {
+    throw new SiteApiEndpointRequestError('Video task site is no longer available', { status: 503 });
   }
-
-  return buildRequest(mapping.siteUrl);
+  return runWithProxySiteApiEndpointPool(site, async (target, lease) => {
+    const upstream = await buildRequest(target.baseUrl);
+    return {
+      upstream: bindSiteLeaseToResponse(
+        upstream as unknown as Response,
+        lease,
+        signal,
+      ) as unknown as Awaited<ReturnType<typeof fetch>>,
+    };
+  }, { signal });
 }
 
 function isSiteApiEndpointFailure(error: unknown): error is SiteApiEndpointRequestError {

@@ -117,8 +117,7 @@ export async function embeddingsProxyRoute(app: FastifyInstance) {
             text: responseText,
             firstByteLatencyMs: observedFirstByteLatencyMs,
           };
-        });
-
+        }, { signal: abort.signal });
         let data: any = {};
         try { data = JSON.parse(text); } catch { data = {}; }
         const latency = Date.now() - startTime;

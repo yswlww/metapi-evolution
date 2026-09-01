@@ -117,7 +117,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             text: responseText,
             firstByteLatencyMs: observedFirstByteLatencyMs,
           };
-        });
+        }, { signal: abort.signal });
 
         const data = parseUpstreamImageResponse(text);
         if (!data.ok) {
@@ -346,7 +346,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             text: responseText,
             firstByteLatencyMs: observedFirstByteLatencyMs,
           };
-        });
+        }, { signal: abort.signal });
 
         const data = parseUpstreamImageResponse(text);
         if (!data.ok) {

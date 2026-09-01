@@ -149,7 +149,7 @@ export async function searchProxyRoute(app: FastifyInstance) {
             text: responseText,
             firstByteLatencyMs: observedFirstByteLatencyMs,
           };
-        });
+        }, { signal: abort.signal });
 
         let data: any = {};
         try { data = JSON.parse(text); } catch { data = { data: [] }; }
