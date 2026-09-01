@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { asc, eq } from 'drizzle-orm';
 import { config } from '../../config.js';
+import { proxyChannelCoordinator, resetProxyChannelCoordinatorState } from '../../services/proxyChannelCoordinator.js';
 import { resetUpstreamEndpointRuntimeState } from '../../services/upstreamEndpointRuntimeMemory.js';
 
 const fetchMock = vi.fn();
@@ -71,6 +72,11 @@ vi.mock('../../services/proxyUsageFallbackService.js', () => ({
   resolveProxyUsageWithSelfLogFallback: (arg: any) => resolveProxyUsageWithSelfLogFallbackMock(arg),
 }));
 
+vi.mock('../../services/oauth/quota.js', () => ({
+  recordOauthQuotaHeadersSnapshot: async () => undefined,
+  recordOauthQuotaResetHint: async () => undefined,
+}));
+
 vi.mock('../../services/proxyLogStore.js', () => ({
   insertProxyLog: (...args: unknown[]) => insertProxyLogMock(...args),
 }));
@@ -79,6 +85,7 @@ type DbModule = typeof import('../../db/index.js');
 
 describe('chat proxy site api endpoint rotation', () => {
   let app: FastifyInstance;
+  let latestRawRequest: { emit(event: string): boolean } | null = null;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let dataDir = '';
@@ -94,10 +101,15 @@ describe('chat proxy site api endpoint rotation', () => {
     schema = dbModule.schema;
 
     app = Fastify();
+    app.addHook('onRequest', async (request) => {
+      latestRawRequest = request.raw;
+    });
     await app.register(routesModule.chatProxyRoute);
   });
 
   beforeEach(async () => {
+    resetProxyChannelCoordinatorState();
+    latestRawRequest = null;
     fetchMock.mockReset();
     selectChannelMock.mockReset();
     selectNextChannelMock.mockReset();
@@ -145,6 +157,270 @@ describe('chat proxy site api endpoint rotation', () => {
       await app.close();
     }
     delete process.env.DATA_DIR;
+  });
+
+  it('queues a saturated chat request and returns 503 on admission timeout without failure bookkeeping', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'chat-wait-timeout-site',
+      url: 'https://chat-wait-timeout.example.com',
+      platform: 'openai',
+      status: 'active',
+      maxConcurrency: 1,
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'chat-wait-timeout-user',
+      accessToken: '',
+      apiToken: 'sk-chat-wait-timeout',
+      status: 'active',
+      checkinEnabled: false,
+      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+    }).returning().get();
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site,
+      account,
+      tokenName: 'default',
+      tokenValue: 'sk-chat-wait-timeout',
+      actualModel: 'gpt-4o-mini',
+    });
+    const originalQueueLimit = config.proxySiteConcurrencyQueueLimit;
+    const originalQueueWaitMs = config.proxySiteConcurrencyQueueWaitMs;
+    config.proxySiteConcurrencyQueueLimit = 1;
+    config.proxySiteConcurrencyQueueWaitMs = 250;
+    const blockingLease = await proxyChannelCoordinator.acquireSiteLease({
+      siteId: site.id,
+      maxConcurrency: 1,
+    });
+    try {
+      const pendingResponse = app.inject({
+        method: 'POST',
+        url: '/v1/chat/completions',
+        payload: {
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: 'wait then time out' }],
+        },
+      });
+      await vi.waitFor(() => {
+        expect(proxyChannelCoordinator.getSiteConcurrencySnapshot(site.id).waitingCount).toBe(1);
+      });
+
+      const response = await pendingResponse;
+
+      expect(response.statusCode).toBe(503);
+      expect(response.headers['retry-after']).toBe('1');
+      expect(response.json()).toEqual({
+        error: {
+          type: 'site_concurrency_limit',
+          message: 'Site concurrency limit reached',
+        },
+      });
+      expect(proxyChannelCoordinator.getSiteConcurrencySnapshot(site.id).waitingCount).toBe(0);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(recordFailureMock).not.toHaveBeenCalled();
+      expect(reportProxyAllFailedMock).not.toHaveBeenCalled();
+      expect(selectNextChannelMock).not.toHaveBeenCalled();
+    } finally {
+      blockingLease.release();
+      config.proxySiteConcurrencyQueueLimit = originalQueueLimit;
+      config.proxySiteConcurrencyQueueWaitMs = originalQueueWaitMs;
+    }
+  });
+
+  it('removes an aborted queued chat request without failure or retry bookkeeping', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'chat-queued-abort-site',
+      url: 'https://chat-queued-abort.example.com',
+      platform: 'openai',
+      status: 'active',
+      maxConcurrency: 1,
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'chat-queued-abort-user',
+      accessToken: '',
+      apiToken: 'sk-chat-queued-abort',
+      status: 'active',
+      checkinEnabled: false,
+      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+    }).returning().get();
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site,
+      account,
+      tokenName: 'default',
+      tokenValue: 'sk-chat-queued-abort',
+      actualModel: 'gpt-4o-mini',
+    });
+    const originalQueueLimit = config.proxySiteConcurrencyQueueLimit;
+    const originalQueueWaitMs = config.proxySiteConcurrencyQueueWaitMs;
+    config.proxySiteConcurrencyQueueLimit = 1;
+    config.proxySiteConcurrencyQueueWaitMs = 5_000;
+    const blockingLease = await proxyChannelCoordinator.acquireSiteLease({
+      siteId: site.id,
+      maxConcurrency: 1,
+    });
+    try {
+      const pendingResponse = app.inject({
+        method: 'POST',
+        url: '/v1/chat/completions',
+        payload: {
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: 'disconnect while queued' }],
+        },
+      });
+      void pendingResponse.catch(() => {});
+      await vi.waitFor(() => {
+        expect(proxyChannelCoordinator.getSiteConcurrencySnapshot(site.id).waitingCount).toBe(1);
+      });
+
+      latestRawRequest?.emit('aborted');
+      await vi.waitFor(() => {
+        expect(proxyChannelCoordinator.getSiteConcurrencySnapshot(site.id).waitingCount).toBe(0);
+      });
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(recordFailureMock).not.toHaveBeenCalled();
+      expect(reportProxyAllFailedMock).not.toHaveBeenCalled();
+      expect(selectNextChannelMock).not.toHaveBeenCalled();
+    } finally {
+      latestRawRequest?.emit('aborted');
+      blockingLease.release();
+      config.proxySiteConcurrencyQueueLimit = originalQueueLimit;
+      config.proxySiteConcurrencyQueueWaitMs = originalQueueWaitMs;
+    }
+  });
+
+  it('returns site concurrency 503 without recording a provider failure or retrying', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'chat-limited-site',
+      url: 'https://chat-limited.example.com',
+      platform: 'openai',
+      status: 'active',
+      maxConcurrency: 1,
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'chat-limited-user',
+      accessToken: '',
+      apiToken: 'sk-chat-limited',
+      status: 'active',
+      checkinEnabled: false,
+      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+    }).returning().get();
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site,
+      account,
+      tokenName: 'default',
+      tokenValue: 'sk-chat-limited',
+      actualModel: 'gpt-4o-mini',
+    });
+    const originalQueueLimit = config.proxySiteConcurrencyQueueLimit;
+    const originalQueueWaitMs = config.proxySiteConcurrencyQueueWaitMs;
+    config.proxySiteConcurrencyQueueLimit = 0;
+    config.proxySiteConcurrencyQueueWaitMs = 0;
+    const blockingLease = await proxyChannelCoordinator.acquireSiteLease({
+      siteId: site.id,
+      maxConcurrency: 1,
+    });
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/chat/completions',
+        payload: {
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: 'limited' }],
+        },
+      });
+
+      expect(response.statusCode).toBe(503);
+      expect(response.headers['retry-after']).toBe('1');
+      expect(response.json()).toEqual({
+        error: {
+          type: 'site_concurrency_limit',
+          message: 'Site concurrency limit reached',
+        },
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(recordFailureMock).not.toHaveBeenCalled();
+      expect(reportProxyAllFailedMock).not.toHaveBeenCalled();
+      expect(selectNextChannelMock).not.toHaveBeenCalled();
+    } finally {
+      blockingLease.release();
+      config.proxySiteConcurrencyQueueLimit = originalQueueLimit;
+      config.proxySiteConcurrencyQueueWaitMs = originalQueueWaitMs;
+    }
+  });
+
+  it('allows chat requests to another site while a limited site is saturated', async () => {
+    const saturatedSite = await db.insert(schema.sites).values({
+      name: 'chat-saturated-site',
+      url: 'https://chat-saturated.example.com',
+      platform: 'openai',
+      status: 'active',
+      maxConcurrency: 1,
+    }).returning().get();
+    const availableSite = await db.insert(schema.sites).values({
+      name: 'chat-available-site',
+      url: 'https://chat-available.example.com',
+      platform: 'openai',
+      status: 'active',
+      maxConcurrency: 1,
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: availableSite.id,
+      username: 'chat-available-user',
+      accessToken: '',
+      apiToken: 'sk-chat-available',
+      status: 'active',
+      checkinEnabled: false,
+      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+    }).returning().get();
+    selectChannelMock.mockReturnValue({
+      channel: { id: 12, routeId: 22 },
+      site: availableSite,
+      account,
+      tokenName: 'default',
+      tokenValue: 'sk-chat-available',
+      actualModel: 'gpt-4o-mini',
+    });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'chatcmpl-independent-site',
+      object: 'chat.completion',
+      created: 1_706_000_000,
+      model: 'gpt-4o-mini',
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', content: 'independent' },
+        finish_reason: 'stop',
+      }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    const blockingLease = await proxyChannelCoordinator.acquireSiteLease({
+      siteId: saturatedSite.id,
+      maxConcurrency: 1,
+    });
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/chat/completions',
+        payload: {
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: 'other site' }],
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ id: 'chatcmpl-independent-site' });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(proxyChannelCoordinator.getSiteConcurrencySnapshot(saturatedSite.id).activeLeaseCount).toBe(1);
+    } finally {
+      blockingLease.release();
+    }
   });
 
   it('rotates to the next configured ai endpoint for retryable /v1/chat/completions failures', async () => {

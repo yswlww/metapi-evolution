@@ -16,8 +16,10 @@ import type { BuiltEndpointRequest } from '../orchestration/endpointFlow.js';
 import { buildUpstreamUrl } from '../orchestration/upstreamRequest.js';
 import { recordOauthQuotaHeadersSnapshot, recordOauthQuotaResetHint } from '../../services/oauth/quota.js';
 import { refreshOauthAccessTokenSingleflight } from '../../services/oauth/refreshSingleflight.js';
-import { proxyChannelCoordinator } from '../../services/proxyChannelCoordinator.js';
-import { readRuntimeResponseText } from '../executors/types.js';
+import { proxyChannelCoordinator, type ProxySiteLease } from '../../services/proxyChannelCoordinator.js';
+import { runWithProxySiteApiEndpointPool } from '../../services/siteApiEndpointService.js';
+import { bindSiteLeaseToResponse } from '../../services/siteConcurrencyResponse.js';
+import { readRuntimeResponseText, type RuntimeResponse } from '../executors/types.js';
 import { selectProxyChannelForAttempt } from '../channelSelection.js';
 
 type SelectedChannel = Awaited<ReturnType<typeof tokenRouter.selectChannel>>;
@@ -90,6 +92,37 @@ type SurfaceUsageSummary = {
   cacheCreationTokens: number;
   promptTokensIncludeCache: boolean | null;
 };
+
+type SurfaceSiteEndpointFlowResult = {
+  ok: boolean;
+  upstream: RuntimeResponse;
+};
+
+export async function runSurfaceEndpointFlowWithSiteConcurrency<T extends SurfaceSiteEndpointFlowResult>(input: {
+  site: {
+    id: number;
+    maxConcurrency?: number | null;
+    url: string;
+  };
+  abortSignal: AbortSignal;
+  executeEndpointFlowForBaseUrl: (siteApiBaseUrl: string, lease: ProxySiteLease) => Promise<T>;
+}): Promise<T> {
+  return await runWithProxySiteApiEndpointPool(
+    input.site as Parameters<typeof runWithProxySiteApiEndpointPool>[0],
+    async (target, lease) => {
+      const result = await input.executeEndpointFlowForBaseUrl(target.baseUrl, lease);
+      if (result.ok) {
+        result.upstream = bindSiteLeaseToResponse(
+          result.upstream as unknown as Response,
+          lease,
+          input.abortSignal,
+        ) as unknown as RuntimeResponse;
+      }
+      return result;
+    },
+    { signal: input.abortSignal },
+  );
+}
 
 type SurfaceResolvedUsageSummary = {
   promptTokens: number;
