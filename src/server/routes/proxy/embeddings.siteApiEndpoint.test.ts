@@ -1,6 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { proxyChannelCoordinator, resetProxyChannelCoordinatorState } from '../../services/proxyChannelCoordinator.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -75,6 +74,8 @@ describe('/v1/embeddings usage source logging', () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let proxyChannelCoordinator: (typeof import('../../services/proxyChannelCoordinator.js'))['proxyChannelCoordinator'];
+  let resetProxyChannelCoordinatorState: (typeof import('../../services/proxyChannelCoordinator.js'))['resetProxyChannelCoordinatorState'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -83,9 +84,12 @@ describe('/v1/embeddings usage source logging', () => {
 
     await import('../../db/migrate.js');
     const dbModule = await import('../../db/index.js');
+    const coordinatorModule = await import('../../services/proxyChannelCoordinator.js');
     const routesModule = await import('./embeddings.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    proxyChannelCoordinator = coordinatorModule.proxyChannelCoordinator;
+    resetProxyChannelCoordinatorState = coordinatorModule.resetProxyChannelCoordinatorState;
 
     app = Fastify();
     await app.register(routesModule.embeddingsProxyRoute);
