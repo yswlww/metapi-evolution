@@ -21,6 +21,7 @@ import { analyzePrimarySiteUrl } from '../../../shared/sitePrimaryUrl.js';
 import { normalizePlatformAlias } from '../../../shared/platformIdentity.js';
 import { probeSiteModels } from '../../services/modelService.js';
 import { normalizeSiteMaxConcurrency } from '../../../shared/siteMaxConcurrency.js';
+import { proxyChannelCoordinator } from '../../services/proxyChannelCoordinator.js';
 
 function sseWrite(raw: import('http').ServerResponse, event: string, data: unknown) {
   try { raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* ignore */ }
@@ -622,6 +623,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (!result) {
       return reply.code(500).send({ error: 'Create site failed' });
     }
+    proxyChannelCoordinator.updateSiteConcurrencyLimit(siteId, result.maxConcurrency);
     invalidateSiteCaches();
     return {
       ...result,
@@ -777,9 +779,14 @@ export async function sitesRoutes(app: FastifyInstance) {
       await applySiteStatusSideEffects(id, existingSite.name, normalizedStatus);
     }
 
+    const result = await loadSiteWithApiEndpoints(id);
+    if (!result) {
+      return reply.code(500).send({ error: 'Update site failed' });
+    }
+    proxyChannelCoordinator.updateSiteConcurrencyLimit(id, result.maxConcurrency);
     invalidateSiteCaches();
 
-    return await loadSiteWithApiEndpoints(id);
+    return result;
   });
 
   // Delete a site

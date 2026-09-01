@@ -20,6 +20,8 @@ describe('Sites centered modal adoption', () => {
     expect(source).toContain('API 请求地址（如 https://api.nih.cc）');
     expect(source).toContain('label="API 请求地址"');
     expect(source).toContain('API 地址: {buildSiteApiEndpointSummary(site)}');
+    expect(source).toContain('<span>站点最大并发</span>');
+    expect(source).toContain('0 表示不限制；该限制按每个 Metapi 进程计算。');
     expect(source).not.toContain('站点 URL（面板/登录/签到地址，如 https://console.example.com）');
     expect(source).not.toContain('API 请求地址（如 https://api.example.com）');
     expect(source).not.toContain('AI 请求地址池');

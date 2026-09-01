@@ -42,6 +42,7 @@ import {
   listSiteInitializationPresets,
 } from '../../shared/siteInitializationPresets.js';
 import { analyzePrimarySiteUrl } from '../../shared/sitePrimaryUrl.js';
+import { normalizeSiteMaxConcurrency } from '../../shared/siteMaxConcurrency.js';
 
 type SiteSubscriptionSummary = {
   activeCount: number;
@@ -65,6 +66,7 @@ type SiteRow = {
   customHeaders?: string | null;
   customHeadersOverrideRequestHeaders?: boolean | null;
   globalWeight?: number;
+  maxConcurrency?: number | null;
   isPinned?: boolean;
   sortOrder?: number;
   totalBalance?: number;
@@ -747,6 +749,11 @@ export default function Sites() {
       toast.error('全局权重必须是大于 0 的数字');
       return;
     }
+    const normalizedMaxConcurrency = normalizeSiteMaxConcurrency(form.maxConcurrency);
+    if (!normalizedMaxConcurrency.ok) {
+      toast.error(normalizedMaxConcurrency.error);
+      return;
+    }
     const serializedCustomHeaders = serializeSiteCustomHeaders(form.customHeaders);
     if (!serializedCustomHeaders.valid) {
       toast.error(serializedCustomHeaders.error || '自定义请求头格式不正确');
@@ -770,6 +777,7 @@ export default function Sites() {
       customHeaders: serializedCustomHeaders.customHeaders,
       customHeadersOverrideRequestHeaders: !!form.customHeadersOverrideRequestHeaders,
       globalWeight: Number(parsedGlobalWeight.toFixed(3)),
+      maxConcurrency: normalizedMaxConcurrency.value,
       postRefreshProbeEnabled: probeEnabled,
       postRefreshProbeModel: probeModel.trim(),
       postRefreshProbeScope: probeScope,
@@ -1963,6 +1971,21 @@ export default function Sites() {
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
                 越大越容易被路由选中。建议 0.5-3，默认 1。
               </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label>
+                <span>站点最大并发</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={10000}
+                  step={1}
+                  value={form.maxConcurrency}
+                  onChange={(event) => setForm((prev) => ({ ...prev, maxConcurrency: event.target.value }))}
+                  style={formInputStyle}
+                />
+                <small>0 表示不限制；该限制按每个 Metapi 进程计算。</small>
+              </label>
             </div>
           </ResponsiveFormGrid>
         </CenteredModal>

@@ -8,8 +8,43 @@ import {
   serializeSiteCustomHeaders,
   siteFormFromSite,
 } from './sitesEditor.js';
+import { normalizeSiteMaxConcurrency } from '../../../shared/siteMaxConcurrency.js';
 
 describe('buildSiteSaveAction', () => {
+  it('hydrates site concurrency values as editable values', () => {
+    expect(siteFormFromSite({ maxConcurrency: 7 })).toMatchObject({ maxConcurrency: '7' });
+    expect(siteFormFromSite({ maxConcurrency: null })).toMatchObject({ maxConcurrency: '0' });
+    expect(emptySiteForm()).toMatchObject({ maxConcurrency: '0' });
+  });
+
+  it.each(['-1', '1.5', '10001'])('rejects invalid site concurrency input %s', (maxConcurrency) => {
+    expect(normalizeSiteMaxConcurrency(maxConcurrency)).toEqual({
+      ok: false,
+      error: 'Invalid maxConcurrency. Expected an integer from 0 to 10000.',
+    });
+  });
+
+  it('preserves normalized site concurrency in a save payload', () => {
+    const form = {
+      name: 'site-limit',
+      url: 'https://limit.example.com',
+      externalCheckinUrl: '',
+      platform: 'new-api',
+      proxyUrl: '',
+      useSystemProxy: false,
+      apiEndpoints: [],
+      customHeaders: '',
+      customHeadersOverrideRequestHeaders: false,
+      globalWeight: 1,
+      maxConcurrency: 7,
+    };
+
+    expect(buildSiteSaveAction({ mode: 'add' }, form)).toMatchObject({
+      kind: 'add',
+      payload: { maxConcurrency: 7 },
+    });
+  });
+
   it('returns add action in add mode', () => {
     const action = buildSiteSaveAction(
       { mode: 'add' },

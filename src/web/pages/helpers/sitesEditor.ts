@@ -1,3 +1,5 @@
+import { normalizeSiteMaxConcurrency } from '../../../shared/siteMaxConcurrency.js';
+
 export type SiteCustomHeaderField = {
   key: string;
   value: string;
@@ -22,6 +24,7 @@ export type SiteForm = {
   customHeaders: SiteCustomHeaderField[];
   customHeadersOverrideRequestHeaders: boolean;
   globalWeight: string;
+  maxConcurrency: string;
 };
 
 export type SiteEditorState =
@@ -44,6 +47,7 @@ export type SiteSavePayload = {
   customHeaders: string;
   customHeadersOverrideRequestHeaders: boolean;
   globalWeight: number;
+  maxConcurrency: number | null;
   postRefreshProbeEnabled?: boolean;
   postRefreshProbeModel?: string;
   postRefreshProbeScope?: 'single' | 'all';
@@ -83,6 +87,7 @@ export function emptySiteForm(): SiteForm {
     customHeaders: [emptySiteCustomHeader()],
     customHeadersOverrideRequestHeaders: false,
     globalWeight: '1',
+    maxConcurrency: '0',
   };
 }
 
@@ -134,7 +139,7 @@ function parseApiEndpointsForEditor(raw: unknown): SiteApiEndpointField[] {
   return ensureSiteApiEndpointRows(rows);
 }
 
-export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | 'customHeaders' | 'customHeadersOverrideRequestHeaders' | 'globalWeight' | 'externalCheckinUrl' | 'proxyUrl' | 'useSystemProxy'>> & {
+export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | 'customHeaders' | 'customHeadersOverrideRequestHeaders' | 'globalWeight' | 'maxConcurrency' | 'externalCheckinUrl' | 'proxyUrl' | 'useSystemProxy'>> & {
   externalCheckinUrl?: string | null;
   proxyUrl?: string | null;
   useSystemProxy?: boolean | null;
@@ -147,9 +152,14 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | '
   }> | null;
   customHeaders?: string | null;
   globalWeight?: number | string | null;
+  maxConcurrency?: number | string | null;
 }): SiteForm {
   const globalWeightRaw = Number(site.globalWeight);
   const globalWeight = Number.isFinite(globalWeightRaw) && globalWeightRaw > 0 ? String(globalWeightRaw) : '1';
+  const normalizedMaxConcurrency = normalizeSiteMaxConcurrency(site.maxConcurrency);
+  const maxConcurrency = normalizedMaxConcurrency.ok && normalizedMaxConcurrency.value !== null
+    ? String(normalizedMaxConcurrency.value)
+    : '0';
   return {
     name: site.name ?? '',
     url: site.url ?? '',
@@ -161,6 +171,7 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | '
     customHeaders: parseCustomHeadersForEditor(site.customHeaders),
     customHeadersOverrideRequestHeaders: !!site.customHeadersOverrideRequestHeaders,
     globalWeight,
+    maxConcurrency,
   };
 }
 
