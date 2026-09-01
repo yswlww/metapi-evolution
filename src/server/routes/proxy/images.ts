@@ -18,7 +18,13 @@ import { detectDownstreamClientContext, type DownstreamClientContext } from '../
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { fetchWithObservedFirstByte, getObservedResponseMeta } from '../../proxy-core/firstByteTimeout.js';
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
-import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
+import { runWithProxySiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
+import { bindSiteLeaseToResponse } from '../../services/siteConcurrencyResponse.js';
+import {
+  createProxyRequestAbortSignal,
+  isSiteConcurrencyLimitError,
+  replySiteConcurrencyLimit,
+} from './siteConcurrencyBoundary.js';
 import {
   buildForcedChannelUnavailableMessage,
   canRetryChannelSelection,
@@ -73,9 +79,10 @@ export async function imagesProxyRoute(app: FastifyInstance) {
       const upstreamModel = selected.actualModel || requestedModel;
       const forwardBody = { ...body, model: upstreamModel };
       const startTime = Date.now();
+      const abort = createProxyRequestAbortSignal(request, reply);
 
       try {
-        const { upstream, text, firstByteLatencyMs } = await runWithSiteApiEndpointPool(selected.site, async (target) => {
+        const { upstream, text, firstByteLatencyMs } = await runWithProxySiteApiEndpointPool(selected.site, async (target, lease) => {
           const attemptStartedAtMs = Date.now();
           const targetUrl = buildUpstreamUrl(target.baseUrl, '/v1/images/generations');
           const response = await fetchWithObservedFirstByte(
@@ -86,7 +93,9 @@ export async function imagesProxyRoute(app: FastifyInstance) {
                 'Authorization': `Bearer ${selected.tokenValue}`,
               },
               body: JSON.stringify(forwardBody),
-              signal,
+              signal: signal
+                ? AbortSignal.any([abort.signal, signal])
+                : abort.signal,
             }, getProxyUrlFromExtraConfig(selected.account.extraConfig))),
             {
               firstByteTimeoutMs,
@@ -94,7 +103,8 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             },
           );
           const observedFirstByteLatencyMs = getObservedResponseMeta(response)?.firstByteLatencyMs ?? null;
-          const responseText = await response.text();
+          const boundResponse = bindSiteLeaseToResponse(response as unknown as Response, lease, abort.signal);
+          const responseText = await boundResponse.text();
           if (!response.ok) {
             throw new SiteApiEndpointRequestError(responseText || 'unknown error', {
               status: response.status,
@@ -103,7 +113,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             });
           }
           return {
-            upstream: response,
+            upstream: boundResponse,
             text: responseText,
             firstByteLatencyMs: observedFirstByteLatencyMs,
           };
@@ -179,6 +189,9 @@ export async function imagesProxyRoute(app: FastifyInstance) {
         );
         return reply.code(upstream.status).send(data.value);
       } catch (err: any) {
+        if (isSiteConcurrencyLimitError(err)) {
+          return replySiteConcurrencyLimit(reply, err);
+        }
         const status = err instanceof SiteApiEndpointRequestError ? (err.status || 0) : 0;
         const errorText = err?.message || 'network failure';
         const firstByteLatencyMs = err instanceof SiteApiEndpointRequestError ? err.firstByteLatencyMs : null;
@@ -224,6 +237,8 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             type: 'upstream_error',
           },
         });
+      } finally {
+        abort.dispose();
       }
     }
   });
@@ -277,9 +292,10 @@ export async function imagesProxyRoute(app: FastifyInstance) {
       excludeChannelIds.push(selected.channel.id);
       const upstreamModel = selected.actualModel || requestedModel;
       const startTime = Date.now();
+      const abort = createProxyRequestAbortSignal(request, reply);
 
       try {
-        const { upstream, text, firstByteLatencyMs } = await runWithSiteApiEndpointPool(selected.site, async (target) => {
+        const { upstream, text, firstByteLatencyMs } = await runWithProxySiteApiEndpointPool(selected.site, async (target, lease) => {
           const attemptStartedAtMs = Date.now();
           const targetUrl = buildUpstreamUrl(target.baseUrl, '/v1/images/edits');
           const requestInit = multipartForm
@@ -306,7 +322,9 @@ export async function imagesProxyRoute(app: FastifyInstance) {
           const response = await fetchWithObservedFirstByte(
             async (signal) => fetch(targetUrl, {
               ...requestInit,
-              signal,
+              signal: signal
+                ? AbortSignal.any([abort.signal, signal])
+                : abort.signal,
             }),
             {
               firstByteTimeoutMs,
@@ -314,7 +332,8 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             },
           );
           const observedFirstByteLatencyMs = getObservedResponseMeta(response)?.firstByteLatencyMs ?? null;
-          const responseText = await response.text();
+          const boundResponse = bindSiteLeaseToResponse(response as unknown as Response, lease, abort.signal);
+          const responseText = await boundResponse.text();
           if (!response.ok) {
             throw new SiteApiEndpointRequestError(responseText || 'unknown error', {
               status: response.status,
@@ -323,7 +342,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             });
           }
           return {
-            upstream: response,
+            upstream: boundResponse,
             text: responseText,
             firstByteLatencyMs: observedFirstByteLatencyMs,
           };
@@ -399,6 +418,9 @@ export async function imagesProxyRoute(app: FastifyInstance) {
         );
         return reply.code(upstream.status).send(data.value);
       } catch (err: any) {
+        if (isSiteConcurrencyLimitError(err)) {
+          return replySiteConcurrencyLimit(reply, err);
+        }
         const status = err instanceof SiteApiEndpointRequestError ? (err.status || 0) : 0;
         const errorText = err?.message || 'network failure';
         const firstByteLatencyMs = err instanceof SiteApiEndpointRequestError ? err.firstByteLatencyMs : null;
@@ -444,6 +466,8 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             type: 'upstream_error',
           },
         });
+      } finally {
+        abort.dispose();
       }
     }
   });

@@ -20,7 +20,13 @@ import { detectDownstreamClientContext, type DownstreamClientContext } from '../
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { fetchWithObservedFirstByte, getObservedResponseMeta } from '../../proxy-core/firstByteTimeout.js';
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
-import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
+import { runWithProxySiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
+import { bindSiteLeaseToResponse } from '../../services/siteConcurrencyResponse.js';
+import {
+  createProxyRequestAbortSignal,
+  isSiteConcurrencyLimitError,
+  replySiteConcurrencyLimit,
+} from './siteConcurrencyBoundary.js';
 import {
   buildForcedChannelUnavailableMessage,
   canRetryChannelSelection,
@@ -79,8 +85,9 @@ export async function completionsProxyRoute(app: FastifyInstance) {
       const upstreamModel = selected.actualModel || requestedModel;
       const forwardBody = { ...body, model: upstreamModel };
       const startTime = Date.now();
+      const abort = createProxyRequestAbortSignal(request, reply);
       try {
-        const { upstream, firstByteLatencyMs } = await runWithSiteApiEndpointPool(selected.site, async (target) => {
+        const { upstream, firstByteLatencyMs } = await runWithProxySiteApiEndpointPool(selected.site, async (target, lease) => {
           const attemptStartedAtMs = Date.now();
           const targetUrl = buildUpstreamUrl(target.baseUrl, '/v1/completions');
           const response = await fetchWithObservedFirstByte(
@@ -91,7 +98,9 @@ export async function completionsProxyRoute(app: FastifyInstance) {
                 'Authorization': `Bearer ${selected.tokenValue}`,
               },
               body: JSON.stringify(forwardBody),
-              signal,
+              signal: signal
+                ? AbortSignal.any([abort.signal, signal])
+                : abort.signal,
             }, getProxyUrlFromExtraConfig(selected.account.extraConfig))),
             {
               firstByteTimeoutMs,
@@ -99,8 +108,9 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             },
           );
           const observedFirstByteLatencyMs = getObservedResponseMeta(response)?.firstByteLatencyMs ?? null;
+          const boundResponse = bindSiteLeaseToResponse(response as unknown as Response, lease, abort.signal);
           if (!response.ok) {
-            const errText = await response.text().catch(() => 'unknown error');
+            const errText = await boundResponse.text().catch(() => 'unknown error');
             throw new SiteApiEndpointRequestError(errText || 'unknown error', {
               status: response.status,
               rawErrText: errText || null,
@@ -108,7 +118,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             });
           }
           return {
-            upstream: response,
+            upstream: boundResponse,
             firstByteLatencyMs: observedFirstByteLatencyMs,
           };
         });
@@ -317,6 +327,9 @@ export async function completionsProxyRoute(app: FastifyInstance) {
         );
         return reply.send(data);
       } catch (err: any) {
+        if (isSiteConcurrencyLimitError(err)) {
+          return replySiteConcurrencyLimit(reply, err);
+        }
         const status = err instanceof SiteApiEndpointRequestError ? (err.status || 0) : 0;
         const errorText = err?.message || 'network failure';
         const firstByteLatencyMs = err instanceof SiteApiEndpointRequestError ? err.firstByteLatencyMs : null;
@@ -364,6 +377,8 @@ export async function completionsProxyRoute(app: FastifyInstance) {
         return reply.code(status || 502).send({
           error: { message: status > 0 ? errorText : `Upstream error: ${errorText}`, type: 'upstream_error' },
         });
+      } finally {
+        abort.dispose();
       }
     }
   });

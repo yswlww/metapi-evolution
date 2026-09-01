@@ -24,7 +24,13 @@ import {
   getTesterForcedChannelId,
   selectProxyChannelForAttempt,
 } from '../../proxy-core/channelSelection.js';
-import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
+import { runWithProxySiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
+import { bindSiteLeaseToResponse } from '../../services/siteConcurrencyResponse.js';
+import {
+  createProxyRequestAbortSignal,
+  isSiteConcurrencyLimitError,
+  replySiteConcurrencyLimit,
+} from './siteConcurrencyBoundary.js';
 
 function rewriteVideoResponsePublicId(payload: unknown, publicId: string): unknown {
   if (!payload || typeof payload !== 'object') return payload;
@@ -84,9 +90,10 @@ export async function videosProxyRoute(app: FastifyInstance) {
       excludeChannelIds.push(selected.channel.id);
       const upstreamModel = selected.actualModel || requestedModel;
       const startTime = Date.now();
+      const abort = createProxyRequestAbortSignal(request, reply);
 
       try {
-        const { upstream, text, baseUrl } = await runWithSiteApiEndpointPool(selected.site, async (target) => {
+        const { upstream, text, baseUrl } = await runWithProxySiteApiEndpointPool(selected.site, async (target, lease) => {
           const targetUrl = buildUpstreamUrl(target.baseUrl, '/v1/videos');
           const accountProxy = getProxyUrlFromExtraConfig(selected.account.extraConfig);
           const requestInit = multipartForm
@@ -110,8 +117,12 @@ export async function videosProxyRoute(app: FastifyInstance) {
                 model: upstreamModel,
               }),
             }, accountProxy);
-          const response = await fetch(targetUrl, requestInit);
-          const responseText = await response.text();
+          const response = await fetch(targetUrl, {
+            ...requestInit,
+            signal: abort.signal,
+          });
+          const boundResponse = bindSiteLeaseToResponse(response as unknown as Response, lease, abort.signal);
+          const responseText = await boundResponse.text();
           if (!response.ok) {
             throw new SiteApiEndpointRequestError(responseText || 'unknown error', {
               status: response.status,
@@ -120,7 +131,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
           }
           return {
             baseUrl: target.baseUrl,
-            upstream: response,
+            upstream: boundResponse,
             text: responseText,
           };
         });
@@ -164,6 +175,9 @@ export async function videosProxyRoute(app: FastifyInstance) {
         recordDownstreamCostUsage(request, estimatedCost);
         return reply.code(upstream.status).send(rewriteVideoResponsePublicId(data, mapping.publicId));
       } catch (error: any) {
+        if (isSiteConcurrencyLimitError(error)) {
+          return replySiteConcurrencyLimit(reply, error);
+        }
         const status = error instanceof SiteApiEndpointRequestError ? (error.status || 0) : 0;
         const errorText = error?.message || 'network failure';
         await recordTokenRouterEventBestEffort('record channel failure', () => tokenRouter.recordFailure(selected.channel.id, {
@@ -193,12 +207,16 @@ export async function videosProxyRoute(app: FastifyInstance) {
             type: 'upstream_error',
           },
         });
+      } finally {
+        abort.dispose();
       }
     }
   });
 
   app.get('/v1/videos/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-    const mapping = await getProxyVideoTaskByPublicId(request.params.id);
+    const abort = createProxyRequestAbortSignal(request, reply);
+    try {
+      const mapping = await getProxyVideoTaskByPublicId(request.params.id);
     if (!mapping) {
       return reply.code(404).send({
         error: { message: 'Video task not found', type: 'not_found_error' },
@@ -207,8 +225,11 @@ export async function videosProxyRoute(app: FastifyInstance) {
 
     let upstream: Awaited<ReturnType<typeof fetch>>;
     try {
-      ({ upstream } = await requestMappedVideoTaskUpstream(mapping, 'GET'));
+      ({ upstream } = await requestMappedVideoTaskUpstream(mapping, 'GET', abort.signal));
     } catch (error) {
+      if (isSiteConcurrencyLimitError(error)) {
+        return replySiteConcurrencyLimit(reply, error);
+      }
       if (isSiteApiEndpointFailure(error)) {
         return sendVideoTaskEndpointFailure(reply, error);
       }
@@ -228,10 +249,15 @@ export async function videosProxyRoute(app: FastifyInstance) {
     } catch {
       return reply.code(upstream.status).type(upstream.headers.get('content-type') || 'application/json').send(text);
     }
+    } finally {
+      abort.dispose();
+    }
   });
 
   app.delete('/v1/videos/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-    const mapping = await getProxyVideoTaskByPublicId(request.params.id);
+    const abort = createProxyRequestAbortSignal(request, reply);
+    try {
+      const mapping = await getProxyVideoTaskByPublicId(request.params.id);
     if (!mapping) {
       return reply.code(404).send({
         error: { message: 'Video task not found', type: 'not_found_error' },
@@ -240,8 +266,11 @@ export async function videosProxyRoute(app: FastifyInstance) {
 
     let upstream: Awaited<ReturnType<typeof fetch>>;
     try {
-      ({ upstream } = await requestMappedVideoTaskUpstream(mapping, 'DELETE'));
+      ({ upstream } = await requestMappedVideoTaskUpstream(mapping, 'DELETE', abort.signal));
     } catch (error) {
+      if (isSiteConcurrencyLimitError(error)) {
+        return replySiteConcurrencyLimit(reply, error);
+      }
       if (isSiteApiEndpointFailure(error)) {
         return sendVideoTaskEndpointFailure(reply, error);
       }
@@ -256,12 +285,16 @@ export async function videosProxyRoute(app: FastifyInstance) {
     return reply.code(upstream.status).send({
       error: { message: text || 'Upstream delete failed', type: 'upstream_error' },
     });
+    } finally {
+      abort.dispose();
+    }
   });
 }
 
 async function requestMappedVideoTaskUpstream(
   mapping: NonNullable<Awaited<ReturnType<typeof getProxyVideoTaskByPublicId>>>,
   method: 'GET' | 'DELETE',
+  signal: AbortSignal,
 ): Promise<{ upstream: Awaited<ReturnType<typeof fetch>> }> {
   const buildRequest = async (baseUrl: string) => {
     const targetUrl = buildUpstreamUrl(baseUrl, `/v1/videos/${encodeURIComponent(mapping.upstreamVideoId)}`);
@@ -270,6 +303,7 @@ async function requestMappedVideoTaskUpstream(
       headers: {
         Authorization: `Bearer ${mapping.tokenValue}`,
       },
+      signal,
     }));
     if (!upstream.ok) {
       const errorText = await upstream.clone().text().catch(() => '');
@@ -285,7 +319,10 @@ async function requestMappedVideoTaskUpstream(
 
   const site = await resolveProxyVideoTaskSite(mapping.accountId);
   if (site) {
-    return runWithSiteApiEndpointPool(site, (target) => buildRequest(target.baseUrl));
+    return runWithProxySiteApiEndpointPool(site, async (target, lease) => {
+      const upstream = await buildRequest(target.baseUrl);
+      return { upstream: bindSiteLeaseToResponse(upstream as unknown as Response, lease, signal) as unknown as Awaited<ReturnType<typeof fetch>> };
+    }, { signal });
   }
 
   return buildRequest(mapping.siteUrl);
