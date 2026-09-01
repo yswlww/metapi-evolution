@@ -4,6 +4,8 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { asc, eq } from 'drizzle-orm';
+import { config } from '../../config.js';
+import { proxyChannelCoordinator, resetProxyChannelCoordinatorState } from '../../services/proxyChannelCoordinator.js';
 
 const fetchMock = vi.fn();
 const selectChannelMock = vi.fn();
@@ -87,6 +89,7 @@ describe('/v1/completions site api endpoint rotation', () => {
   });
 
   beforeEach(async () => {
+    resetProxyChannelCoordinatorState();
     fetchMock.mockReset();
     selectChannelMock.mockReset();
     selectNextChannelMock.mockReset();
@@ -123,6 +126,58 @@ describe('/v1/completions site api endpoint rotation', () => {
   afterAll(async () => {
     await app.close();
     delete process.env.DATA_DIR;
+  });
+
+  it('rejects site admission before fetch, endpoint bookkeeping, or channel retry', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'limited-site',
+      url: 'https://console.example.com',
+      platform: 'new-api',
+      status: 'active',
+      maxConcurrency: 1,
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'limited-user',
+      accessToken: '',
+      apiToken: 'sk-limited',
+      status: 'active',
+      checkinEnabled: false,
+      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+    }).returning().get();
+    selectChannelMock.mockResolvedValue({
+      channel: { id: 11, routeId: 22 },
+      site,
+      account,
+      tokenName: 'default',
+      tokenValue: 'sk-limited',
+      actualModel: 'gpt-4o-mini',
+    });
+    const originalQueueLimit = config.proxySiteConcurrencyQueueLimit;
+    const originalQueueWaitMs = config.proxySiteConcurrencyQueueWaitMs;
+    config.proxySiteConcurrencyQueueLimit = 0;
+    config.proxySiteConcurrencyQueueWaitMs = 0;
+    const lease = await proxyChannelCoordinator.acquireSiteLease({
+      siteId: site.id,
+      maxConcurrency: 1,
+    });
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/completions',
+        payload: { model: 'gpt-4o-mini', prompt: 'reject' },
+      });
+      expect(response.statusCode).toBe(503);
+      expect(response.headers['retry-after']).toBe('1');
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(recordFailureMock).not.toHaveBeenCalled();
+      expect(reportProxyAllFailedMock).not.toHaveBeenCalled();
+      expect(selectNextChannelMock).not.toHaveBeenCalled();
+    } finally {
+      lease.release();
+      config.proxySiteConcurrencyQueueLimit = originalQueueLimit;
+      config.proxySiteConcurrencyQueueWaitMs = originalQueueWaitMs;
+    }
   });
 
   it('cools down a retryable failed endpoint and retries the next endpoint within the same site', async () => {
