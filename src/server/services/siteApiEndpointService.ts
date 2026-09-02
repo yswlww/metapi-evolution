@@ -296,15 +296,20 @@ export async function runWithSiteApiEndpointPool<T>(
   }
 }
 
-async function loadCurrentSiteMaxConcurrency(siteId: number, fallbackMaxConcurrency: number | null | undefined = null): Promise<number | null> {
+async function loadCurrentSiteMaxConcurrency(siteId: number): Promise<
+  | { ok: true; maxConcurrency: number | null }
+  | { ok: false }
+> {
   try {
     const row = await db.select({ maxConcurrency: schema.sites.maxConcurrency })
       .from(schema.sites)
       .where(eq(schema.sites.id, siteId))
       .get();
-    return row ? row.maxConcurrency ?? null : fallbackMaxConcurrency ?? null;
+    return row
+      ? { ok: true, maxConcurrency: row.maxConcurrency ?? null }
+      : { ok: false };
   } catch {
-    return fallbackMaxConcurrency ?? null;
+    return { ok: false };
   }
 }
 
@@ -313,12 +318,17 @@ export async function runWithProxySiteApiEndpointPool<T>(
   operation: (target: SiteApiEndpointTarget, lease: ProxySiteLease) => Promise<T>,
   options?: { signal?: AbortSignal },
 ): Promise<T> {
-  const maxConcurrency = await loadCurrentSiteMaxConcurrency(site.id, site.maxConcurrency);
-  const lease = await proxyChannelCoordinator.acquireSiteLease({
-    siteId: site.id,
-    maxConcurrency,
-    signal: options?.signal,
-  });
+  const loadedLimit = await loadCurrentSiteMaxConcurrency(site.id);
+  const lease = loadedLimit.ok
+    ? await proxyChannelCoordinator.acquireSiteLease({
+      siteId: site.id,
+      maxConcurrency: loadedLimit.maxConcurrency,
+      signal: options?.signal,
+    })
+    : await proxyChannelCoordinator.acquireSiteLeaseWithCurrentLimit({
+      siteId: site.id,
+      signal: options?.signal,
+    });
 
   try {
     return await runWithSiteApiEndpointPool(site, (target) => operation(target, lease));

@@ -386,6 +386,18 @@ class ProxyChannelCoordinator {
     this.maybeDeleteSiteRuntimeState(normalizedSiteId);
   }
 
+  async acquireSiteLeaseWithCurrentLimit(input: {
+    siteId: number;
+    signal?: AbortSignal;
+  }): Promise<ProxySiteLease> {
+    const siteId = Math.trunc(input.siteId || 0);
+    const state = siteRuntimeStates.get(siteId);
+    if (siteId <= 0 || !state) {
+      throw createSiteConcurrencyError(siteId, 'aborted');
+    }
+    return this.acquireSiteLease({ siteId, maxConcurrency: state.limit, signal: input.signal });
+  }
+
   async acquireSiteLease(input: {
     siteId: number;
     maxConcurrency: number | null | undefined;
