@@ -897,7 +897,13 @@ export async function geminiProxyRoute(app: FastifyInstance) {
                   }
                 }
                 const firstByteLatencyMs = getObservedResponseMeta(upstream)?.firstByteLatencyMs ?? null;
-                return { upstream: upstream as unknown as Response, firstByteLatencyMs, recoverApplied };
+                return {
+                  upstream: upstream.ok
+                    ? bindSiteLeaseToResponse(upstream as unknown as Response, lease, abort.signal)
+                    : upstream as unknown as Response,
+                  firstByteLatencyMs,
+                  recoverApplied,
+                };
               },
               { signal: abort.signal },
             );
