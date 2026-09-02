@@ -116,11 +116,7 @@ describe('bindSiteLeaseToResponse', () => {
     expect(lease.release).toHaveBeenCalledTimes(1);
   });
 
-  it('does not touch a lease more often than the configured keepalive interval', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(0);
-    const originalKeepalive = config.proxySiteConcurrencyLeaseKeepaliveMs;
-    config.proxySiteConcurrencyLeaseKeepaliveMs = 1_000;
+  it('forwards stream activity to the lease so the coordinator owns keepalive throttling', async () => {
     const lease = buildLease();
     const body = new ReadableStream<Uint8Array>({
       pull(controller) {
@@ -132,8 +128,39 @@ describe('bindSiteLeaseToResponse', () => {
 
     const wrapped = bindSiteLeaseToResponse(new Response(body), lease);
     await wrapped.text();
-    expect(lease.touch).toHaveBeenCalledTimes(1);
+    expect(lease.touch.mock.calls.length).toBeGreaterThan(1);
+  });
 
+  it('keeps an actively consumed stream leased with a near-TTL keepalive', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const originalTtl = config.proxySiteConcurrencyLeaseTtlMs;
+    const originalKeepalive = config.proxySiteConcurrencyLeaseKeepaliveMs;
+    config.proxySiteConcurrencyLeaseTtlMs = 5_000;
+    config.proxySiteConcurrencyLeaseKeepaliveMs = 4_999;
+
+    const lease = await proxyChannelCoordinator.acquireSiteLease({ siteId: 19, maxConcurrency: 1 });
+    const encoder = new TextEncoder();
+    let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
+    const wrapped = bindSiteLeaseToResponse(new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controllerRef = controller;
+      },
+    })), lease);
+    const reader = wrapped.body!.getReader();
+
+    for (let second = 1; second <= 6; second += 1) {
+      controllerRef!.enqueue(encoder.encode(String(second)));
+      const read = reader.read();
+      await vi.advanceTimersByTimeAsync(1_000);
+      await read;
+      expect(lease.isActive()).toBe(true);
+    }
+
+    controllerRef!.close();
+    await reader.read();
+    expect(lease.isActive()).toBe(false);
+    config.proxySiteConcurrencyLeaseTtlMs = originalTtl;
     config.proxySiteConcurrencyLeaseKeepaliveMs = originalKeepalive;
   });
 

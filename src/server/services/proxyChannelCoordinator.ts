@@ -503,7 +503,8 @@ class ProxyChannelCoordinator {
     let released = false;
     let transferred = false;
     let expiryTimer: ReturnType<typeof setTimeout> | null = null;
-    let lastTouchAtMs = -Infinity;
+    let lastActivityAtMs = -Infinity;
+    let lastRefreshAtMs = -Infinity;
 
     const release = () => {
       if (released) return;
@@ -516,19 +517,31 @@ class ProxyChannelCoordinator {
       this.maybeDeleteSiteRuntimeState(siteId);
     };
 
-    const touch = () => {
-      if (released) return;
-      const nowMs = Date.now();
-      if (nowMs - lastTouchAtMs < getSiteLeaseKeepaliveMs()) return;
-      lastTouchAtMs = nowMs;
+    const scheduleExpiry = (delayMs: number) => {
       if (expiryTimer) clearTimeout(expiryTimer);
       expiryTimer = setTimeout(() => {
+        if (released) return;
+        const idleMs = Date.now() - lastActivityAtMs;
+        const ttlMs = getSiteLeaseTtlMs();
+        if (idleMs < ttlMs) {
+          scheduleExpiry(ttlMs - idleMs);
+          return;
+        }
         logSiteConcurrency('lease_ttl_expired', siteId, { leaseId });
         release();
-      }, getSiteLeaseTtlMs());
+      }, Math.max(1, delayMs));
       shouldUnrefTimer(expiryTimer);
       const leaseState = state.leases.get(leaseId);
       if (leaseState) leaseState.expiryTimer = expiryTimer;
+    };
+
+    const touch = () => {
+      if (released) return;
+      const nowMs = Date.now();
+      lastActivityAtMs = nowMs;
+      if (nowMs - lastRefreshAtMs < getSiteLeaseKeepaliveMs()) return;
+      lastRefreshAtMs = nowMs;
+      scheduleExpiry(getSiteLeaseTtlMs());
     };
 
     state.leases.set(leaseId, { expiryTimer, release });

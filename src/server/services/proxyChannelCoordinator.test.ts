@@ -364,7 +364,7 @@ describe('proxyChannelCoordinator', () => {
     setTimeoutSpy.mockRestore();
   });
 
-  it('limits site lease touch renewals to the keepalive cadence', async () => {
+  it('records site lease activity even when timer refresh is cadence-limited', async () => {
     config.proxySiteConcurrencyLeaseTtlMs = 5_000;
     config.proxySiteConcurrencyLeaseKeepaliveMs = 1_000;
     const lease = await proxyChannelCoordinator.acquireSiteLease({ siteId: 1, maxConcurrency: 1 });
@@ -372,6 +372,9 @@ describe('proxyChannelCoordinator', () => {
     await vi.advanceTimersByTimeAsync(500);
     lease.touch();
     await vi.advanceTimersByTimeAsync(4_500);
+    expect(lease.isActive()).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(500);
     expect(lease.isActive()).toBe(false);
   });
 

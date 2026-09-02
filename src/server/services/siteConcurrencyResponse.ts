@@ -1,9 +1,4 @@
-import { config } from '../config.js';
 import type { ProxySiteLease } from './proxyChannelCoordinator.js';
-
-function getLeaseKeepaliveMs(): number {
-  return Math.max(1_000, Math.trunc(config.proxySiteConcurrencyLeaseKeepaliveMs || 0));
-}
 
 function copyResponse(response: Response, body: BodyInit | null): Response {
   return new Response(body, {
@@ -32,7 +27,6 @@ export function bindSiteLeaseToResponse(
   let sourceReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   let released = false;
   let disposed = false;
-  let lastTouchAtMs = -Infinity;
 
   const release = () => {
     if (released) return;
@@ -41,9 +35,6 @@ export function bindSiteLeaseToResponse(
   };
 
   const touch = () => {
-    const nowMs = Date.now();
-    if (nowMs - lastTouchAtMs < getLeaseKeepaliveMs()) return;
-    lastTouchAtMs = nowMs;
     lease.touch();
   };
 
