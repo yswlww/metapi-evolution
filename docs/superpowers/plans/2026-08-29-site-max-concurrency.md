@@ -150,7 +150,7 @@ export function isSiteConcurrencyLimitError(error: unknown): error is SiteConcur
 - Consumes: existing migration-driven schema artifact generators.
 - Produces: `normalizeSiteMaxConcurrency(value)` and `sites.maxConcurrency` for every later task.
 
-- [ ] **Step 1: Add RED normalization tests**
+- [x] **Step 1: Add RED normalization tests**
 
 ```ts
 import { describe, expect, it } from 'vitest';
@@ -177,7 +177,7 @@ describe('normalizeSiteMaxConcurrency', () => {
 });
 ```
 
-- [ ] **Step 2: Add RED schema/compatibility assertions**
+- [x] **Step 2: Add RED schema/compatibility assertions**
 
 ```ts
 expect(contract.tables.sites.columns.max_concurrency).toMatchObject({
@@ -190,7 +190,7 @@ expect(sqliteStatements).toContain(
 );
 ```
 
-- [ ] **Step 3: Run RED tests**
+- [x] **Step 3: Run RED tests**
 
 Run:
 
@@ -203,7 +203,7 @@ npx vitest run --root . \
 
 Expected: FAIL because the shared module and `max_concurrency` column do not exist.
 
-- [ ] **Step 4: Implement the shared normalizer and declaration**
+- [x] **Step 4: Implement the shared normalizer and declaration**
 
 ```js
 export const SITE_MAX_CONCURRENCY_MAX = 10000;
@@ -230,7 +230,7 @@ export type SiteMaxConcurrencyResult =
 export function normalizeSiteMaxConcurrency(value: unknown): SiteMaxConcurrencyResult;
 ```
 
-- [ ] **Step 5: Add the Drizzle field and compatibility specification**
+- [x] **Step 5: Add the Drizzle field and compatibility specification**
 
 Insert this exact nullable field after the site's `url` column in `src/server/db/schema.ts`:
 
@@ -240,7 +240,7 @@ maxConcurrency: integer('max_concurrency'),
 
 Add the exact nullable integer column to `SITE_COLUMN_COMPATIBILITY_SPECS` using the existing cross-dialect shape.
 
-- [ ] **Step 6: Generate migration 0029 and schema artifacts**
+- [x] **Step 6: Generate migration 0029 and schema artifacts**
 
 Run:
 
@@ -256,7 +256,7 @@ Expected:
 - `0029_snapshot.json` exists;
 - generated SQLite/MySQL/PostgreSQL artifacts contain `max_concurrency`.
 
-- [ ] **Step 7: Run schema verification**
+- [x] **Step 7: Run schema verification**
 
 ```bash
 npm run test:schema:unit
@@ -266,7 +266,7 @@ npm run repo:drift-check
 
 Expected: all pass; drift reports 0 violations and 0 tracked debt.
 
-- [ ] **Step 8: Commit Task 1**
+- [x] **Step 8: Commit Task 1**
 
 ```bash
 git add drizzle src/shared/siteMaxConcurrency.js src/shared/siteMaxConcurrency.d.ts \
@@ -292,7 +292,7 @@ git commit -m "feat: add site concurrency schema contract" \
 - Consumes: `normalizeSiteMaxConcurrency` and `sites.maxConcurrency` from Task 1.
 - Produces: validated API/backup persistence consumed by coordinator/UI tasks.
 
-- [ ] **Step 1: Add RED API tests for create/update semantics**
+- [x] **Step 1: Add RED API tests for create/update semantics**
 
 ```ts
 it('persists normalized site max concurrency on create and update', async () => {
@@ -326,7 +326,7 @@ it.each([-1, 1.5, 10001])('rejects invalid maxConcurrency %s', async (maxConcurr
 });
 ```
 
-- [ ] **Step 2: Add RED backup tests**
+- [x] **Step 2: Add RED backup tests**
 
 ```ts
 const exported = await backupService.exportBackup('all') as any;
@@ -349,7 +349,7 @@ await expect(backupService.importBackup(invalidBackup as Record<string, unknown>
   .rejects.toThrow('Invalid maxConcurrency. Expected an integer from 0 to 10000.');
 ```
 
-- [ ] **Step 3: Run RED API/backup tests**
+- [x] **Step 3: Run RED API/backup tests**
 
 ```bash
 npx vitest run --root . \
@@ -359,7 +359,7 @@ npx vitest run --root . \
 
 Expected: FAIL because payload/import logic ignores or rejects the new field incorrectly.
 
-- [ ] **Step 4: Add the field to create/update contracts**
+- [x] **Step 4: Add the field to create/update contracts**
 
 Add this exact property to both `siteCreatePayloadSchema` and `siteUpdatePayloadSchema` before `.passthrough()`:
 
@@ -369,7 +369,7 @@ maxConcurrency: z.unknown().optional(),
 
 Use `Object.prototype.hasOwnProperty.call(body, 'maxConcurrency')` to distinguish omitted updates from an explicit unlimited value.
 
-- [ ] **Step 5: Normalize and persist create/update values**
+- [x] **Step 5: Normalize and persist create/update values**
 
 ```ts
 const hasMaxConcurrency = Object.prototype.hasOwnProperty.call(body, 'maxConcurrency');
@@ -383,7 +383,7 @@ if (maxConcurrencyResult && !maxConcurrencyResult.ok) {
 
 Create stores `maxConcurrencyResult?.value ?? null`; update assigns only when `hasMaxConcurrency` is true.
 
-- [ ] **Step 6: Validate native/converted backups before import**
+- [x] **Step 6: Validate native/converted backups before import**
 
 ```ts
 function normalizeImportedSiteMaxConcurrency(row) {
@@ -396,7 +396,7 @@ function normalizeImportedSiteMaxConcurrency(row) {
 
 Apply it before the destructive transaction. ALL-API-Hub and legacy-ref constructors explicitly set `maxConcurrency: null`.
 
-- [ ] **Step 7: Run Task 2 tests**
+- [x] **Step 7: Run Task 2 tests**
 
 ```bash
 npx vitest run --root . \
@@ -406,7 +406,7 @@ npx vitest run --root . \
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit Task 2**
+- [x] **Step 8: Commit Task 2**
 
 ```bash
 git add src/server/contracts/siteRoutePayloads.ts src/server/routes/api/sites.ts \
@@ -430,7 +430,7 @@ git commit -m "feat: persist site concurrency settings" \
 - Consumes: normalized per-site limit from Task 1.
 - Produces: `SiteConcurrencyLimitError`, `ProxySiteLease`, coordinator acquisition/update APIs for Tasks 4–8.
 
-- [ ] **Step 1: Add RED configuration tests**
+- [x] **Step 1: Add RED configuration tests**
 
 ```ts
 it('normalizes site concurrency process settings', () => {
@@ -457,7 +457,7 @@ it('normalizes site concurrency process settings', () => {
 
 Add invalid/range tests proving defaults are used rather than clamping.
 
-- [ ] **Step 2: Add RED coordinator tests**
+- [x] **Step 2: Add RED coordinator tests**
 
 Add fake-timer tests for:
 
@@ -475,7 +475,7 @@ expect(second.isActive()).toBe(true);
 
 Also cover FIFO order, independent sites, queue full, timeout, abort, idempotent release, TTL expiry, `touch`, dynamic `10→1`, `1→10`, `1→0`, latest-limit drain, and reset cleanup.
 
-- [ ] **Step 3: Run RED config/coordinator tests**
+- [x] **Step 3: Run RED config/coordinator tests**
 
 ```bash
 npx vitest run --root . \
@@ -485,7 +485,7 @@ npx vitest run --root . \
 
 Expected: FAIL because site config and lease APIs do not exist.
 
-- [ ] **Step 4: Add dedicated config normalizers**
+- [x] **Step 4: Add dedicated config normalizers**
 
 ```ts
 function parseIntegerInRange(raw, fallback, min, max) {
@@ -498,7 +498,7 @@ function parseIntegerInRange(raw, fallback, min, max) {
 
 Compute TTL first; keepalive uses default unless `1000 <= value < ttl`.
 
-- [ ] **Step 5: Implement site runtime state and typed error**
+- [x] **Step 5: Implement site runtime state and typed error**
 
 ```ts
 type SiteWaiter = {
@@ -522,11 +522,11 @@ type SiteRuntimeState = {
 
 Implement `acquireSiteLease`, `updateSiteConcurrencyLimit`, latest-limit FIFO drain, no-op unlimited lease, queue cap, timeout, abort removal, TTL/touch, idempotent release, `markTransferred()`, and `isTransferred()`. A tracked or no-op lease starts untransferred; `markTransferred()` is idempotent and tells Task 4's wrapper not to release in its `finally`. Emit bounded structured diagnostics only for queue-full, wait-timeout, TTL expiry, and explicit dynamic-limit changes; never log credentials, request bodies, prompts, or normal per-request grant/release noise. Add log-spy assertions to the coordinator tests for those four exceptional events.
 
-- [ ] **Step 6: Make reset clear ownership**
+- [x] **Step 6: Make reset clear ownership**
 
 `resetProxyChannelCoordinatorState()` clears every site lease timer, waiter timer, abort listener, and rejects queued waiters with reason `aborted` before clearing maps.
 
-- [ ] **Step 7: Run coordinator tests**
+- [x] **Step 7: Run coordinator tests**
 
 ```bash
 npx vitest run --root . \
@@ -536,7 +536,7 @@ npx vitest run --root . \
 
 Expected: PASS with fake timers reporting no residual timers/listeners.
 
-- [ ] **Step 8: Commit Task 3**
+- [x] **Step 8: Commit Task 3**
 
 ```bash
 git add src/server/config.ts src/server/config.test.ts \
@@ -562,7 +562,7 @@ git commit -m "feat: add site concurrency coordinator" \
 - Consumes: Task 3 `ProxySiteLease`/error/coordinator and Task 1 DB field.
 - Produces: `runWithProxySiteApiEndpointPool`, response lease binding, Fastify abort/error helpers for Tasks 6–8.
 
-- [ ] **Step 1: Add RED wrapper admission tests**
+- [x] **Step 1: Add RED wrapper admission tests**
 
 Test request-time DB lookup rather than stale `site.maxConcurrency`, one acquisition around multiple endpoint retries, internal pool no acquisition, and admission failure before endpoint bookkeeping.
 
@@ -575,7 +575,7 @@ expect(operation).not.toHaveBeenCalled();
 expect(recordFailureMock).not.toHaveBeenCalled();
 ```
 
-- [ ] **Step 2: Add RED streaming lifecycle tests**
+- [x] **Step 2: Add RED streaming lifecycle tests**
 
 Create `Response` bodies whose reader:
 
@@ -587,7 +587,7 @@ Create `Response` bodies whose reader:
 
 Assert one lease release and unchanged chunks/errors/backpressure.
 
-- [ ] **Step 3: Add RED Fastify boundary tests**
+- [x] **Step 3: Add RED Fastify boundary tests**
 
 ```ts
 const reply = buildReplySpy();
@@ -603,7 +603,7 @@ expect(reply.send).toHaveBeenCalledWith({
 });
 ```
 
-- [ ] **Step 4: Run RED wrapper/lifecycle tests**
+- [x] **Step 4: Run RED wrapper/lifecycle tests**
 
 ```bash
 npx vitest run --root . \
@@ -615,7 +615,7 @@ npx vitest run --root . \
 
 Expected: FAIL because proxy wrapper/binding/error helpers do not exist.
 
-- [ ] **Step 5: Implement request-time limit lookup and wrapper**
+- [x] **Step 5: Implement request-time limit lookup and wrapper**
 
 ```ts
 async function loadCurrentSiteMaxConcurrency(siteId: number): Promise<number | null> {
@@ -629,11 +629,11 @@ async function loadCurrentSiteMaxConcurrency(siteId: number): Promise<number | n
 
 Acquire once, delegate to `runWithSiteApiEndpointPool`, and release in `finally` unless `lease.isTransferred()`.
 
-- [ ] **Step 6: Implement explicit response stream ownership**
+- [x] **Step 6: Implement explicit response stream ownership**
 
 Create `bindSiteLeaseToResponse(response, lease, signal)` in `siteConcurrencyResponse.ts`. It must call `lease.markTransferred()` before returning a wrapped `Response`. Wrap `response.body` with a `ReadableStream` that forwards `pull`, `cancel`, source errors, and chunks. Call `lease.touch()` no more often than `keepaliveMs`. Release once on EOF/error/cancel/abort. Return a new `Response` preserving status/statusText/headers. If the response has no body, release immediately and return an equivalent bodyless response.
 
-- [ ] **Step 7: Implement request abort and 503 helpers**
+- [x] **Step 7: Implement request abort and 503 helpers**
 
 ```ts
 export function createProxyRequestAbortSignal(
@@ -657,7 +657,7 @@ export function createProxyRequestAbortSignal(
 
 Add `replySiteConcurrencyLimit` and `isSiteConcurrencyLimitError`. The aborted reason returns no new response if raw response is already closed.
 
-- [ ] **Step 8: Run Task 4 tests**
+- [x] **Step 8: Run Task 4 tests**
 
 ```bash
 npx vitest run --root . \
@@ -669,7 +669,7 @@ npx vitest run --root . \
 
 Expected: PASS.
 
-- [ ] **Step 9: Commit Task 4**
+- [x] **Step 9: Commit Task 4**
 
 ```bash
 git add src/server/services/siteApiEndpointService.ts src/server/services/siteApiEndpointService.test.ts \
@@ -697,11 +697,11 @@ git commit -m "feat: bind site concurrency to endpoint streams" \
 - Consumes: Task 2 persistence and Task 3 `updateSiteConcurrencyLimit`.
 - Produces: user-manageable limit and immediate process queue drain/update.
 
-- [ ] **Step 1: Add RED dynamic-update route tests**
+- [x] **Step 1: Add RED dynamic-update route tests**
 
 Mock `proxyChannelCoordinator.updateSiteConcurrencyLimit` and assert it is called only after successful create/update, with `null` for API `0`, and not called on validation/DB failure.
 
-- [ ] **Step 2: Add RED editor/payload tests**
+- [x] **Step 2: Add RED editor/payload tests**
 
 ```ts
 expect(siteFormFromSite({ maxConcurrency: 7 }).maxConcurrency).toBe('7');
@@ -711,7 +711,7 @@ expect(buildSiteSaveAction({ mode: 'add' }, form).payload.maxConcurrency).toBe(7
 
 Add invalid/fractional/10001 UI validation cases.
 
-- [ ] **Step 3: Run RED management/UI tests**
+- [x] **Step 3: Run RED management/UI tests**
 
 ```bash
 npx vitest run --root . \
@@ -723,7 +723,7 @@ npx vitest run --root . \
 
 Expected: FAIL because editor/API notification support is absent.
 
-- [ ] **Step 4: Notify the coordinator after persistence**
+- [x] **Step 4: Notify the coordinator after persistence**
 
 After a committed create/update, call:
 
@@ -733,7 +733,7 @@ proxyChannelCoordinator.updateSiteConcurrencyLimit(siteId, persistedMaxConcurren
 
 Never notify before DB success.
 
-- [ ] **Step 5: Add editor state and payload**
+- [x] **Step 5: Add editor state and payload**
 
 Add these exact properties to the existing types:
 
@@ -747,7 +747,7 @@ maxConcurrency: number | null;
 
 Hydrate `null` as `'0'`; validate through `normalizeSiteMaxConcurrency` before `handleSave` sends the payload.
 
-- [ ] **Step 6: Add the responsive field**
+- [x] **Step 6: Add the responsive field**
 
 Use the existing `ResponsiveFormGrid`:
 
@@ -766,7 +766,7 @@ Use the existing `ResponsiveFormGrid`:
 </label>
 ```
 
-- [ ] **Step 7: Run Task 5 tests**
+- [x] **Step 7: Run Task 5 tests**
 
 ```bash
 npx vitest run --root . \
@@ -778,7 +778,7 @@ npx vitest run --root . \
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit Task 5**
+- [x] **Step 8: Commit Task 5**
 
 ```bash
 git add src/server/routes/api/sites.ts src/server/routes/api/sites.proxyUrl.test.ts \
@@ -808,15 +808,15 @@ git commit -m "feat: expose site concurrency management" \
 - Consumes: Task 4 wrapper, lease binding, abort/error helpers.
 - Produces: site-cap coverage for raw routes without failure bookkeeping/retry amplification.
 
-- [ ] **Step 1: Add RED route admission tests**
+- [x] **Step 1: Add RED route admission tests**
 
 For each representative route, make the first request hold a `maxConcurrency: 1` lease and assert a second request receives 503/Retry-After with zero fetch/channel-failure/endpoint-failure calls. Include a different-site request that proceeds.
 
-- [ ] **Step 2: Add RED response ownership tests**
+- [x] **Step 2: Add RED response ownership tests**
 
 For one streaming/raw route and one JSON route, assert the lease stays active until body consumption/cancellation and releases once.
 
-- [ ] **Step 3: Run RED raw-route tests**
+- [x] **Step 3: Run RED raw-route tests**
 
 ```bash
 npx vitest run --root . \
@@ -829,7 +829,7 @@ npx vitest run --root . \
 
 Expected: FAIL because routes still use the non-limited pool.
 
-- [ ] **Step 4: Replace pool calls and bind upstream responses**
+- [x] **Step 4: Replace pool calls and bind upstream responses**
 
 Use this exact pattern inside each selected-channel attempt:
 
@@ -850,7 +850,7 @@ const result = await runWithProxySiteApiEndpointPool(
 
 Use `target.baseUrl` for every upstream URL.
 
-- [ ] **Step 5: Short-circuit concurrency errors before failure/retry logic**
+- [x] **Step 5: Short-circuit concurrency errors before failure/retry logic**
 
 ```ts
 if (isSiteConcurrencyLimitError(error)) {
@@ -860,7 +860,7 @@ if (isSiteConcurrencyLimitError(error)) {
 
 Place this before `recordFailure`, endpoint cooldown, and `canRetryChannelSelection` branches.
 
-- [ ] **Step 6: Run raw-route tests**
+- [x] **Step 6: Run raw-route tests**
 
 ```bash
 npx vitest run --root . \
@@ -873,7 +873,7 @@ npx vitest run --root . \
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit Task 6**
+- [x] **Step 7: Commit Task 6**
 
 ```bash
 git add src/server/routes/proxy/completions.ts src/server/routes/proxy/embeddings.ts \
@@ -903,7 +903,7 @@ git commit -m "feat: enforce site limits on proxy routes" \
 - Consumes: Task 4 wrapper/error helpers.
 - Produces: Chat/Claude/Responses streaming and count-token coverage.
 
-- [ ] **Step 1: Add RED chat/responses saturation tests**
+- [x] **Step 1: Add RED chat/responses saturation tests**
 
 Cover:
 
@@ -914,7 +914,7 @@ Cover:
 - Claude count-token upstream branch capped;
 - different site remains independent.
 
-- [ ] **Step 2: Run RED shared-surface tests**
+- [x] **Step 2: Run RED shared-surface tests**
 
 ```bash
 npx vitest run --root . \
@@ -926,7 +926,7 @@ npx vitest run --root . \
 
 Expected: FAIL because shared surfaces use the existing pool/error path.
 
-- [ ] **Step 3: Replace pool calls and transfer nested `upstream` responses**
+- [x] **Step 3: Replace pool calls and transfer nested `upstream` responses**
 
 Move each surface's current `executeEndpointFlow` call unchanged into the proxy-pool callback, replacing only its `siteUrl` value with `target.baseUrl`. Immediately after that call, transfer a successful upstream response with this exact block:
 
@@ -949,11 +949,11 @@ const flow = await runWithProxySiteApiEndpointPool(
 
 Define `runEndpointFlowForTarget` as a local closure beside the current endpoint-flow call so it captures that surface's already-defined request builders, recovery hooks, timeout, and retry callbacks without changing them.
 
-- [ ] **Step 4: Add the concurrency-error branch before failure toolkit calls**
+- [x] **Step 4: Add the concurrency-error branch before failure toolkit calls**
 
 Return the deterministic 503 directly. Do not clear sticky/channel state as a provider failure; normal request-finally cleanup still releases channel leases.
 
-- [ ] **Step 5: Run Task 7 tests**
+- [x] **Step 5: Run Task 7 tests**
 
 ```bash
 npx vitest run --root . \
@@ -965,7 +965,7 @@ npx vitest run --root . \
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit Task 7**
+- [x] **Step 6: Commit Task 7**
 
 ```bash
 git add src/server/proxy-core/surfaces/chatSurface.ts \
@@ -1063,11 +1063,11 @@ git commit -m "feat: cover Gemini and websocket site limits" \
 - Consumes: all completed tasks.
 - Produces: deployment documentation, final verification evidence, and integration handoff.
 
-- [ ] **Step 1: Add RED documentation contract test**
+- [x] **Step 1: Add RED documentation contract test**
 
 Create `src/server/config.site-concurrency-docs.test.ts` that reads `.env.example` and `docs/configuration.md`, asserting all four exact environment names/defaults plus `process-local`, `0 means unlimited`, queue cap, and Retry-After semantics.
 
-- [ ] **Step 2: Run RED docs test**
+- [x] **Step 2: Run RED docs test**
 
 ```bash
 npx vitest run --root . src/server/config.site-concurrency-docs.test.ts
@@ -1075,7 +1075,7 @@ npx vitest run --root . src/server/config.site-concurrency-docs.test.ts
 
 Expected: FAIL because documentation is absent.
 
-- [ ] **Step 3: Document configuration and operational limits**
+- [x] **Step 3: Document configuration and operational limits**
 
 Add exact values:
 
@@ -1119,7 +1119,7 @@ npx vitest run --root . \
 
 Expected: all pass.
 
-- [ ] **Step 5: Run schema verification**
+- [x] **Step 5: Run schema verification**
 
 ```bash
 npm run test:schema:unit

@@ -203,6 +203,22 @@ Metapi 当前有三类主要配置入口：
 | `MODEL_AVAILABILITY_PROBE_INTERVAL_MS` | 批量测活间隔（毫秒） | `1800000` |
 | `MODEL_AVAILABILITY_PROBE_TIMEOUT_MS` | 批量测活单次探测超时（毫秒） | `15000` |
 | `MODEL_AVAILABILITY_PROBE_CONCURRENCY` | 批量测活并发数 | `1` |
+| `PROXY_SITE_CONCURRENCY_QUEUE_LIMIT` | 单个进程中每个受限站点最多等待的请求数（queue cap） | `100` |
+| `PROXY_SITE_CONCURRENCY_QUEUE_WAIT_MS` | 等待站点并发名额的最长时间（毫秒） | `1500` |
+| `PROXY_SITE_CONCURRENCY_LEASE_TTL_MS` | 单个站点并发租约的最长存活时间（毫秒） | `90000` |
+| `PROXY_SITE_CONCURRENCY_LEASE_KEEPALIVE_MS` | 流式响应续租间隔（毫秒） | `15000` |
+
+#### 站点最大并发
+
+在「控制台 → 站点」中可为每个站点设置 `maxConcurrency`。`maxConcurrency=0` means unlimited：`0` 会以 `NULL` 持久化，表示该站点不限制并发。
+
+- 限制是 **process-local**：每个 Metapi 进程独立计算，不会跨多副本或多机器协调；部署多个副本时，每个副本都会各自执行同样的站点上限。
+- 到达上限后，请求会在 queue cap 内等待，最多等待 `PROXY_SITE_CONCURRENCY_QUEUE_WAIT_MS`；队列已满或等待超时会返回 HTTP `503`，并带有 `Retry-After` 响应头。
+- Dynamic site-limit changes take effect immediately：保存站点的新限制后，本进程中的后续准入和等待队列立即按新值处理，无需重启。
+- 上游流式响应会持有 streaming lease，直到流读取结束、出错、取消、客户端断开或租约到期；因此流式请求会占用名额的整个响应生命周期。
+- Internal flows are excluded：仅下游代理的上游站点请求参与限制；站内管理、备份、迁移、探测及其他内部流程不占用站点并发名额。
+
+**回滚：**将所有站点限制设为 `0`/`NULL`（set every site limit to `0`/`NULL`）即可立即停用并发强制；migration 0029 may remain inert，无需回滚该加性迁移。
 
 注意：
 
