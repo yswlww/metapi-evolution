@@ -107,6 +107,7 @@ export class SiteConcurrencyLimitError extends Error {
 }
 
 const siteRuntimeStates = new Map<number, SiteRuntimeState>();
+const siteKnownLimits = new Map<number, { limit: number; revision: number }>();
 const stickySessionBindings = new Map<string, StickyEntry>();
 const channelRuntimeStates = new Map<number, ChannelRuntimeState>();
 const NODE_MAX_TIMEOUT_MS = 2_147_483_647;
@@ -378,6 +379,8 @@ class ProxyChannelCoordinator {
     if (normalizedSiteId <= 0) return;
     const state = this.getOrCreateSiteRuntimeState(normalizedSiteId, maxConcurrency);
     const limit = normalizeSiteConcurrencyLimit(maxConcurrency);
+    const known = siteKnownLimits.get(normalizedSiteId);
+    siteKnownLimits.set(normalizedSiteId, { limit, revision: (known?.revision ?? 0) + 1 });
     if (state.limit !== limit) {
       state.limit = limit;
       logSiteConcurrency('limit_updated', normalizedSiteId, { limit });
@@ -386,16 +389,44 @@ class ProxyChannelCoordinator {
     this.maybeDeleteSiteRuntimeState(normalizedSiteId);
   }
 
+  getSiteConcurrencyRevision(siteId: number): number {
+    return siteKnownLimits.get(Math.trunc(siteId || 0))?.revision ?? 0;
+  }
+
+  async acquireSiteLeaseWithAuthoritativeLimit(input: {
+    siteId: number;
+    maxConcurrency: number | null | undefined;
+    expectedRevision: number;
+    signal?: AbortSignal;
+  }): Promise<ProxySiteLease> {
+    const siteId = Math.trunc(input.siteId || 0);
+    const known = siteKnownLimits.get(siteId);
+    const maxConcurrency = known && known.revision !== input.expectedRevision
+      ? known.limit
+      : input.maxConcurrency;
+    if (!known) {
+      siteKnownLimits.set(siteId, {
+        limit: normalizeSiteConcurrencyLimit(maxConcurrency),
+        revision: input.expectedRevision,
+      });
+    }
+    return this.acquireSiteLease({ siteId, maxConcurrency, signal: input.signal });
+  }
+
+  getKnownSiteConcurrencyLimit(siteId: number): number | null {
+    return siteKnownLimits.get(Math.trunc(siteId || 0))?.limit ?? null;
+  }
+
   async acquireSiteLeaseWithCurrentLimit(input: {
     siteId: number;
     signal?: AbortSignal;
   }): Promise<ProxySiteLease> {
     const siteId = Math.trunc(input.siteId || 0);
-    const state = siteRuntimeStates.get(siteId);
-    if (siteId <= 0 || !state) {
+    const known = siteKnownLimits.get(siteId);
+    if (siteId <= 0 || !known) {
       throw createSiteConcurrencyError(siteId, 'aborted');
     }
-    return this.acquireSiteLease({ siteId, maxConcurrency: state.limit, signal: input.signal });
+    return this.acquireSiteLease({ siteId, maxConcurrency: known.limit, signal: input.signal });
   }
 
   async acquireSiteLease(input: {
@@ -741,6 +772,7 @@ class ProxyChannelCoordinator {
 
 export function resetProxyChannelCoordinatorState(): void {
   proxyChannelCoordinator.reset();
+  siteKnownLimits.clear();
   stickySessionBindings.clear();
   channelRuntimeStates.clear();
   nextLeaseId = 1;

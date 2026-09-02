@@ -231,7 +231,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
       if (isSiteConcurrencyLimitError(error)) {
         return replySiteConcurrencyLimit(reply, error);
       }
-      if (isSiteApiEndpointFailure(error)) {
+      if (isSiteApiEndpointFailure(error) || isSiteApiEndpointUnavailable(error)) {
         return sendVideoTaskEndpointFailure(reply, error);
       }
       throw error;
@@ -272,7 +272,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
       if (isSiteConcurrencyLimitError(error)) {
         return replySiteConcurrencyLimit(reply, error);
       }
-      if (isSiteApiEndpointFailure(error)) {
+      if (isSiteApiEndpointFailure(error) || isSiteApiEndpointUnavailable(error)) {
         return sendVideoTaskEndpointFailure(reply, error);
       }
       throw error;
@@ -334,6 +334,10 @@ async function requestMappedVideoTaskUpstream(
       ) as unknown as Awaited<ReturnType<typeof fetch>>,
     };
   }, { signal });
+}
+
+function isSiteApiEndpointUnavailable(error: unknown): error is Error {
+  return error instanceof Error && error.message === '当前站点的 API 请求地址均不可用';
 }
 
 function isSiteApiEndpointFailure(error: unknown): error is SiteApiEndpointRequestError {

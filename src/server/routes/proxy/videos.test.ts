@@ -19,6 +19,7 @@ const refreshProxyVideoTaskSnapshotMock = vi.fn();
 const resolveProxyVideoTaskSiteMock = vi.fn();
 const resolveProxyVideoTaskSiteByUrlMock = vi.fn();
 let siteApiEndpointRows: Array<Record<string, unknown>> = [];
+let persistedMaxConcurrency: number | null = null;
 
 vi.mock('undici', async () => {
   const actual = await vi.importActual<typeof import('undici')>('undici');
@@ -74,6 +75,7 @@ vi.mock('../../db/index.js', () => ({
     select: () => ({
       from: () => ({
         where: () => ({
+          get: async () => ({ maxConcurrency: persistedMaxConcurrency }),
           orderBy: () => ({
             all: async () => siteApiEndpointRows,
           }),
@@ -90,6 +92,10 @@ vi.mock('../../db/index.js', () => ({
   },
   hasProxyLogStreamTimingColumns: async () => false,
   schema: {
+    sites: {
+      id: {},
+      maxConcurrency: {},
+    },
     siteApiEndpoints: {
       id: {},
       siteId: {},
@@ -140,6 +146,7 @@ describe('/v1/videos routes', () => {
     resolveProxyVideoTaskSiteMock.mockReset();
     resolveProxyVideoTaskSiteByUrlMock.mockReset();
     siteApiEndpointRows = [];
+    persistedMaxConcurrency = null;
     shouldRetryProxyRequestMock.mockReturnValue(false);
 
     selectChannelMock.mockReturnValue({
@@ -210,6 +217,7 @@ describe('/v1/videos routes', () => {
       platform: 'openai',
       maxConcurrency: 1,
     };
+    persistedMaxConcurrency = 1;
     selectChannelMock.mockReturnValue({
       channel: { id: 11, routeId: 22 },
       site: limitedSite,
