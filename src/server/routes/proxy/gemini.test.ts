@@ -31,6 +31,8 @@ const safeUpdateSurfaceProxyDebugSelectionMock = vi.fn();
 const safeUpdateSurfaceProxyDebugCandidatesMock = vi.fn();
 const safeInsertSurfaceProxyDebugAttemptMock = vi.fn();
 const safeFinalizeSurfaceProxyDebugTraceMock = vi.fn();
+const runWithProxySiteApiEndpointPoolMock = vi.fn();
+const bindSiteLeaseToResponseMock = vi.fn();
 
 function createDbSelectChain() {
   return {
@@ -118,6 +120,14 @@ vi.mock('../../db/index.js', () => ({
   },
 }));
 
+vi.mock('../../services/siteApiEndpointService.js', () => ({
+  runWithProxySiteApiEndpointPool: (...args: unknown[]) => runWithProxySiteApiEndpointPoolMock(...args),
+}));
+
+vi.mock('../../services/siteConcurrencyResponse.js', () => ({
+  bindSiteLeaseToResponse: (...args: unknown[]) => bindSiteLeaseToResponseMock(...args),
+}));
+
 vi.mock('../../services/proxyDebugTraceRuntime.js', () => ({
   startSurfaceProxyDebugTrace: (...args: unknown[]) => startSurfaceProxyDebugTraceMock(...args),
   safeUpdateSurfaceProxyDebugSelection: (...args: unknown[]) => safeUpdateSurfaceProxyDebugSelectionMock(...args),
@@ -203,6 +213,24 @@ describe('gemini native proxy routes', () => {
     safeUpdateSurfaceProxyDebugCandidatesMock.mockReset();
     safeInsertSurfaceProxyDebugAttemptMock.mockReset();
     safeFinalizeSurfaceProxyDebugTraceMock.mockReset();
+    runWithProxySiteApiEndpointPoolMock.mockReset();
+    runWithProxySiteApiEndpointPoolMock.mockImplementation(async (site, operation) => operation({
+      kind: 'site-fallback',
+      siteId: site.id,
+      endpointId: null,
+      baseUrl: site.url,
+      configuredEndpointCount: 0,
+      endpoint: null,
+    }, {
+      siteId: site.id,
+      isActive: () => true,
+      isTransferred: () => false,
+      markTransferred: () => {},
+      release: () => {},
+      touch: () => {},
+    }));
+    bindSiteLeaseToResponseMock.mockReset();
+    bindSiteLeaseToResponseMock.mockImplementation((response: Response) => response);
 
     startSurfaceProxyDebugTraceMock.mockResolvedValue({
       traceId: 801,
