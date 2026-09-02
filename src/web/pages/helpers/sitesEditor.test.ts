@@ -62,6 +62,7 @@ describe('buildSiteSaveAction', () => {
         customHeadersOverrideRequestHeaders: true,
         useSystemProxy: false,
         globalWeight: 1.2,
+        maxConcurrency: null,
         postRefreshProbeEnabled: true,
         postRefreshProbeModel: 'gpt-4o',
         postRefreshProbeScope: 'single',
@@ -85,6 +86,7 @@ describe('buildSiteSaveAction', () => {
         customHeadersOverrideRequestHeaders: true,
         useSystemProxy: false,
         globalWeight: 1.2,
+        maxConcurrency: null,
         postRefreshProbeEnabled: true,
         postRefreshProbeModel: 'gpt-4o',
         postRefreshProbeScope: 'single',
@@ -107,6 +109,7 @@ describe('buildSiteSaveAction', () => {
         customHeaders: '',
         customHeadersOverrideRequestHeaders: false,
         globalWeight: 0.8,
+        maxConcurrency: null,
       },
     );
 
@@ -124,6 +127,7 @@ describe('buildSiteSaveAction', () => {
         customHeaders: '',
         customHeadersOverrideRequestHeaders: false,
         globalWeight: 0.8,
+        maxConcurrency: null,
       },
     });
   });
@@ -143,6 +147,7 @@ describe('buildSiteSaveAction', () => {
           customHeaders: '',
           customHeadersOverrideRequestHeaders: false,
           globalWeight: 1,
+          maxConcurrency: null,
         },
       ),
     ).toThrow('editingSiteId is required in edit mode');

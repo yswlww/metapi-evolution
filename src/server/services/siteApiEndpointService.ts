@@ -302,7 +302,7 @@ async function loadCurrentSiteMaxConcurrency(siteId: number, fallbackMaxConcurre
       .from(schema.sites)
       .where(eq(schema.sites.id, siteId))
       .get();
-    return row?.maxConcurrency ?? fallbackMaxConcurrency ?? null;
+    return row ? row.maxConcurrency ?? null : fallbackMaxConcurrency ?? null;
   } catch {
     return fallbackMaxConcurrency ?? null;
   }
