@@ -108,9 +108,8 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             },
           );
           const observedFirstByteLatencyMs = getObservedResponseMeta(response)?.firstByteLatencyMs ?? null;
-          const boundResponse = bindSiteLeaseToResponse(response as unknown as Response, lease, abort.signal);
           if (!response.ok) {
-            const errText = await boundResponse.text().catch(() => 'unknown error');
+            const errText = await response.text().catch(() => 'unknown error');
             throw new SiteApiEndpointRequestError(errText || 'unknown error', {
               status: response.status,
               rawErrText: errText || null,
@@ -118,7 +117,7 @@ export async function completionsProxyRoute(app: FastifyInstance) {
             });
           }
           return {
-            upstream: boundResponse,
+            upstream: bindSiteLeaseToResponse(response as unknown as Response, lease, abort.signal),
             firstByteLatencyMs: observedFirstByteLatencyMs,
           };
         }, { signal: abort.signal });

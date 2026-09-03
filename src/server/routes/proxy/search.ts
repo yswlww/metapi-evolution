@@ -17,7 +17,6 @@ import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { fetchWithObservedFirstByte, getObservedResponseMeta } from '../../proxy-core/firstByteTimeout.js';
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 import { runWithProxySiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
-import { bindSiteLeaseToResponse } from '../../services/siteConcurrencyResponse.js';
 import {
   createProxyRequestAbortSignal,
   isSiteConcurrencyLimitError,
@@ -135,8 +134,7 @@ export async function searchProxyRoute(app: FastifyInstance) {
             },
           );
           const observedFirstByteLatencyMs = getObservedResponseMeta(response)?.firstByteLatencyMs ?? null;
-          const boundResponse = bindSiteLeaseToResponse(response as unknown as Response, lease, abort.signal);
-          const responseText = await boundResponse.text();
+          const responseText = await response.text();
           if (!response.ok) {
             throw new SiteApiEndpointRequestError(responseText || 'unknown error', {
               status: response.status,
@@ -145,7 +143,7 @@ export async function searchProxyRoute(app: FastifyInstance) {
             });
           }
           return {
-            upstream: boundResponse,
+            upstream: response,
             text: responseText,
             firstByteLatencyMs: observedFirstByteLatencyMs,
           };

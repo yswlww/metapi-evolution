@@ -122,8 +122,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
             ...requestInit,
             signal: abort.signal,
           });
-          const boundResponse = bindSiteLeaseToResponse(response as unknown as Response, lease, abort.signal);
-          const responseText = await boundResponse.text();
+          const responseText = await response.text();
           if (!response.ok) {
             throw new SiteApiEndpointRequestError(responseText || 'unknown error', {
               status: response.status,
@@ -132,7 +131,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
           }
           return {
             baseUrl: target.baseUrl,
-            upstream: boundResponse,
+            upstream: response,
             text: responseText,
           };
         }, { signal: abort.signal });

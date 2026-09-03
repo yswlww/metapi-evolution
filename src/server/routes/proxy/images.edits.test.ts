@@ -63,6 +63,7 @@ vi.mock('../../db/index.js', () => ({
     select: () => ({
       from: () => ({
         where: () => ({
+          get: async () => ({ maxConcurrency: 1 }),
           orderBy: () => ({
             all: async () => [],
           }),
@@ -83,6 +84,7 @@ vi.mock('../../db/index.js', () => ({
   hasProxyLogStreamTimingColumns: async () => false,
   schema: {
     proxyLogs: {},
+    sites: { id: {}, maxConcurrency: {} },
     siteApiEndpoints: {
       id: {},
       siteId: {},
