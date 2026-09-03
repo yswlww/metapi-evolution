@@ -5,9 +5,9 @@ import { resolve } from 'node:path';
 describe('repositoryIdentityContract', () => {
   const rootDir = resolve(__dirname, '../../../');
 
-  it('verifies package.json points to yswlww/metapi-evolution and version 1.4.0', () => {
+  it('verifies package.json points to yswlww/metapi-evolution and version 1.4.1', () => {
     const pkg = JSON.parse(readFileSync(resolve(rootDir, 'package.json'), 'utf8'));
-    expect(pkg.version).toBe('1.4.0');
+    expect(pkg.version).toBe('1.4.1');
     expect(pkg.repository?.url).toBe('https://github.com/yswlww/metapi-evolution.git');
     expect(pkg.bugs?.url).toBe('https://github.com/yswlww/metapi-evolution/issues');
     expect(pkg.homepage).toBe('https://github.com/yswlww/metapi-evolution#readme');
@@ -28,10 +28,10 @@ describe('repositoryIdentityContract', () => {
     expect(content).toContain('https://api.github.com/repos/yswlww/metapi-evolution/releases');
   });
 
-  it('verifies About.tsx links point to yswlww/metapi-evolution and version 1.4.0', () => {
+  it('verifies About.tsx links point to yswlww/metapi-evolution and version 1.4.1', () => {
     const content = readFileSync(resolve(rootDir, 'src/web/pages/About.tsx'), 'utf8');
     expect(content).toContain('https://github.com/yswlww/metapi-evolution');
-    expect(content).toContain("VERSION = '1.4.0'");
+    expect(content).toContain("VERSION = '1.4.1'");
   });
 
   it('documents the project lineage and independent evolution policy in both READMEs', () => {

@@ -513,12 +513,12 @@ describe('update center routes', () => {
     await saveValidConfig();
     fetchLatestStableGitHubReleaseMock.mockResolvedValue({
       source: 'github-release',
-      rawVersion: 'v1.4.1',
-      normalizedVersion: '1.4.1',
-      tagName: 'v1.4.1',
-      displayVersion: '1.4.1',
+      rawVersion: 'v1.4.2',
+      normalizedVersion: '1.4.2',
+      tagName: 'v1.4.2',
+      displayVersion: '1.4.2',
       publishedAt: '2026-03-31T10:00:00Z',
-      url: 'https://github.com/yswlww/metapi-evolution/releases/tag/v1.4.1',
+      url: 'https://github.com/yswlww/metapi-evolution/releases/tag/v1.4.2',
     });
     fetchDockerHubTagCandidatesMock.mockResolvedValue({
       primary: {
@@ -564,7 +564,7 @@ describe('update center routes', () => {
     expect(checkResponse.statusCode).toBe(200);
     expect(checkResponse.json()).toMatchObject({
       githubRelease: {
-        normalizedVersion: '1.4.1',
+        normalizedVersion: '1.4.2',
       },
       dockerHubTag: {
         digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
@@ -587,10 +587,10 @@ describe('update center routes', () => {
     expect(getUpdateCenterHelperStatusMock).toHaveBeenCalledTimes(1);
     expect(await loadUpdateCenterRuntimeState()).toEqual(expect.objectContaining({
       lastResolvedSource: 'github-release',
-      lastResolvedDisplayVersion: '1.4.1',
+      lastResolvedDisplayVersion: '1.4.2',
       statusSnapshot: {
         githubRelease: expect.objectContaining({
-          normalizedVersion: '1.4.1',
+          normalizedVersion: '1.4.2',
         }),
         dockerHubTag: expect.objectContaining({
           digest: 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
