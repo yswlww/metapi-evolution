@@ -401,12 +401,12 @@ class ProxyChannelCoordinator {
   }): Promise<ProxySiteLease> {
     const siteId = Math.trunc(input.siteId || 0);
     const known = siteKnownLimits.get(siteId);
-    const maxConcurrency = known && known.revision !== input.expectedRevision
-      ? known.limit
-      : input.maxConcurrency;
-    if (!known) {
+    const authoritativeLimit = normalizeSiteConcurrencyLimit(input.maxConcurrency);
+    const newerUpdateExists = known && known.revision !== input.expectedRevision;
+    const maxConcurrency = newerUpdateExists ? known.limit : authoritativeLimit;
+    if (!newerUpdateExists) {
       siteKnownLimits.set(siteId, {
-        limit: normalizeSiteConcurrencyLimit(maxConcurrency),
+        limit: authoritativeLimit,
         revision: input.expectedRevision,
       });
     }
