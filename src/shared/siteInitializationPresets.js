@@ -32,7 +32,18 @@ function normalizePathname(pathname) {
 function matchesHostAndPaths(url, hostname, paths) {
   const parsed = parseUrlCandidate(url);
   if (!parsed) return false;
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
   return parsed.hostname === hostname && paths.includes(normalizePathname(parsed.pathname));
+}
+
+function matchesSecureOrcaRouterEndpoint(url, paths) {
+  const parsed = parseUrlCandidate(url);
+  if (!parsed) return false;
+  return parsed.protocol === 'https:'
+    && parsed.hostname === 'api.orcarouter.ai'
+    && !parsed.username
+    && !parsed.password
+    && paths.includes(normalizePathname(parsed.pathname));
 }
 
 const CODINGPLAN_RECOMMENDED_MODELS = Object.freeze([
@@ -84,7 +95,25 @@ const BAIDU_CODING_PLAN_RECOMMENDED_MODELS = Object.freeze([
   'ernie-4.5-turbo-vl-32k',
 ]);
 
+const ORCAROUTER_RECOMMENDED_MODELS = Object.freeze([
+  'orcarouter/auto',
+]);
+
 const SITE_INITIALIZATION_PRESETS = Object.freeze([
+  Object.freeze({
+    id: 'orcarouter-openai',
+    label: 'OrcaRouter / OpenAI',
+    providerLabel: 'OrcaRouter',
+    description: '适合 OrcaRouter 官方 OpenAI 兼容入口，使用 API Key 自动发现可用模型。',
+    platform: 'orcarouter',
+    defaultUrl: 'https://api.orcarouter.ai/v1',
+    initialSegment: 'apikey',
+    recommendedSkipModelFetch: false,
+    recommendedModels: ORCAROUTER_RECOMMENDED_MODELS,
+    matches(url) {
+      return matchesSecureOrcaRouterEndpoint(url, ['/v1']);
+    },
+  }),
   Object.freeze({
     id: 'codingplan-openai',
     label: '阿里云 CodingPlan / OpenAI',
@@ -342,6 +371,10 @@ export function detectSiteInitializationPreset(url, platform) {
   const analyzed = analyzePrimarySiteUrl(url);
   for (const preset of SITE_INITIALIZATION_PRESETS) {
     if (preset.platform !== normalizedPlatform) continue;
+    if (
+      preset.id === 'orcarouter-openai'
+      && !matchesSecureOrcaRouterEndpoint(url, ['/', '/v1'])
+    ) continue;
     if (!preset.defaultUrl) continue;
     const presetAnalyzed = analyzePrimarySiteUrl(preset.defaultUrl);
     if (!presetAnalyzed.persistedUrl) continue;

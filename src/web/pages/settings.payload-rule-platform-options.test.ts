@@ -22,6 +22,7 @@ describe('payload rule platform options', () => {
       'done-hub',
       'one-hub',
       'veloera',
+      'orcarouter',
     ]));
   });
 });

@@ -2,6 +2,7 @@ import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { buildOauthProviderHeaders } from './oauth/service.js';
 import { resolveChannelProxyUrl, withSiteRecordProxyRequestInit } from './siteProxy.js';
 import { dispatchRuntimeRequest } from './runtimeDispatch.js';
+import { assertOrcaRouterTokenTransport } from './orcarouterTransport.js';
 import {
   buildUpstreamEndpointRequest,
   resolveUpstreamEndpointCandidates,
@@ -127,6 +128,7 @@ export async function probeRuntimeModel(input: {
   const startedAt = Date.now();
   const deadlineAtMs = startedAt + Math.max(1, input.timeoutMs);
   try {
+    assertOrcaRouterTokenTransport(input.site.platform, input.site.url);
     const endpointCandidates = await withTimeout(
       () => resolveUpstreamEndpointCandidates(
         {

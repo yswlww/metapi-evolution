@@ -12,6 +12,8 @@ describe('platformIdentity', () => {
     expect(normalizePlatformAlias('anti-gravity')).toBe('antigravity');
     expect(normalizePlatformAlias('one api')).toBe('one-api');
     expect(normalizePlatformAlias('axon-hub')).toBe('axonhub');
+    expect(normalizePlatformAlias('orca-router')).toBe('orcarouter');
+    expect(normalizePlatformAlias('orca router')).toBe('orcarouter');
     expect(normalizePlatformAlias('')).toBe('');
   });
 
@@ -26,6 +28,19 @@ describe('platformIdentity', () => {
     expect(detectPlatformByUrlHint('http://127.0.0.1:8317/v1/models')).toBe('cliproxyapi');
     expect(detectPlatformByUrlHint('https://hub.linux.do/v1/models')).toBe('axonhub');
     expect(detectPlatformByUrlHint('https://evil.example.com/?next=https://api.openai.com/v1/models')).toBeUndefined();
+  });
+
+  it('recognizes only exact official HTTPS OrcaRouter hostnames', () => {
+    expect(detectPlatformByUrlHint('https://api.orcarouter.ai/v1')).toBe('orcarouter');
+    expect(detectPlatformByUrlHint('api.orcarouter.ai/v1')).toBe('orcarouter');
+    expect(detectPlatformByUrlHint('http://api.orcarouter.ai/v1')).toBeUndefined();
+    expect(detectPlatformByUrlHint('https://evil-api.orcarouter.ai/v1')).toBeUndefined();
+    expect(detectPlatformByUrlHint('https://api.orcarouter.ai.attacker.test/v1')).toBeUndefined();
+    expect(detectPlatformByUrlHint('https://attacker.test/api.orcarouter.ai')).toBeUndefined();
+    expect(detectPlatformByUrlHint('https://api.orcarouter.ai@attacker.test/v1')).toBeUndefined();
+    expect(detectPlatformByUrlHint('https://attacker.test/?next=api.orcarouter.ai')).toBeUndefined();
+    expect(detectPlatformByUrlHint('ftp://api.orcarouter.ai/v1')).toBeUndefined();
+    expect(detectPlatformByUrlHint('file:///api.orcarouter.ai/v1')).toBeUndefined();
   });
 
   it.each([

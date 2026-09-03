@@ -1,5 +1,6 @@
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { normalizePlatformAlias } from '../../shared/platformIdentity.js';
+import { assertOrcaRouterTokenTransport } from './orcarouterTransport.js';
 import { withSiteProxyRequestInit } from './siteProxy.js';
 import {
   buildNewApiCookieCandidates,
@@ -518,6 +519,7 @@ async function fetchPricingData(input: EstimateProxyCostInput): Promise<PricingD
     return null;
   }
 
+  assertOrcaRouterTokenTransport(input.site.platform, input.site.url);
   const baseUrl = normalizeUrl(input.site.url);
   const tokenCandidates = buildTokenCandidates(input);
 

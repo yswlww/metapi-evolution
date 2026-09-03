@@ -20,6 +20,7 @@ type BrandRule = {
 
 type BrandDefinition = BrandInfo & {
   rules: BrandRule[];
+  allowNameFallback?: boolean;
 };
 
 const BRAND_DEFINITIONS: BrandDefinition[] = [
@@ -503,6 +504,15 @@ const BRAND_DEFINITIONS: BrandDefinition[] = [
     ],
   },
   {
+    name: 'OrcaRouter',
+    icon: '',
+    color: 'linear-gradient(135deg, #0f766e, #14b8a6)',
+    allowNameFallback: false,
+    rules: [
+      { keyword: 'orcarouter/', mode: 'startsWith' },
+    ],
+  },
+  {
     name: 'OpenRouter',
     icon: 'openrouter',
     color: 'linear-gradient(135deg, #7c3aed, #2563eb)',
@@ -764,10 +774,12 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-const BRAND_FALLBACK_BOUNDARY_RULES = BRAND_DEFINITIONS.map((brand) => ({
-  brand,
-  boundaryRegex: new RegExp(`(^|[^a-z0-9])${escapeRegExp(brand.name.toLowerCase())}(?=$|[^a-z0-9])`),
-}));
+const BRAND_FALLBACK_BOUNDARY_RULES = BRAND_DEFINITIONS
+  .filter((brand) => brand.allowNameFallback !== false)
+  .map((brand) => ({
+    brand,
+    boundaryRegex: new RegExp(`(^|[^a-z0-9])${escapeRegExp(brand.name.toLowerCase())}(?=$|[^a-z0-9])`),
+  }));
 
 export function getAllBrands(): BrandInfo[] {
   return BRAND_DEFINITIONS.map(({ name, icon, color }) => ({ name, icon, color }));

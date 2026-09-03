@@ -1448,6 +1448,47 @@ describe('backupService', () => {
     }
   });
 
+  it.each(['orcarouter', 'orca-router'])('imports ALL-API-Hub %s access tokens as reusable API keys', async (siteType) => {
+    const payload = {
+      version: '2.0',
+      timestamp: Date.now(),
+      accounts: {
+        accounts: [{
+          id: `orcarouter-${siteType}`,
+          site_url: 'https://api.orcarouter.ai/v1',
+          site_type: siteType,
+          site_name: `OrcaRouter ${siteType}`,
+          authType: 'access_token',
+          account_info: {
+            username: `orcarouter-${siteType}`,
+            access_token: 'orc-reusable-api-key',
+          },
+          created_at: '2026-02-12T00:00:00.000Z',
+          updated_at: '2026-02-12T00:00:00.000Z',
+        }],
+      },
+    } as Record<string, unknown>;
+
+    const result = await backupService.importBackup(payload);
+    const [site] = await db.select().from(schema.sites).all();
+    const [account] = await db.select().from(schema.accounts).all();
+
+    expect(result.allImported).toBe(true);
+    expect(site).toMatchObject({
+      platform: 'orcarouter',
+      url: 'https://api.orcarouter.ai',
+    });
+    expect(account).toMatchObject({
+      accessToken: '',
+      apiToken: 'orc-reusable-api-key',
+      checkinEnabled: false,
+    });
+    expect(JSON.parse(account?.extraConfig || '{}')).toMatchObject({
+      credentialMode: 'apikey',
+      source: 'all-api-hub',
+    });
+  });
+
   it('backfills oauth columns from extraConfig when importing older backups', async () => {
     const payload = {
       timestamp: Date.now(),

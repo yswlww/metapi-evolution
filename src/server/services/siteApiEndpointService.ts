@@ -1,6 +1,8 @@
 import { asc, eq } from 'drizzle-orm';
+import { normalizePlatformAlias } from '../../shared/platformIdentity.js';
 import { db, schema } from '../db/index.js';
 import { RETRYABLE_TIMEOUT_PATTERNS } from './proxyRetryPolicy.js';
+import { assertOrcaRouterTokenTransport } from './orcarouterTransport.js';
 
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
 const NON_RETRYABLE_STATUS_CODES = new Set([400, 401, 403, 404, 422]);
@@ -210,6 +212,18 @@ export async function requireSiteApiBaseUrl(
   throw new Error('当前站点的 API 请求地址均不可用');
 }
 
+export async function assertConfiguredOrcaRouterTransport(site: SiteRow): Promise<void> {
+  if (normalizePlatformAlias(site.platform) !== 'orcarouter') return;
+
+  assertOrcaRouterTokenTransport(site.platform, site.url);
+  const endpoints = await db.select().from(schema.siteApiEndpoints)
+    .where(eq(schema.siteApiEndpoints.siteId, site.id))
+    .all();
+  for (const endpoint of endpoints) {
+    assertOrcaRouterTokenTransport(site.platform, endpoint.url);
+  }
+}
+
 export async function recordSiteApiEndpointFailure(
   endpointId: number,
   input: SiteApiEndpointFailureInput,
@@ -263,6 +277,15 @@ export async function runWithSiteApiEndpointPool<T>(
     if (target.endpointId && attemptedEndpointIds.has(target.endpointId)) {
       if (lastError) throw lastError;
       throw new Error('当前站点的 API 请求地址均不可用');
+    }
+
+    try {
+      assertOrcaRouterTokenTransport(site.platform, target.baseUrl);
+    } catch (error) {
+      throw new SiteApiEndpointRequestError(
+        error instanceof Error ? error.message : 'unsafe OrcaRouter API transport',
+        { status: 400, cause: error },
+      );
     }
 
     try {

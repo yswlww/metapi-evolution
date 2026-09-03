@@ -365,6 +365,47 @@ describe('modelPricingService', () => {
     });
   });
 
+  it.each(['orcarouter', 'orca-router', 'orca router'])('rejects insecure %s pricing requests before a bearer fetch', async (platform) => {
+    await expect(fetchModelPricingCatalog({
+      ...buildPricingInput(platform, 91_001 + platform.length),
+      site: {
+        id: 91_001 + platform.length,
+        url: 'http://legacy.orcarouter.example',
+        platform,
+      },
+      account: {
+        id: 91_001 + platform.length,
+        apiToken: 'orc-pricing-key',
+      },
+    })).rejects.toThrow('credential-free HTTPS');
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(withSiteProxyRequestInitMock).not.toHaveBeenCalled();
+  });
+
+  it('fetches pricing metadata for a credential-free HTTPS OrcaRouter site', async () => {
+    mockCommonPricingResponse();
+
+    const catalog = await fetchModelPricingCatalog({
+      ...buildPricingInput('orcarouter', 91_100),
+      site: {
+        id: 91_100,
+        url: 'https://custom.orcarouter.example',
+        platform: 'orcarouter',
+      },
+      account: {
+        id: 91_100,
+        apiToken: 'orc-pricing-key',
+      },
+    });
+
+    expect(catalog?.models).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://custom.orcarouter.example/api/pricing',
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer orc-pricing-key' }) }),
+    );
+  });
+
   it('continues requesting common pricing metadata for generic new-api sites', async () => {
     mockCommonPricingResponse();
 

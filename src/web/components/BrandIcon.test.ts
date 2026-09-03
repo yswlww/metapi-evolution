@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getBrand } from './BrandIcon.js';
+import { getBrand, normalizeBrandIconKey } from './BrandIcon.js';
 
 describe('getBrand', () => {
   it('detects simple prefixed model names', () => {
@@ -86,6 +86,14 @@ describe('getBrand', () => {
     expect(getBrand('deepinfra/meta-llama/llama-3.3-70b-instruct')?.name).toBe('Meta');
     expect(getBrand('vertexai/google/gemini-2.5-pro')?.name).toBe('Google');
     expect(getBrand('azureai/gpt-4o')?.name).toBe('OpenAI');
+  });
+
+  it('uses the OrcaRouter provider brand only for its namespaced models', () => {
+    const brand = getBrand('orcarouter/auto');
+
+    expect(brand?.name).toBe('OrcaRouter');
+    expect(normalizeBrandIconKey(brand?.icon)).toBeNull();
+    expect(getBrand('orca-unrelated-model')?.name).not.toBe('OrcaRouter');
   });
 
   it('returns null for unknown model names', () => {

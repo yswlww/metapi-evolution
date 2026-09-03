@@ -16,6 +16,7 @@ const API_KEY_FIRST_PLATFORMS = new Set([
   'claude',
   'gemini',
   'cliproxyapi',
+  'orcarouter',
 ]);
 
 export function resolveInitialConnectionSegment(platform?: string | null): InitialConnectionSegment {

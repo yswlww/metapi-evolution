@@ -32,6 +32,7 @@ export const PLATFORM_ENDPOINT_FALLBACK_MAP: Record<string, string[]> = {
   'done-hub': ['openai'],
   sub2api: ['openai'],
   veloera: ['openai'],
+  orcarouter: ['openai'],
   cliproxyapi: ['openai'],
   claude: ['anthropic'],
   gemini: ['gemini'],

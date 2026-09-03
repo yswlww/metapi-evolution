@@ -1,4 +1,5 @@
 export type SiteInitializationPresetId =
+  | 'orcarouter-openai'
   | 'codingplan-openai'
   | 'codingplan-claude'
   | 'zhipu-coding-plan-openai'

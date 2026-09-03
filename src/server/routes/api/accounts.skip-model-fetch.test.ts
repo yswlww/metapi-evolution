@@ -91,6 +91,60 @@ describe('accounts skipModelFetch behavior', () => {
     expect(models).toHaveLength(0);
   });
 
+  it('rejects a skipped OrcaRouter API-key connection when its stored base URL is insecure', async () => {
+    getModelsMock.mockRejectedValueOnce(new Error('Should not be called'));
+
+    const site = await db.insert(schema.sites).values({
+      name: 'Unsafe OrcaRouter',
+      url: 'http://api.orcarouter.ai',
+      platform: 'orcarouter',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/accounts',
+      payload: {
+        siteId: site.id,
+        accessToken: 'orc-key',
+        credentialMode: 'apikey',
+        skipModelFetch: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(getModelsMock).not.toHaveBeenCalled();
+    expect(await db.select().from(schema.accounts).all()).toEqual([]);
+  });
+
+  it('rejects a skipped OrcaRouter API-key connection when a retained endpoint is insecure', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'OrcaRouter with legacy endpoint',
+      url: 'https://api.orcarouter.ai',
+      platform: 'orcarouter',
+    }).returning().get();
+    await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'http://legacy.orcarouter.example/v1',
+      enabled: true,
+      sortOrder: 0,
+    }).run();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/accounts',
+      payload: {
+        siteId: site.id,
+        accessToken: 'orc-key',
+        credentialMode: 'apikey',
+        skipModelFetch: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(getModelsMock).not.toHaveBeenCalled();
+    expect(await db.select().from(schema.accounts).all()).toEqual([]);
+  });
+
   it('still calls getModels when skipModelFetch is false', async () => {
     getModelsMock.mockResolvedValue(['gpt-4']);
 
