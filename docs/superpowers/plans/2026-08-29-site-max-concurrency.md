@@ -1,6 +1,6 @@
 # Site-Level Maximum Concurrency Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add a bounded, process-local per-site concurrency limit for external proxy traffic, including finite FIFO waiting, deterministic 503 overload responses, and exactly-once streaming lease release.
 
@@ -992,7 +992,7 @@ git commit -m "feat: enforce site limits on shared surfaces" \
 - Consumes: Task 4 wrapper/error helpers.
 - Produces: coverage for current pool bypasses and user-triggered Gemini model listing.
 
-- [ ] **Step 1: Add RED Gemini coverage**
+- [x] **Step 1: Add RED Gemini coverage**
 
 Test:
 
@@ -1003,11 +1003,11 @@ Test:
 - concurrency 503 causes no channel/provider failure or same-site retry;
 - client disconnect releases a streaming lease.
 
-- [ ] **Step 2: Add RED WebSocket frame coverage**
+- [x] **Step 2: Add RED WebSocket frame coverage**
 
 With `maxConcurrency: 1`, hold one direct Codex frame operation, send another connection/frame for the same site, and assert bounded 503-style WebSocket error semantics/no upstream second dispatch/no failure bookkeeping. Assert lease release after completed/error/fallback frame.
 
-- [ ] **Step 3: Run RED Gemini/WebSocket tests**
+- [x] **Step 3: Run RED Gemini/WebSocket tests**
 
 ```bash
 npx vitest run --root . \
@@ -1017,19 +1017,19 @@ npx vitest run --root . \
 
 Expected: FAIL because these paths are not using the proxy wrapper.
 
-- [ ] **Step 4: Integrate Gemini with the endpoint pool wrapper**
+- [x] **Step 4: Integrate Gemini with the endpoint pool wrapper**
 
 Wrap direct/compatibility upstream branches and feed `target.baseUrl` into request construction/`executeEndpointFlow`. Bind every escaping upstream `Response`. Apply the wrapper only to the upstream branch of user model listing.
 
-- [ ] **Step 5: Integrate direct WebSocket runtime requests**
+- [x] **Step 5: Integrate direct WebSocket runtime requests**
 
 Replace `runWithSiteApiEndpointPool` with the proxy wrapper around `codexWebsocketRuntime.sendRequest`. Since it returns fully collected runtime events rather than an escaping `Response`, do not transfer the lease; release on callback completion/error.
 
-- [ ] **Step 6: Map WebSocket concurrency error**
+- [x] **Step 6: Map WebSocket concurrency error**
 
 Send the existing WebSocket error envelope with status 503 and retry timing. Do not invoke HTTP fallback, route/channel retry, or failure recording for admission rejection.
 
-- [ ] **Step 7: Run Task 8 tests**
+- [x] **Step 7: Run Task 8 tests**
 
 ```bash
 npx vitest run --root . \
@@ -1039,7 +1039,7 @@ npx vitest run --root . \
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit Task 8**
+- [x] **Step 8: Commit Task 8**
 
 ```bash
 git add src/server/proxy-core/surfaces/geminiSurface.ts \
@@ -1088,7 +1088,7 @@ PROXY_SITE_CONCURRENCY_LEASE_KEEPALIVE_MS=15000
 
 Document process-local scope, `maxConcurrency=0` unlimited, 503/Retry-After, dynamic limits, streaming lease behavior, internal-flow exclusion, and rollback: setting all site limits to `0`/`NULL` disables enforcement immediately while migration 0029 may remain inert.
 
-- [ ] **Step 4: Run focused feature matrix**
+- [x] **Step 4: Run focused feature matrix**
 
 ```bash
 npx vitest run --root . \
@@ -1130,7 +1130,7 @@ npm run test:schema:runtime
 
 Expected: all available local database tests pass. If external DB services are unavailable, record exact skipped live commands rather than claiming success.
 
-- [ ] **Step 6: Run complete repository verification**
+- [x] **Step 6: Run complete repository verification**
 
 ```bash
 npm test
@@ -1143,7 +1143,7 @@ git status --short --branch
 
 Record exact file/test totals and non-failing warnings.
 
-- [ ] **Step 7: Commit documentation and verification contract**
+- [x] **Step 7: Commit documentation and verification contract**
 
 ```bash
 git add .env.example docs/configuration.md src/server/config.site-concurrency-docs.test.ts \
@@ -1152,7 +1152,7 @@ git commit -m "docs: explain site concurrency limits" \
   -m "Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 8: Request independent task/whole-branch review**
+- [x] **Step 8: Request independent task/whole-branch review**
 
 Provide reviewers:
 
@@ -1166,7 +1166,7 @@ Provide reviewers:
 
 Require exact Critical/Important/Minor findings and merge-readiness verdict. Fix every confirmed Critical/Important with new RED tests and scoped re-review before completion.
 
-- [ ] **Step 9: Final handoff**
+- [x] **Step 9: Final handoff**
 
 Report:
 
