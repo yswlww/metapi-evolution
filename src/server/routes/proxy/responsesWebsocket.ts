@@ -16,7 +16,7 @@ import {
   isModelAllowedByPolicyOrAllowedRoutes,
   type DownstreamTokenAuthSuccess,
 } from '../../services/downstreamApiKeyService.js';
-import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
+import { runWithSiteApiEndpointPool, runWithProxySiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import { buildOauthProviderHeaders } from '../../services/oauth/service.js';
 import { getOauthInfoFromAccount } from '../../services/oauth/oauthAccount.js';
@@ -24,6 +24,8 @@ import { openAiResponsesTransformer } from '../../transformers/openai/responses/
 import { buildUpstreamEndpointRequest } from './upstreamEndpoint.js';
 import { config } from '../../config.js';
 import { applyOpenAiServiceTierPolicy } from '../../proxy-core/serviceTierPolicy.js';
+import { SiteConcurrencyLimitError } from '../../services/proxyChannelCoordinator.js';
+import { isSiteConcurrencyLimitError } from './siteConcurrencyBoundary.js';
 
 const installedApps = new WeakSet<FastifyInstance>();
 const WS_TURN_STATE_HEADER = 'x-codex-turn-state';
@@ -619,7 +621,9 @@ async function handleResponsesWebsocketConnection(
   let selectedChannel: SelectedChannel | null = null;
   let messageQueue = Promise.resolve();
 
+  const connectionAbort = new AbortController();
   socket.once('close', () => {
+    connectionAbort.abort();
     const sessionKeys = runtimeSessionKeys.size > 0
       ? Array.from(runtimeSessionKeys)
       : [websocketSessionId];
@@ -798,8 +802,8 @@ async function handleResponsesWebsocketConnection(
             runtimeSessionKeys.add(websocketRuntimeSessionKey);
 
             try {
-              const runtimeResult = await runWithSiteApiEndpointPool(
-                codexWebsocketChannel.site as Parameters<typeof runWithSiteApiEndpointPool>[0],
+              const runtimeResult = await runWithProxySiteApiEndpointPool(
+                codexWebsocketChannel.site as Parameters<typeof runWithProxySiteApiEndpointPool>[0],
                 async (target) => {
                   const prepared = buildUpstreamEndpointRequest({
                     endpoint: 'responses',
@@ -834,12 +838,27 @@ async function handleResponsesWebsocketConnection(
                     });
                   }
                 },
+                { signal: connectionAbort.signal },
               );
               lastResponseOutput = collectResponsesOutput(runtimeResult.events);
               for (const payload of runtimeResult.events) {
                 socket.send(JSON.stringify(payload));
               }
             } catch (error) {
+              if (isSiteConcurrencyLimitError(error)) {
+                const retryAfterMs = (error as SiteConcurrencyLimitError).retryAfterMs;
+                const retryAfterSeconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
+                socket.send(JSON.stringify({
+                  type: 'error',
+                  status: 503,
+                  error: {
+                    type: 'site_concurrency_limit',
+                    message: 'Site concurrency limit reached',
+                  },
+                  retryAfter: retryAfterSeconds,
+                }));
+                return;
+              }
               const runtimeError = unwrapCodexWebsocketRuntimeError(error);
               if (runtimeError.status && runtimeError.events.length === 0) {
                 const forwarded = await forwardResponsesRequestViaHttp({

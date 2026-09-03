@@ -16,7 +16,12 @@ import { detectDownstreamClientContext, type DownstreamClientContext } from '../
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { fetchWithObservedFirstByte, getObservedResponseMeta } from '../../proxy-core/firstByteTimeout.js';
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
-import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
+import { runWithProxySiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
+import {
+  createProxyRequestAbortSignal,
+  isSiteConcurrencyLimitError,
+  replySiteConcurrencyLimit,
+} from './siteConcurrencyBoundary.js';
 import {
   buildForcedChannelUnavailableMessage,
   canRetryChannelSelection,
@@ -105,9 +110,10 @@ export async function searchProxyRoute(app: FastifyInstance) {
         model: upstreamModel,
       };
       const startTime = Date.now();
+      const abort = createProxyRequestAbortSignal(request, reply);
 
       try {
-        const { upstream, text, firstByteLatencyMs } = await runWithSiteApiEndpointPool(selected.site, async (target) => {
+        const { upstream, text, firstByteLatencyMs } = await runWithProxySiteApiEndpointPool(selected.site, async (target, lease) => {
           const attemptStartedAtMs = Date.now();
           const targetUrl = buildUpstreamUrl(target.baseUrl, '/v1/search');
           const response = await fetchWithObservedFirstByte(
@@ -118,7 +124,9 @@ export async function searchProxyRoute(app: FastifyInstance) {
                 Authorization: `Bearer ${selected.tokenValue}`,
               },
               body: JSON.stringify(forwardBody),
-              signal,
+              signal: signal
+                ? AbortSignal.any([abort.signal, signal])
+                : abort.signal,
             }, getProxyUrlFromExtraConfig(selected.account.extraConfig))),
             {
               firstByteTimeoutMs,
@@ -139,7 +147,7 @@ export async function searchProxyRoute(app: FastifyInstance) {
             text: responseText,
             firstByteLatencyMs: observedFirstByteLatencyMs,
           };
-        });
+        }, { signal: abort.signal });
 
         let data: any = {};
         try { data = JSON.parse(text); } catch { data = { data: [] }; }
@@ -165,6 +173,9 @@ export async function searchProxyRoute(app: FastifyInstance) {
         );
         return reply.code(upstream.status).send(data);
       } catch (error: any) {
+        if (isSiteConcurrencyLimitError(error)) {
+          return replySiteConcurrencyLimit(reply, error);
+        }
         const status = error instanceof SiteApiEndpointRequestError ? (error.status || 0) : 0;
         const errorText = error?.message || 'network error';
         const firstByteLatencyMs = error instanceof SiteApiEndpointRequestError ? error.firstByteLatencyMs : null;
@@ -209,6 +220,8 @@ export async function searchProxyRoute(app: FastifyInstance) {
             type: 'upstream_error',
           },
         });
+      } finally {
+        abort.dispose();
       }
     }
   });

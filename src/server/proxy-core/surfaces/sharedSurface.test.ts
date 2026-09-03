@@ -27,6 +27,8 @@ const bindStickyChannelMock = vi.fn();
 const clearStickyChannelMock = vi.fn();
 const acquireChannelLeaseMock = vi.fn();
 const buildStickySessionKeyMock = vi.fn();
+const acquireSiteLeaseMock = vi.fn();
+const runWithProxySiteApiEndpointPoolMock = vi.fn();
 const consoleWarnMock = vi.spyOn(console, 'warn').mockImplementation(() => {});
 const consoleErrorMock = vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -46,6 +48,7 @@ vi.mock('../../services/proxyChannelCoordinator.js', () => ({
     bindStickyChannel: (...args: unknown[]) => bindStickyChannelMock(...args),
     clearStickyChannel: (...args: unknown[]) => clearStickyChannelMock(...args),
     acquireChannelLease: (...args: unknown[]) => acquireChannelLeaseMock(...args),
+    acquireSiteLease: (...args: unknown[]) => acquireSiteLeaseMock(...args),
     buildStickySessionKey: (...args: unknown[]) => buildStickySessionKeyMock(...args),
   },
 }));
@@ -87,6 +90,11 @@ vi.mock('../../services/alertRules.js', () => ({
 vi.mock('../../services/proxyRetryPolicy.js', () => ({
   shouldRetryProxyRequest: (...args: unknown[]) => shouldRetryProxyRequestMock(...args),
   shouldAbortSameSiteEndpointFallback: () => false,
+  RETRYABLE_TIMEOUT_PATTERNS: [/(request timed out|connection timed out|read timeout|\btimed out\b)/i],
+}));
+
+vi.mock('../../services/siteApiEndpointService.js', () => ({
+  runWithProxySiteApiEndpointPool: (...args: unknown[]) => runWithProxySiteApiEndpointPoolMock(...args),
 }));
 
 vi.mock('../../services/oauth/quota.js', () => ({
@@ -139,6 +147,8 @@ describe('selectSurfaceChannelForAttempt', () => {
     clearStickyChannelMock.mockReset();
     acquireChannelLeaseMock.mockReset();
     buildStickySessionKeyMock.mockReset();
+    acquireSiteLeaseMock.mockReset();
+    runWithProxySiteApiEndpointPoolMock.mockReset();
     consoleWarnMock.mockClear();
     consoleErrorMock.mockClear();
   });
@@ -454,6 +464,161 @@ describe('selectSurfaceChannelForAttempt', () => {
         proxyUrl: 'http://proxy.example.com',
       });
     });
+  });
+
+  it('wraps successful endpoint flow responses so the site lease remains owned by the body until EOF', async () => {
+    let releaseCount = 0;
+    let transferred = false;
+    const controller = new AbortController();
+    const source = new ReadableStream<Uint8Array>({
+      start(streamController) {
+        streamController.enqueue(new TextEncoder().encode('complete'));
+        streamController.close();
+      },
+    });
+    const lease = {
+      markTransferred: vi.fn(() => {
+        transferred = true;
+      }),
+      isTransferred: () => transferred,
+      release: vi.fn(() => {
+        releaseCount += 1;
+      }),
+      touch: vi.fn(),
+    };
+    acquireSiteLeaseMock.mockResolvedValue(lease);
+    runWithProxySiteApiEndpointPoolMock.mockImplementation(async (_site, operation) => {
+      try {
+        return await operation({ baseUrl: 'https://upstream.example.com' }, lease);
+      } finally {
+        if (!lease.isTransferred()) lease.release();
+      }
+    });
+
+    const { runSurfaceEndpointFlowWithSiteConcurrency } = await import('./sharedSurface.js');
+    const result = await runSurfaceEndpointFlowWithSiteConcurrency({
+      site: { id: 44, maxConcurrency: 1, url: 'https://upstream.example.com' },
+      abortSignal: controller.signal,
+      executeEndpointFlowForBaseUrl: async (baseUrl) => ({
+        ok: true as const,
+        upstream: new Response(source) as any,
+        upstreamPath: `${baseUrl}/v1/responses`,
+      }),
+    });
+
+    if (!result.ok) throw new Error('expected successful endpoint result');
+    expect(await result.upstream.text()).toBe('complete');
+    expect(releaseCount).toBe(1);
+  });
+
+  it('wraps successful endpoint flow responses so the site lease remains owned by the body until request abort', async () => {
+    let releaseCount = 0;
+    let transferred = false;
+    const controller = new AbortController();
+    const sourceCancel = vi.fn();
+    const source = new ReadableStream<Uint8Array>({
+      start(streamController) {
+        streamController.enqueue(new TextEncoder().encode('held'));
+      },
+      cancel: sourceCancel,
+    });
+    const lease = {
+      markTransferred: vi.fn(() => {
+        transferred = true;
+      }),
+      isTransferred: () => transferred,
+      release: vi.fn(() => {
+        releaseCount += 1;
+      }),
+      touch: vi.fn(),
+    };
+    acquireSiteLeaseMock.mockResolvedValue(lease);
+    runWithProxySiteApiEndpointPoolMock.mockImplementation(async (_site, operation) => {
+      try {
+        return await operation({ baseUrl: 'https://upstream.example.com' }, lease);
+      } finally {
+        if (!lease.isTransferred()) lease.release();
+      }
+    });
+
+    const { runSurfaceEndpointFlowWithSiteConcurrency } = await import('./sharedSurface.js');
+    const result = await runSurfaceEndpointFlowWithSiteConcurrency({
+      site: { id: 44, maxConcurrency: 1, url: 'https://upstream.example.com' },
+      abortSignal: controller.signal,
+      executeEndpointFlowForBaseUrl: async (baseUrl) => ({
+        ok: true as const,
+        upstream: new Response(source) as any,
+        upstreamPath: `${baseUrl}/v1/responses`,
+      }),
+    });
+
+    if (!result.ok) throw new Error('expected successful endpoint result');
+    const reader = result.upstream.body?.getReader();
+    await reader?.read();
+    controller.abort();
+    await vi.waitFor(() => expect(releaseCount).toBe(1));
+    expect(sourceCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('wraps successful endpoint flow responses so the site lease remains owned by the body until cancel', async () => {
+    let releaseCount = 0;
+    let transferred = false;
+    const controller = new AbortController();
+    const source = new ReadableStream<Uint8Array>({
+      start(streamController) {
+        streamController.enqueue(new TextEncoder().encode('held'));
+      },
+    });
+    const lease = {
+      markTransferred: vi.fn(() => {
+        transferred = true;
+      }),
+      isTransferred: () => transferred,
+      release: vi.fn(() => {
+        releaseCount += 1;
+      }),
+      touch: vi.fn(),
+    };
+    acquireSiteLeaseMock.mockResolvedValue(lease);
+    runWithProxySiteApiEndpointPoolMock.mockImplementation(async (site, operation, options) => {
+      expect(site).toEqual({ id: 44, maxConcurrency: 1, url: 'https://upstream.example.com' });
+      const acquiredLease = await acquireSiteLeaseMock({
+        siteId: site.id,
+        maxConcurrency: site.maxConcurrency,
+        signal: options?.signal,
+      });
+      try {
+        return await operation({ baseUrl: site.url }, acquiredLease);
+      } finally {
+        if (!acquiredLease.isTransferred()) acquiredLease.release();
+      }
+    });
+
+    const { runSurfaceEndpointFlowWithSiteConcurrency } = await import('./sharedSurface.js');
+    const result = await runSurfaceEndpointFlowWithSiteConcurrency({
+      site: { id: 44, maxConcurrency: 1, url: 'https://upstream.example.com' },
+      abortSignal: controller.signal,
+      executeEndpointFlowForBaseUrl: async (baseUrl) => ({
+        ok: true as const,
+        upstream: new Response(source),
+        upstreamPath: `${baseUrl}/v1/responses`,
+      }),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(acquireSiteLeaseMock).toHaveBeenCalledWith({
+      siteId: 44,
+      maxConcurrency: 1,
+      signal: controller.signal,
+    });
+    expect(lease.markTransferred).toHaveBeenCalledTimes(1);
+    expect(releaseCount).toBe(0);
+
+    if (!result.ok) throw new Error('expected successful endpoint result');
+    const reader = result.upstream.body?.getReader();
+    await reader?.read();
+    await reader?.cancel('downstream closed');
+    expect(releaseCount).toBe(1);
   });
 
   it('retries retryable upstream HTTP failures through the shared failure toolkit', async () => {

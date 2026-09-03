@@ -81,6 +81,7 @@ import {
   createSurfaceDispatchRequest,
   getSurfaceStickyPreferredChannelId,
   recordSurfaceSuccess,
+  runSurfaceEndpointFlowWithSiteConcurrency,
   selectSurfaceChannelForAttempt,
   trySurfaceOauthRefreshRecovery,
 } from './sharedSurface.js';
@@ -96,7 +97,12 @@ import {
   safeUpdateSurfaceProxyDebugSelection,
   startSurfaceProxyDebugTrace,
 } from '../../services/proxyDebugTraceRuntime.js';
-import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
+import { SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
+import {
+  createProxyRequestAbortSignal,
+  isSiteConcurrencyLimitError,
+  replySiteConcurrencyLimit,
+} from '../../routes/proxy/siteConcurrencyBoundary.js';
 import {
   buildForcedChannelUnavailableMessage,
   canRetryChannelSelection,
@@ -845,19 +851,24 @@ export async function handleOpenAiResponsesSurfaceRequest(
         });
       }
       const channelLease = leaseResult.lease;
+      const abort = createProxyRequestAbortSignal(request, reply);
 
       try {
-        const endpointResult = await runWithSiteApiEndpointPool(selected.site, async (target) => {
-          const result = await executeEndpointResultForSiteApiBaseUrl(target.baseUrl);
-          if (!result.ok) {
-            const upstreamFailure = new SiteApiEndpointRequestError(result.errText || 'unknown error', {
-              status: result.status || 502,
-              rawErrText: result.rawErrText || result.errText || 'unknown error',
-            }) as SiteApiEndpointRequestError & { siteApiEndpointUpstreamFailure?: boolean };
-            upstreamFailure.siteApiEndpointUpstreamFailure = true;
-            throw upstreamFailure;
-          }
-          return result;
+        const endpointResult = await runSurfaceEndpointFlowWithSiteConcurrency({
+          site: selected.site,
+          abortSignal: abort.signal,
+          executeEndpointFlowForBaseUrl: async (siteApiBaseUrl) => {
+            const result = await executeEndpointResultForSiteApiBaseUrl(siteApiBaseUrl);
+            if (!result.ok) {
+              const upstreamFailure = new SiteApiEndpointRequestError(result.errText || 'unknown error', {
+                status: result.status || 502,
+                rawErrText: result.rawErrText || result.errText || 'unknown error',
+              }) as SiteApiEndpointRequestError & { siteApiEndpointUpstreamFailure?: boolean };
+              upstreamFailure.siteApiEndpointUpstreamFailure = true;
+              throw upstreamFailure;
+            }
+            return result;
+          },
         });
 
         const upstream = endpointResult.upstream;
@@ -1357,6 +1368,16 @@ export async function handleOpenAiResponsesSurfaceRequest(
 	        });
 	        return reply.send(downstreamData);
 	      } catch (err: any) {
+        if (isSiteConcurrencyLimitError(err)) {
+          const response = replySiteConcurrencyLimit(reply, err);
+          await finalizeDebugFailure(503, {
+            error: {
+              type: 'site_concurrency_limit',
+              message: 'Site concurrency limit reached',
+            },
+          }, null);
+          return response;
+        }
 	        clearSurfaceStickyChannel({
 	          stickySessionKey,
 	          selected,
@@ -1422,6 +1443,7 @@ export async function handleOpenAiResponsesSurfaceRequest(
 		        return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
 	      } finally {
 	        channelLease.release();
+          abort.dispose();
 	      }
 	    }
 }

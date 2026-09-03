@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
+import { normalizeSiteUrl } from './siteProxy.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
 
 export type SaveProxyVideoTaskInput = {
@@ -99,6 +100,27 @@ export async function resolveProxyVideoTaskSite(accountId: number | null): Promi
     .where(eq(schema.accounts.id, accountId))
     .get();
   return row?.sites ?? null;
+}
+
+export async function resolveProxyVideoTaskSiteByUrl(siteUrl: string): Promise<typeof schema.sites.$inferSelect | null> {
+  const normalizedSiteUrl = normalizeSiteUrl(siteUrl);
+  if (!normalizedSiteUrl) return null;
+
+  const endpointRows = await db.select({
+    endpointUrl: schema.siteApiEndpoints.url,
+    site: schema.sites,
+  }).from(schema.siteApiEndpoints)
+    .innerJoin(schema.sites, eq(schema.siteApiEndpoints.siteId, schema.sites.id))
+    .all();
+  const endpointMatches = endpointRows
+    .filter((row) => normalizeSiteUrl(row.endpointUrl) === normalizedSiteUrl)
+    .map((row) => row.site);
+  if (endpointMatches.length === 1) return endpointMatches[0] ?? null;
+  if (endpointMatches.length > 1) return null;
+
+  const siteMatches = (await db.select().from(schema.sites).all())
+    .filter((site) => normalizeSiteUrl(site.url) === normalizedSiteUrl);
+  return siteMatches.length === 1 ? siteMatches[0] ?? null : null;
 }
 
 export async function deleteProxyVideoTaskByPublicId(publicId: string): Promise<void> {

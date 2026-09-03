@@ -45,8 +45,72 @@ export type AcquireProxyChannelLeaseResult =
   | { status: 'acquired'; lease: ProxyChannelLease }
   | { status: 'timeout'; waitMs: number };
 
+type SiteWaiter = {
+  cancelled: boolean;
+  deadlineMs: number;
+  onAbort: (() => void) | null;
+  reject: (error: SiteConcurrencyLimitError) => void;
+  resolve: (lease: ProxySiteLease) => void;
+  signal?: AbortSignal;
+  timer: ReturnType<typeof setTimeout> | null;
+  waitMs: number;
+};
+
+type SiteLeaseState = {
+  expiryTimer: ReturnType<typeof setTimeout> | null;
+  release: () => void;
+};
+
+type SiteRuntimeState = {
+  activeLeaseIds: Set<number>;
+  leases: Map<number, SiteLeaseState>;
+  limit: number;
+  queue: SiteWaiter[];
+};
+
+export type ProxySiteConcurrencySnapshot = {
+  siteId: number;
+  limit: number;
+  activeLeaseCount: number;
+  waitingCount: number;
+};
+
+export type ProxySiteLease = {
+  readonly siteId: number;
+  isActive(): boolean;
+  isTransferred(): boolean;
+  markTransferred(): void;
+  release(): void;
+  touch(): void;
+};
+
+export type SiteConcurrencyLimitReason = 'queue_full' | 'wait_timeout' | 'aborted';
+
+export class SiteConcurrencyLimitError extends Error {
+  readonly code = 'site_concurrency_limit' as const;
+  readonly reason: SiteConcurrencyLimitReason;
+  readonly retryAfterMs: number;
+  readonly siteId: number;
+  readonly statusCode = 503 as const;
+
+  constructor(input: {
+    siteId: number;
+    reason: SiteConcurrencyLimitReason;
+    retryAfterMs: number;
+  }) {
+    super('Site concurrency limit reached');
+    this.name = 'SiteConcurrencyLimitError';
+    this.reason = input.reason;
+    this.retryAfterMs = input.retryAfterMs;
+    this.siteId = input.siteId;
+  }
+}
+
+const siteRuntimeStates = new Map<number, SiteRuntimeState>();
+const siteKnownLimits = new Map<number, { limit: number; revision: number }>();
 const stickySessionBindings = new Map<string, StickyEntry>();
 const channelRuntimeStates = new Map<number, ChannelRuntimeState>();
+const NODE_MAX_TIMEOUT_MS = 2_147_483_647;
 let nextLeaseId = 1;
 type SessionScopedChannelInput =
   | string
@@ -102,6 +166,43 @@ function getChannelConcurrencyLimit(input?: SessionScopedChannelInput): number {
   return Math.max(0, Math.trunc(config.proxySessionChannelConcurrencyLimit || 0));
 }
 
+function getSiteQueueLimit(): number {
+  return Math.max(0, Math.trunc(config.proxySiteConcurrencyQueueLimit || 0));
+}
+
+function getSiteQueueWaitMs(): number {
+  return Math.max(0, Math.trunc(config.proxySiteConcurrencyQueueWaitMs || 0));
+}
+
+function getSiteLeaseTtlMs(): number {
+  return Math.min(NODE_MAX_TIMEOUT_MS, Math.max(5_000, Math.trunc(config.proxySiteConcurrencyLeaseTtlMs || 0)));
+}
+
+function getSiteLeaseKeepaliveMs(): number {
+  return Math.max(1_000, Math.trunc(config.proxySiteConcurrencyLeaseKeepaliveMs || 0));
+}
+
+function normalizeSiteConcurrencyLimit(maxConcurrency: number | null | undefined): number {
+  const parsed = Number(maxConcurrency);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.trunc(parsed));
+}
+
+function logSiteConcurrency(event: string, siteId: number, details: Record<string, number> = {}): void {
+  console.warn('[site-concurrency]', { event, siteId, ...details });
+}
+
+function createSiteConcurrencyError(
+  siteId: number,
+  reason: SiteConcurrencyLimitReason,
+): SiteConcurrencyLimitError {
+  return new SiteConcurrencyLimitError({
+    siteId,
+    reason,
+    retryAfterMs: getSiteQueueWaitMs(),
+  });
+}
+
 function getOrCreateChannelRuntimeState(channelId: number): ChannelRuntimeState {
   let state = channelRuntimeStates.get(channelId);
   if (!state) {
@@ -132,6 +233,18 @@ function createNoopLease(channelId: number): ProxyChannelLease {
   return {
     channelId,
     isActive: () => false,
+    release: () => {},
+    touch: () => {},
+  };
+}
+
+function createNoopSiteLease(siteId: number): ProxySiteLease {
+  let transferred = false;
+  return {
+    siteId,
+    isActive: () => false,
+    isTransferred: () => transferred,
+    markTransferred: () => { transferred = true; },
     release: () => {},
     touch: () => {},
   };
@@ -247,6 +360,289 @@ class ProxyChannelCoordinator {
       snapshots.set(snapshot.channelId, snapshot);
     }
     return snapshots;
+  }
+
+  getSiteConcurrencySnapshot(siteId: number): ProxySiteConcurrencySnapshot {
+    const normalizedSiteId = Math.trunc(siteId || 0);
+    const state = normalizedSiteId > 0 ? siteRuntimeStates.get(normalizedSiteId) : undefined;
+    this.pruneCancelledSiteWaiters(state);
+    return {
+      siteId: normalizedSiteId,
+      limit: state?.limit ?? 0,
+      activeLeaseCount: state?.activeLeaseIds.size ?? 0,
+      waitingCount: state?.queue.length ?? 0,
+    };
+  }
+
+  updateSiteConcurrencyLimit(siteId: number, maxConcurrency: number | null | undefined): void {
+    const normalizedSiteId = Math.trunc(siteId || 0);
+    if (normalizedSiteId <= 0) return;
+    const state = this.getOrCreateSiteRuntimeState(normalizedSiteId, maxConcurrency);
+    const limit = normalizeSiteConcurrencyLimit(maxConcurrency);
+    const known = siteKnownLimits.get(normalizedSiteId);
+    siteKnownLimits.set(normalizedSiteId, { limit, revision: (known?.revision ?? 0) + 1 });
+    if (state.limit !== limit) {
+      state.limit = limit;
+      logSiteConcurrency('limit_updated', normalizedSiteId, { limit });
+    }
+    this.drainSiteQueue(normalizedSiteId);
+    this.maybeDeleteSiteRuntimeState(normalizedSiteId);
+  }
+
+  getSiteConcurrencyRevision(siteId: number): number {
+    return siteKnownLimits.get(Math.trunc(siteId || 0))?.revision ?? 0;
+  }
+
+  async acquireSiteLeaseWithAuthoritativeLimit(input: {
+    siteId: number;
+    maxConcurrency: number | null | undefined;
+    expectedRevision: number;
+    signal?: AbortSignal;
+  }): Promise<ProxySiteLease> {
+    const siteId = Math.trunc(input.siteId || 0);
+    const known = siteKnownLimits.get(siteId);
+    const authoritativeLimit = normalizeSiteConcurrencyLimit(input.maxConcurrency);
+    const newerUpdateExists = known && known.revision !== input.expectedRevision;
+    const maxConcurrency = newerUpdateExists ? known.limit : authoritativeLimit;
+    if (!newerUpdateExists) {
+      siteKnownLimits.set(siteId, {
+        limit: authoritativeLimit,
+        revision: input.expectedRevision,
+      });
+    }
+    return this.acquireSiteLease({ siteId, maxConcurrency, signal: input.signal });
+  }
+
+  getKnownSiteConcurrencyLimit(siteId: number): number | null {
+    return siteKnownLimits.get(Math.trunc(siteId || 0))?.limit ?? null;
+  }
+
+  async acquireSiteLeaseWithCurrentLimit(input: {
+    siteId: number;
+    signal?: AbortSignal;
+  }): Promise<ProxySiteLease> {
+    const siteId = Math.trunc(input.siteId || 0);
+    const known = siteKnownLimits.get(siteId);
+    if (siteId <= 0 || !known) {
+      throw createSiteConcurrencyError(siteId, 'aborted');
+    }
+    return this.acquireSiteLease({ siteId, maxConcurrency: known.limit, signal: input.signal });
+  }
+
+  async acquireSiteLease(input: {
+    siteId: number;
+    maxConcurrency: number | null | undefined;
+    signal?: AbortSignal;
+  }): Promise<ProxySiteLease> {
+    const siteId = Math.trunc(input.siteId || 0);
+    if (siteId <= 0) return createNoopSiteLease(siteId);
+
+    const state = this.getOrCreateSiteRuntimeState(siteId, input.maxConcurrency);
+    state.limit = normalizeSiteConcurrencyLimit(input.maxConcurrency);
+    this.pruneCancelledSiteWaiters(state);
+    this.drainSiteQueue(siteId);
+    if (state.limit <= 0) {
+      this.maybeDeleteSiteRuntimeState(siteId);
+      return createNoopSiteLease(siteId);
+    }
+    if (input.signal?.aborted) {
+      throw createSiteConcurrencyError(siteId, 'aborted');
+    }
+    if (state.activeLeaseIds.size < state.limit) {
+      return this.createTrackedSiteLease(siteId, state);
+    }
+
+    const queueLimit = getSiteQueueLimit();
+    if (queueLimit <= 0 || state.queue.length >= queueLimit) {
+      logSiteConcurrency('queue_full', siteId, { limit: state.limit, waitingCount: state.queue.length });
+      throw createSiteConcurrencyError(siteId, 'queue_full');
+    }
+
+    const waitMs = getSiteQueueWaitMs();
+    if (waitMs <= 0) {
+      logSiteConcurrency('queue_full', siteId, { limit: state.limit, waitingCount: state.queue.length });
+      throw createSiteConcurrencyError(siteId, 'queue_full');
+    }
+
+    return await new Promise<ProxySiteLease>((resolve, reject) => {
+      const waiter: SiteWaiter = {
+        cancelled: false,
+        deadlineMs: Date.now() + waitMs,
+        onAbort: null,
+        reject,
+        resolve,
+        signal: input.signal,
+        timer: null,
+        waitMs,
+      };
+      const cancel = (reason: SiteConcurrencyLimitReason) => {
+        this.cancelSiteWaiter(siteId, state, waiter, reason);
+      };
+      waiter.timer = setTimeout(() => cancel('wait_timeout'), waitMs);
+      shouldUnrefTimer(waiter.timer);
+      if (input.signal) {
+        waiter.onAbort = () => cancel('aborted');
+        input.signal.addEventListener('abort', waiter.onAbort, { once: true });
+      }
+      state.queue.push(waiter);
+      this.drainSiteQueue(siteId);
+    });
+  }
+
+  private getOrCreateSiteRuntimeState(
+    siteId: number,
+    maxConcurrency: number | null | undefined,
+  ): SiteRuntimeState {
+    let state = siteRuntimeStates.get(siteId);
+    if (!state) {
+      state = {
+        activeLeaseIds: new Set<number>(),
+        leases: new Map<number, SiteLeaseState>(),
+        limit: normalizeSiteConcurrencyLimit(maxConcurrency),
+        queue: [],
+      };
+      siteRuntimeStates.set(siteId, state);
+    }
+    return state;
+  }
+
+  private pruneCancelledSiteWaiters(state?: SiteRuntimeState): void {
+    if (!state || state.queue.length <= 0) return;
+    state.queue = state.queue.filter((waiter) => !waiter.cancelled);
+  }
+
+  private cancelSiteWaiter(
+    siteId: number,
+    state: SiteRuntimeState,
+    waiter: SiteWaiter,
+    reason: SiteConcurrencyLimitReason,
+  ): void {
+    if (waiter.cancelled) return;
+    waiter.cancelled = true;
+    if (waiter.timer) clearTimeout(waiter.timer);
+    waiter.timer = null;
+    if (waiter.onAbort && waiter.signal) waiter.signal.removeEventListener('abort', waiter.onAbort);
+    waiter.onAbort = null;
+    this.pruneCancelledSiteWaiters(state);
+    this.maybeDeleteSiteRuntimeState(siteId);
+    if (reason === 'wait_timeout') {
+      logSiteConcurrency('wait_timeout', siteId, { waitMs: waiter.waitMs });
+    }
+    waiter.reject(createSiteConcurrencyError(siteId, reason));
+  }
+
+  private maybeDeleteSiteRuntimeState(siteId: number): void {
+    const state = siteRuntimeStates.get(siteId);
+    if (!state) return;
+    this.pruneCancelledSiteWaiters(state);
+    if (state.activeLeaseIds.size <= 0 && state.queue.length <= 0) {
+      siteRuntimeStates.delete(siteId);
+    }
+  }
+
+  private createTrackedSiteLease(siteId: number, state: SiteRuntimeState): ProxySiteLease {
+    const leaseId = nextLeaseId++;
+    state.activeLeaseIds.add(leaseId);
+    let released = false;
+    let transferred = false;
+    let expiryTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastActivityAtMs = -Infinity;
+    let lastRefreshAtMs = -Infinity;
+
+    const release = () => {
+      if (released) return;
+      released = true;
+      if (expiryTimer) clearTimeout(expiryTimer);
+      expiryTimer = null;
+      state.activeLeaseIds.delete(leaseId);
+      state.leases.delete(leaseId);
+      this.drainSiteQueue(siteId);
+      this.maybeDeleteSiteRuntimeState(siteId);
+    };
+
+    const scheduleExpiry = (delayMs: number) => {
+      if (expiryTimer) clearTimeout(expiryTimer);
+      expiryTimer = setTimeout(() => {
+        if (released) return;
+        const idleMs = Date.now() - lastActivityAtMs;
+        const ttlMs = getSiteLeaseTtlMs();
+        if (idleMs < ttlMs) {
+          scheduleExpiry(ttlMs - idleMs);
+          return;
+        }
+        logSiteConcurrency('lease_ttl_expired', siteId, { leaseId });
+        release();
+      }, Math.max(1, delayMs));
+      shouldUnrefTimer(expiryTimer);
+      const leaseState = state.leases.get(leaseId);
+      if (leaseState) leaseState.expiryTimer = expiryTimer;
+    };
+
+    const touch = () => {
+      if (released) return;
+      const nowMs = Date.now();
+      lastActivityAtMs = nowMs;
+      if (nowMs - lastRefreshAtMs < getSiteLeaseKeepaliveMs()) return;
+      lastRefreshAtMs = nowMs;
+      scheduleExpiry(getSiteLeaseTtlMs());
+    };
+
+    state.leases.set(leaseId, { expiryTimer, release });
+    touch();
+    return {
+      siteId,
+      isActive: () => !released,
+      isTransferred: () => transferred,
+      markTransferred: () => { transferred = true; },
+      release,
+      touch,
+    };
+  }
+
+  private drainSiteQueue(siteId: number): void {
+    const state = siteRuntimeStates.get(siteId);
+    if (!state) return;
+    this.pruneCancelledSiteWaiters(state);
+    while (state.queue.length > 0 && (state.limit <= 0 || state.activeLeaseIds.size < state.limit)) {
+      const waiter = state.queue.shift();
+      if (!waiter || waiter.cancelled) continue;
+      if (waiter.deadlineMs <= Date.now()) {
+        this.cancelSiteWaiter(siteId, state, waiter, 'wait_timeout');
+        continue;
+      }
+      waiter.cancelled = true;
+      if (waiter.timer) clearTimeout(waiter.timer);
+      waiter.timer = null;
+      if (waiter.onAbort && waiter.signal) waiter.signal.removeEventListener('abort', waiter.onAbort);
+      waiter.onAbort = null;
+      waiter.resolve(state.limit <= 0
+        ? createNoopSiteLease(siteId)
+        : this.createTrackedSiteLease(siteId, state));
+    }
+  }
+
+  private resetSiteRuntimeStates(): void {
+    for (const [siteId, state] of siteRuntimeStates.entries()) {
+      const queuedWaiters = [...state.queue];
+      state.queue = [];
+      for (const lease of state.leases.values()) {
+        lease.release();
+      }
+      for (const waiter of queuedWaiters) {
+        if (waiter.cancelled) continue;
+        waiter.cancelled = true;
+        if (waiter.timer) clearTimeout(waiter.timer);
+        waiter.timer = null;
+        if (waiter.onAbort && waiter.signal) waiter.signal.removeEventListener('abort', waiter.onAbort);
+        waiter.onAbort = null;
+        waiter.reject(createSiteConcurrencyError(siteId, 'aborted'));
+      }
+    }
+    siteRuntimeStates.clear();
+  }
+
+  reset(): void {
+    this.resetSiteRuntimeStates();
   }
 
   async acquireChannelLease(input: {
@@ -375,6 +771,8 @@ class ProxyChannelCoordinator {
 }
 
 export function resetProxyChannelCoordinatorState(): void {
+  proxyChannelCoordinator.reset();
+  siteKnownLimits.clear();
   stickySessionBindings.clear();
   channelRuntimeStates.clear();
   nextLeaseId = 1;

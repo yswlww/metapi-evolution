@@ -74,6 +74,8 @@ describe('/v1/embeddings usage source logging', () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let proxyChannelCoordinator: (typeof import('../../services/proxyChannelCoordinator.js'))['proxyChannelCoordinator'];
+  let resetProxyChannelCoordinatorState: (typeof import('../../services/proxyChannelCoordinator.js'))['resetProxyChannelCoordinatorState'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -82,15 +84,19 @@ describe('/v1/embeddings usage source logging', () => {
 
     await import('../../db/migrate.js');
     const dbModule = await import('../../db/index.js');
+    const coordinatorModule = await import('../../services/proxyChannelCoordinator.js');
     const routesModule = await import('./embeddings.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    proxyChannelCoordinator = coordinatorModule.proxyChannelCoordinator;
+    resetProxyChannelCoordinatorState = coordinatorModule.resetProxyChannelCoordinatorState;
 
     app = Fastify();
     await app.register(routesModule.embeddingsProxyRoute);
   });
 
   beforeEach(async () => {
+    resetProxyChannelCoordinatorState();
     fetchMock.mockReset();
     fetchWithObservedFirstByteMock.mockReset();
     getObservedResponseMetaMock.mockReset();
@@ -203,5 +209,86 @@ describe('/v1/embeddings usage source logging', () => {
       status: 'success',
       errorMessage: expect.stringContaining('[usage:self-log]'),
     }));
+  });
+
+  it('keeps the JSON route lease active through body consumption and releases once', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'json-ownership-site',
+      url: 'https://console.example.com',
+      platform: 'new-api',
+      status: 'active',
+      maxConcurrency: 1,
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'json-ownership-user',
+      accessToken: '',
+      apiToken: 'sk-json-ownership',
+      status: 'active',
+      checkinEnabled: false,
+      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+    }).returning().get();
+    selectChannelMock.mockResolvedValue({
+      channel: { id: 11, routeId: 22 },
+      site,
+      account,
+      tokenName: 'default',
+      tokenValue: 'sk-json-ownership',
+      actualModel: 'text-embedding-3-large',
+    });
+
+    let upstreamClosed = false;
+    let closeUpstream!: () => void;
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(JSON.stringify({
+          object: 'list',
+          data: [{ object: 'embedding', embedding: [0.1], index: 0 }],
+          model: 'text-embedding-3-large',
+          usage: { prompt_tokens: 1, total_tokens: 1 },
+        })));
+        closeUpstream = () => {
+          if (upstreamClosed) return;
+          upstreamClosed = true;
+          controller.close();
+        };
+      },
+    });
+    fetchMock.mockResolvedValue(new Response(upstreamBody, {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const originalAcquire = proxyChannelCoordinator.acquireSiteLease.bind(proxyChannelCoordinator);
+    let releaseMock = vi.fn();
+    const acquireSpy = vi.spyOn(proxyChannelCoordinator, 'acquireSiteLease').mockImplementation(async (input) => {
+      const lease = await originalAcquire(input);
+      const release = lease.release;
+      releaseMock = vi.fn(() => release());
+      return { ...lease, release: releaseMock };
+    });
+    try {
+      const pendingResponse = app.inject({
+        method: 'POST',
+        url: '/v1/embeddings',
+        payload: { model: 'text-embedding-3-large', input: 'held JSON' },
+      });
+      await vi.waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(proxyChannelCoordinator.getSiteConcurrencySnapshot(site.id).activeLeaseCount).toBe(1);
+      });
+      expect(releaseMock).not.toHaveBeenCalled();
+
+      closeUpstream();
+      const response = await pendingResponse;
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ object: 'list' });
+      expect(releaseMock).toHaveBeenCalledTimes(1);
+      expect(proxyChannelCoordinator.getSiteConcurrencySnapshot(site.id).activeLeaseCount).toBe(0);
+    } finally {
+      acquireSpy.mockRestore();
+      closeUpstream?.();
+    }
   });
 });

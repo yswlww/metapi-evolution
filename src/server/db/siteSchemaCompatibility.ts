@@ -29,6 +29,14 @@ export const SITE_COLUMN_COMPATIBILITY_SPECS: SiteColumnCompatibilitySpec[] = [
     },
   },
   {
+    column: 'max_concurrency',
+    addSql: {
+      sqlite: 'ALTER TABLE sites ADD COLUMN max_concurrency integer;',
+      mysql: 'ALTER TABLE `sites` ADD COLUMN `max_concurrency` INT NULL',
+      postgres: 'ALTER TABLE "sites" ADD COLUMN "max_concurrency" INTEGER',
+    },
+  },
+  {
     column: 'use_system_proxy',
     addSql: {
       sqlite: 'ALTER TABLE sites ADD COLUMN use_system_proxy integer DEFAULT 0;',

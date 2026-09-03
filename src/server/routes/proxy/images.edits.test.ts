@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { proxyChannelCoordinator, resetProxyChannelCoordinatorState } from '../../services/proxyChannelCoordinator.js';
 
 const fetchMock = vi.fn();
 const selectChannelMock = vi.fn();
@@ -116,6 +117,7 @@ describe('/v1/images/edits route', () => {
   });
 
   beforeEach(() => {
+    resetProxyChannelCoordinatorState();
     fetchMock.mockReset();
     selectChannelMock.mockReset();
     selectNextChannelMock.mockReset();
@@ -342,5 +344,45 @@ describe('/v1/images/edits route', () => {
         type: 'invalid_request_error',
       },
     });
+  });
+  it('rejects image edit admission before fetch or channel failure bookkeeping', async () => {
+    const limitedSite = {
+      id: 44,
+      name: 'limited-image-site',
+      url: 'https://upstream.example.com',
+      platform: 'openai',
+      maxConcurrency: 1,
+    };
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: limitedSite,
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-demo',
+      actualModel: 'upstream-gpt-image',
+    });
+    const blockingLease = await proxyChannelCoordinator.acquireSiteLease({
+      siteId: limitedSite.id,
+      maxConcurrency: 1,
+    });
+    try {
+      const boundary = 'metapi-limited-image-boundary';
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/images/edits',
+        headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+        payload: buildMultipartBody(boundary),
+      });
+
+      expect(response.statusCode).toBe(503);
+      expect(response.headers['retry-after']).toBe('2');
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(recordFailureMock).not.toHaveBeenCalled();
+      expect(reportProxyAllFailedMock).not.toHaveBeenCalled();
+      expect(reportTokenExpiredMock).not.toHaveBeenCalled();
+      expect(selectNextChannelMock).not.toHaveBeenCalled();
+    } finally {
+      blockingLease.release();
+    }
   });
 });

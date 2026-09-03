@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { proxyChannelCoordinator, resetProxyChannelCoordinatorState } from '../../services/proxyChannelCoordinator.js';
 
 const fetchMock = vi.fn();
 const selectChannelMock = vi.fn();
@@ -16,7 +17,9 @@ const getProxyVideoTaskByPublicIdMock = vi.fn();
 const deleteProxyVideoTaskByPublicIdMock = vi.fn();
 const refreshProxyVideoTaskSnapshotMock = vi.fn();
 const resolveProxyVideoTaskSiteMock = vi.fn();
+const resolveProxyVideoTaskSiteByUrlMock = vi.fn();
 let siteApiEndpointRows: Array<Record<string, unknown>> = [];
+let persistedMaxConcurrency: number | null = null;
 
 vi.mock('undici', async () => {
   const actual = await vi.importActual<typeof import('undici')>('undici');
@@ -64,6 +67,7 @@ vi.mock('../../services/proxyVideoTaskStore.js', () => ({
   deleteProxyVideoTaskByPublicId: (...args: unknown[]) => deleteProxyVideoTaskByPublicIdMock(...args),
   refreshProxyVideoTaskSnapshot: (...args: unknown[]) => refreshProxyVideoTaskSnapshotMock(...args),
   resolveProxyVideoTaskSite: (...args: unknown[]) => resolveProxyVideoTaskSiteMock(...args),
+  resolveProxyVideoTaskSiteByUrl: (...args: unknown[]) => resolveProxyVideoTaskSiteByUrlMock(...args),
 }));
 
 vi.mock('../../db/index.js', () => ({
@@ -71,6 +75,7 @@ vi.mock('../../db/index.js', () => ({
     select: () => ({
       from: () => ({
         where: () => ({
+          get: async () => ({ maxConcurrency: persistedMaxConcurrency }),
           orderBy: () => ({
             all: async () => siteApiEndpointRows,
           }),
@@ -87,6 +92,10 @@ vi.mock('../../db/index.js', () => ({
   },
   hasProxyLogStreamTimingColumns: async () => false,
   schema: {
+    sites: {
+      id: {},
+      maxConcurrency: {},
+    },
     siteApiEndpoints: {
       id: {},
       siteId: {},
@@ -119,6 +128,7 @@ describe('/v1/videos routes', () => {
   });
 
   beforeEach(() => {
+    resetProxyChannelCoordinatorState();
     fetchMock.mockReset();
     selectChannelMock.mockReset();
     selectNextChannelMock.mockReset();
@@ -134,7 +144,9 @@ describe('/v1/videos routes', () => {
     deleteProxyVideoTaskByPublicIdMock.mockReset();
     refreshProxyVideoTaskSnapshotMock.mockReset();
     resolveProxyVideoTaskSiteMock.mockReset();
+    resolveProxyVideoTaskSiteByUrlMock.mockReset();
     siteApiEndpointRows = [];
+    persistedMaxConcurrency = null;
     shouldRetryProxyRequestMock.mockReturnValue(false);
 
     selectChannelMock.mockReturnValue({
@@ -195,6 +207,46 @@ describe('/v1/videos routes', () => {
       object: 'video',
       status: 'queued',
     });
+  });
+
+  it('rejects video create admission before fetch or channel failure bookkeeping', async () => {
+    const limitedSite = {
+      id: 44,
+      name: 'limited-video-site',
+      url: 'https://upstream.example.com',
+      platform: 'openai',
+      maxConcurrency: 1,
+    };
+    persistedMaxConcurrency = 1;
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: limitedSite,
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-demo',
+      actualModel: 'sora-2',
+    });
+    const blockingLease = await proxyChannelCoordinator.acquireSiteLease({
+      siteId: limitedSite.id,
+      maxConcurrency: 1,
+    });
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/videos',
+        payload: { model: 'sora-2', prompt: 'saturated' },
+      });
+
+      expect(response.statusCode).toBe(503);
+      expect(response.headers['retry-after']).toBe('2');
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(recordFailureMock).not.toHaveBeenCalled();
+      expect(reportProxyAllFailedMock).not.toHaveBeenCalled();
+      expect(reportTokenExpiredMock).not.toHaveBeenCalled();
+      expect(selectNextChannelMock).not.toHaveBeenCalled();
+    } finally {
+      blockingLease.release();
+    }
   });
 
   it('accepts multipart video create requests', async () => {
@@ -279,6 +331,8 @@ describe('/v1/videos routes', () => {
 
   it('resolves local video ids back to the upstream task on GET', async () => {
     resolveProxyVideoTaskSiteMock.mockResolvedValue(null);
+    resolveProxyVideoTaskSiteByUrlMock.mockResolvedValue({ id: 44, name: 'demo-site', url: 'https://upstream.example.com', platform: 'openai' });
+    refreshProxyVideoTaskSnapshotMock.mockResolvedValue(undefined);
     getProxyVideoTaskByPublicIdMock.mockResolvedValue({
       publicId: 'vid_local_123',
       upstreamVideoId: 'vid_upstream_123',
@@ -301,6 +355,7 @@ describe('/v1/videos routes', () => {
     });
 
     expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('vid_local_123');
     const [targetUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(targetUrl).toBe('https://upstream.example.com/v1/videos/vid_upstream_123');
     expect(refreshProxyVideoTaskSnapshotMock).toHaveBeenCalledWith('vid_local_123', expect.objectContaining({
@@ -360,8 +415,9 @@ describe('/v1/videos routes', () => {
     expect(targetUrl).toBe('https://api-videos.example.com/v1/videos/vid_upstream_456');
   });
 
-  it('uses the persisted api base url when the backing site can no longer be resolved', async () => {
+  it('rejects a mapped GET without an authoritative persisted site instead of bypassing admission', async () => {
     resolveProxyVideoTaskSiteMock.mockResolvedValue(null);
+    resolveProxyVideoTaskSiteByUrlMock.mockResolvedValue(null);
     getProxyVideoTaskByPublicIdMock.mockResolvedValue({
       publicId: 'vid_local_fallback',
       upstreamVideoId: 'vid_upstream_fallback',
@@ -369,23 +425,40 @@ describe('/v1/videos routes', () => {
       tokenValue: 'sk-demo',
       accountId: 33,
     });
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({
-      id: 'vid_upstream_fallback',
-      object: 'video',
-      status: 'running',
-    }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    }));
 
     const response = await app.inject({
       method: 'GET',
       url: '/v1/videos/vid_local_fallback',
     });
 
+    expect(response.statusCode).toBe(503);
+    expect(response.body).toBe('Video task site is no longer available');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('uses a canonical persisted site for a missing-account mapped GET', async () => {
+    resolveProxyVideoTaskSiteMock.mockResolvedValue(null);
+    resolveProxyVideoTaskSiteByUrlMock.mockResolvedValue({
+      id: 44,
+      name: 'demo-site',
+      url: 'https://panel.example.com',
+      platform: 'openai',
+    });
+    getProxyVideoTaskByPublicIdMock.mockResolvedValue({
+      publicId: 'vid_local_fallback',
+      upstreamVideoId: 'vid_upstream_fallback',
+      siteUrl: 'https://panel.example.com/',
+      tokenValue: 'sk-demo',
+      accountId: 33,
+    });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'vid_upstream_fallback', object: 'video', status: 'running',
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+
+    const response = await app.inject({ method: 'GET', url: '/v1/videos/vid_local_fallback' });
+
     expect(response.statusCode).toBe(200);
-    const [targetUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(targetUrl).toBe('https://api-fallback.example.com/v1/videos/vid_upstream_fallback');
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('https://panel.example.com/v1/videos/vid_upstream_fallback');
   });
 
   it('preserves retryable upstream failures after mapped GET retries exhaust', async () => {
@@ -428,6 +501,8 @@ describe('/v1/videos routes', () => {
   });
 
   it('deletes the upstream task and local mapping on DELETE', async () => {
+    resolveProxyVideoTaskSiteMock.mockResolvedValue(null);
+    resolveProxyVideoTaskSiteByUrlMock.mockResolvedValue({ id: 44, name: 'demo-site', url: 'https://upstream.example.com', platform: 'openai' });
     getProxyVideoTaskByPublicIdMock.mockResolvedValue({
       publicId: 'vid_local_123',
       upstreamVideoId: 'vid_upstream_123',
@@ -442,7 +517,59 @@ describe('/v1/videos routes', () => {
     });
 
     expect(response.statusCode).toBe(204);
+    expect(response.body).toBe('');
     expect(deleteProxyVideoTaskByPublicIdMock).toHaveBeenCalledWith('vid_local_123');
+  });
+
+  it('cancels a successful mapped DELETE body and releases its site lease exactly once before completion', async () => {
+    const site = {
+      id: 44,
+      name: 'demo-site',
+      url: 'https://upstream.example.com',
+      platform: 'openai',
+      maxConcurrency: 1,
+    };
+    resolveProxyVideoTaskSiteMock.mockResolvedValue(site);
+    getProxyVideoTaskByPublicIdMock.mockResolvedValue({
+      publicId: 'vid_local_body',
+      upstreamVideoId: 'vid_upstream_body',
+      siteUrl: 'https://upstream.example.com',
+      tokenValue: 'sk-demo',
+      accountId: 33,
+    });
+    const cancelMock = vi.fn();
+    fetchMock.mockResolvedValue(new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"deleted":true}'));
+      },
+      cancel: cancelMock,
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const originalAcquire = proxyChannelCoordinator.acquireSiteLease.bind(proxyChannelCoordinator);
+    let releaseMock = vi.fn();
+    const acquireSpy = vi.spyOn(proxyChannelCoordinator, 'acquireSiteLease').mockImplementation(async (input) => {
+      const lease = await originalAcquire(input);
+      const release = lease.release;
+      releaseMock = vi.fn(() => release());
+      return { ...lease, release: releaseMock };
+    });
+    try {
+      const response = await app.inject({
+        method: 'DELETE',
+        url: '/v1/videos/vid_local_body',
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(cancelMock).toHaveBeenCalledTimes(1);
+      expect(releaseMock).toHaveBeenCalledTimes(1);
+      expect(deleteProxyVideoTaskByPublicIdMock).toHaveBeenCalledWith('vid_local_body');
+      expect(proxyChannelCoordinator.getSiteConcurrencySnapshot(site.id).activeLeaseCount).toBe(0);
+    } finally {
+      acquireSpy.mockRestore();
+    }
   });
 
   it('preserves retryable upstream failures after mapped DELETE retries exhaust', async () => {

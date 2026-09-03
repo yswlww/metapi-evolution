@@ -10,6 +10,11 @@ describe('schema contract generation', () => {
       notNull: true,
       primaryKey: false,
     });
+    expect(contract.tables.sites.columns.max_concurrency).toMatchObject({
+      logicalType: 'integer',
+      notNull: false,
+      primaryKey: false,
+    });
     expect(contract.tables.account_tokens.columns.token_group).toBeDefined();
     expect(contract.tables.account_tokens.columns.value_status).toMatchObject({
       logicalType: 'text',

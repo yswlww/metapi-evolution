@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,6 +13,7 @@ describe('siteApiEndpointService', () => {
   let selectSiteApiEndpointTarget: SiteApiEndpointServiceModule['selectSiteApiEndpointTarget'];
   let recordSiteApiEndpointFailure: SiteApiEndpointServiceModule['recordSiteApiEndpointFailure'];
   let recordSiteApiEndpointSuccess: SiteApiEndpointServiceModule['recordSiteApiEndpointSuccess'];
+  let runWithProxySiteApiEndpointPool: SiteApiEndpointServiceModule['runWithProxySiteApiEndpointPool'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -28,11 +29,14 @@ describe('siteApiEndpointService', () => {
     selectSiteApiEndpointTarget = serviceModule.selectSiteApiEndpointTarget;
     recordSiteApiEndpointFailure = serviceModule.recordSiteApiEndpointFailure;
     recordSiteApiEndpointSuccess = serviceModule.recordSiteApiEndpointSuccess;
+    runWithProxySiteApiEndpointPool = serviceModule.runWithProxySiteApiEndpointPool;
   });
 
   beforeEach(async () => {
     await db.delete(schema.siteApiEndpoints).run();
     await db.delete(schema.sites).run();
+    const { resetProxyChannelCoordinatorState } = await import('./proxyChannelCoordinator.js');
+    resetProxyChannelCoordinatorState();
   });
 
   afterAll(() => {
@@ -336,5 +340,109 @@ describe('siteApiEndpointService', () => {
       lastSelectedAt: '2026-03-31T12:01:00.000Z',
       lastFailureReason: null,
     });
+  });
+
+  it('looks up the current database limit instead of trusting a stale selected site object', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'request-time-limit-site',
+      url: 'https://panel.example.com',
+      platform: 'new-api',
+      status: 'active',
+      maxConcurrency: 1,
+    }).returning().get();
+    const staleSite = { ...site, maxConcurrency: null };
+    const operation = vi.fn(async (_target: any, lease: any) => {
+      expect(lease.isActive()).toBe(true);
+      return 'ok';
+    });
+
+    await expect(runWithProxySiteApiEndpointPool(staleSite, operation)).resolves.toBe('ok');
+    expect(operation).toHaveBeenCalledTimes(1);
+
+    await db.update(schema.sites).set({ maxConcurrency: null }).where(eq(schema.sites.id, site.id)).run();
+    const unlimitedOperation = vi.fn(async (_target: any, lease: any) => {
+      expect(lease.isActive()).toBe(false);
+      return 'unlimited';
+    });
+    await expect(runWithProxySiteApiEndpointPool({ ...site, maxConcurrency: 1 }, unlimitedOperation)).resolves.toBe('unlimited');
+  });
+
+  it('holds one lease across retryable endpoint rotation and releases after the operation', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'retry-lease-site',
+      url: 'https://panel.example.com',
+      platform: 'new-api',
+      status: 'active',
+      maxConcurrency: 1,
+    }).returning().get();
+    await db.insert(schema.siteApiEndpoints).values([
+      { siteId: site.id, url: 'https://api-primary.example.com', enabled: true, sortOrder: 0 },
+      { siteId: site.id, url: 'https://api-secondary.example.com', enabled: true, sortOrder: 1 },
+    ]).run();
+    const { proxyChannelCoordinator } = await import('./proxyChannelCoordinator.js');
+    const { SiteApiEndpointRequestError } = await import('./siteApiEndpointService.js');
+    const operation = vi.fn(async (target: any, lease: any) => {
+      expect(lease.isActive()).toBe(true);
+      if (operation.mock.calls.length === 1) {
+        throw new SiteApiEndpointRequestError('Bad gateway', { status: 502 });
+      }
+      return target.baseUrl;
+    });
+
+    await expect(runWithProxySiteApiEndpointPool(site, operation)).resolves.toBe('https://api-secondary.example.com');
+    expect(operation).toHaveBeenCalledTimes(2);
+    expect(proxyChannelCoordinator.getSiteConcurrencySnapshot(site.id).activeLeaseCount).toBe(0);
+  });
+
+  it('leaves internal endpoint-pool callers outside site concurrency admission', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'internal-pool-site',
+      url: 'https://panel.example.com',
+      platform: 'new-api',
+      status: 'active',
+      maxConcurrency: 1,
+    }).returning().get();
+    const { proxyChannelCoordinator } = await import('./proxyChannelCoordinator.js');
+    const heldLease = await proxyChannelCoordinator.acquireSiteLease({ siteId: site.id, maxConcurrency: 1 });
+    const { runWithSiteApiEndpointPool } = await import('./siteApiEndpointService.js');
+
+    await expect(runWithSiteApiEndpointPool(site, async () => 'internal')).resolves.toBe('internal');
+    expect(proxyChannelCoordinator.getSiteConcurrencySnapshot(site.id).activeLeaseCount).toBe(1);
+    heldLease.release();
+  });
+
+  it('rejects at site admission before endpoint failure bookkeeping', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'admission-order-site',
+      url: 'https://panel.example.com',
+      platform: 'new-api',
+      status: 'active',
+      maxConcurrency: 1,
+    }).returning().get();
+    const endpoint = await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://api-admission.example.com',
+      enabled: true,
+      sortOrder: 0,
+    }).returning().get();
+    const { config } = await import('../config.js');
+    const { proxyChannelCoordinator, SiteConcurrencyLimitError } = await import('./proxyChannelCoordinator.js');
+    const originalQueueLimit = config.proxySiteConcurrencyQueueLimit;
+    const originalQueueWait = config.proxySiteConcurrencyQueueWaitMs;
+    config.proxySiteConcurrencyQueueLimit = 0;
+    config.proxySiteConcurrencyQueueWaitMs = 0;
+    const heldLease = await proxyChannelCoordinator.acquireSiteLease({ siteId: site.id, maxConcurrency: 1 });
+    try {
+      const operation = vi.fn(async () => 'should not run');
+      await expect(runWithProxySiteApiEndpointPool(site, operation)).rejects.toBeInstanceOf(SiteConcurrencyLimitError);
+      expect(operation).not.toHaveBeenCalled();
+      const stored = await db.select().from(schema.siteApiEndpoints).where(eq(schema.siteApiEndpoints.id, endpoint.id)).get();
+      expect(stored?.lastFailedAt).toBeNull();
+      expect(stored?.lastFailureReason).toBeNull();
+    } finally {
+      heldLease.release();
+      config.proxySiteConcurrencyQueueLimit = originalQueueLimit;
+      config.proxySiteConcurrencyQueueWaitMs = originalQueueWait;
+    }
   });
 });

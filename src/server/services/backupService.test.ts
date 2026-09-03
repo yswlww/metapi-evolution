@@ -50,6 +50,45 @@ describe('backupService', () => {
     delete process.env.DATA_DIR;
   });
 
+  it('roundtrips site max concurrency and rejects invalid native backup values before replacement', async () => {
+    const now = new Date().toISOString();
+    const site = await db.insert(schema.sites).values({
+      name: 'max-concurrency-site',
+      url: 'https://max-concurrency.example.com',
+      maxConcurrency: 7,
+      platform: 'new-api',
+      createdAt: now,
+      updatedAt: now,
+    }).returning().get();
+
+    const exported = await backupService.exportBackup('all') as any;
+    expect(exported.accounts.sites[0].maxConcurrency).toBe(7);
+
+    const imported = await backupService.importBackup(exported as Record<string, unknown>);
+    expect(imported.allImported).toBe(true);
+    const restored = await db.select().from(schema.sites).where(eq(schema.sites.id, site.id)).get();
+    expect(restored?.maxConcurrency).toBe(7);
+
+    const legacyBackup = structuredClone(exported);
+    delete legacyBackup.accounts.sites[0].maxConcurrency;
+    await backupService.importBackup(legacyBackup as Record<string, unknown>);
+    const legacyRestored = await db.select().from(schema.sites).where(eq(schema.sites.id, site.id)).get();
+    expect(legacyRestored?.maxConcurrency).toBeNull();
+
+    await db.update(schema.sites).set({ name: 'must-survive-invalid-import' })
+      .where(eq(schema.sites.id, site.id))
+      .run();
+    const invalidBackup = structuredClone(exported);
+    invalidBackup.accounts.sites[0].maxConcurrency = -1;
+    await expect(backupService.importBackup(invalidBackup as Record<string, unknown>))
+      .rejects.toThrow('Invalid maxConcurrency. Expected an integer from 0 to 10000.');
+    const retained = await db.select().from(schema.sites).where(eq(schema.sites.id, site.id)).get();
+    expect(retained).toMatchObject({
+      name: 'must-survive-invalid-import',
+      maxConcurrency: null,
+    });
+  });
+
   it('exports backup-owned config in v2.1 backups and still roundtrips core connection fields', async () => {
     const now = new Date().toISOString();
     const site = await db.insert(schema.sites).values({

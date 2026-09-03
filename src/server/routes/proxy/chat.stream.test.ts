@@ -2,6 +2,7 @@ import { zstdCompressSync } from 'node:zlib';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../../config.js';
+import { proxyChannelCoordinator, resetProxyChannelCoordinatorState } from '../../services/proxyChannelCoordinator.js';
 import { resetUpstreamEndpointRuntimeState } from '../../services/upstreamEndpointRuntimeMemory.js';
 
 const fetchMock = vi.fn();
@@ -72,6 +73,11 @@ vi.mock('../../services/proxyUsageFallbackService.js', () => ({
   resolveProxyUsageWithSelfLogFallback: (arg: any) => resolveProxyUsageWithSelfLogFallbackMock(arg),
 }));
 
+vi.mock('../../services/oauth/quota.js', () => ({
+  recordOauthQuotaHeadersSnapshot: async () => undefined,
+  recordOauthQuotaResetHint: async () => undefined,
+}));
+
 vi.mock('../../db/index.js', () => ({
   db: {
     insert: (arg: any) => dbInsertMock(arg),
@@ -121,6 +127,7 @@ describe('chat proxy stream behavior', () => {
   });
 
   beforeEach(() => {
+    resetProxyChannelCoordinatorState();
     fetchMock.mockReset();
     selectChannelMock.mockReset();
     selectNextChannelMock.mockReset();
@@ -166,6 +173,128 @@ describe('chat proxy stream behavior', () => {
   afterAll(async () => {
     if (app) {
       await app.close();
+    }
+  });
+
+  it('caps the user-facing Claude count_tokens upstream branch without failure bookkeeping or retry', async () => {
+    const site = {
+      id: 9_004,
+      name: 'claude-count-tokens-limited-site',
+      url: 'https://claude-count-tokens-limited.example.com',
+      platform: 'claude',
+      maxConcurrency: 1,
+    };
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site,
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-demo',
+      actualModel: 'claude-opus-4-6',
+    });
+    const originalQueueLimit = config.proxySiteConcurrencyQueueLimit;
+    const originalQueueWaitMs = config.proxySiteConcurrencyQueueWaitMs;
+    config.proxySiteConcurrencyQueueLimit = 0;
+    config.proxySiteConcurrencyQueueWaitMs = 0;
+    const blockingLease = await proxyChannelCoordinator.acquireSiteLease({
+      siteId: site.id,
+      maxConcurrency: 1,
+    });
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/messages/count_tokens',
+        payload: {
+          model: 'claude-opus-4-6',
+          messages: [{ role: 'user', content: 'count this' }],
+        },
+      });
+
+      expect(response.statusCode).toBe(503);
+      expect(response.headers['retry-after']).toBe('1');
+      expect(response.json()).toEqual({
+        error: {
+          type: 'site_concurrency_limit',
+          message: 'Site concurrency limit reached',
+        },
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(recordFailureMock).not.toHaveBeenCalled();
+      expect(reportProxyAllFailedMock).not.toHaveBeenCalled();
+      expect(selectNextChannelMock).not.toHaveBeenCalled();
+    } finally {
+      blockingLease.release();
+      config.proxySiteConcurrencyQueueLimit = originalQueueLimit;
+      config.proxySiteConcurrencyQueueWaitMs = originalQueueWaitMs;
+    }
+  });
+
+  it('keeps the chat site lease through stream EOF and releases it once', async () => {
+    const site = {
+      id: 9_001,
+      name: 'chat-stream-limited-site',
+      url: 'https://chat-stream-limited.example.com',
+      platform: 'openai',
+      maxConcurrency: 1,
+    };
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site,
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-demo',
+      actualModel: 'upstream-gpt',
+    });
+
+    let upstreamClosed = false;
+    let closeUpstream!: () => void;
+    fetchMock.mockResolvedValue(new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"held"}}]}\n\n'));
+        closeUpstream = () => {
+          if (upstreamClosed) return;
+          upstreamClosed = true;
+          controller.close();
+        };
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    }));
+    const originalAcquire = proxyChannelCoordinator.acquireSiteLease.bind(proxyChannelCoordinator);
+    let releaseMock = vi.fn();
+    const acquireSpy = vi.spyOn(proxyChannelCoordinator, 'acquireSiteLease').mockImplementation(async (input) => {
+      const lease = await originalAcquire(input);
+      const release = lease.release;
+      releaseMock = vi.fn(() => release());
+      return { ...lease, release: releaseMock };
+    });
+    try {
+      const pendingResponse = app.inject({
+        method: 'POST',
+        url: '/v1/chat/completions',
+        payload: {
+          model: 'gpt-4o-mini',
+          stream: true,
+          messages: [{ role: 'user', content: 'hold lease' }],
+        },
+      });
+      await vi.waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(proxyChannelCoordinator.getSiteConcurrencySnapshot(site.id).activeLeaseCount).toBe(1);
+      });
+      expect(releaseMock).not.toHaveBeenCalled();
+
+      closeUpstream();
+      const response = await pendingResponse;
+
+      expect(response.statusCode).toBe(200);
+      expect(response.body).toContain('held');
+      expect(releaseMock).toHaveBeenCalledTimes(1);
+      expect(proxyChannelCoordinator.getSiteConcurrencySnapshot(site.id).activeLeaseCount).toBe(0);
+    } finally {
+      acquireSpy.mockRestore();
+      closeUpstream?.();
     }
   });
 

@@ -1,8 +1,17 @@
 import Fastify, { type FastifyInstance } from 'fastify';
-import { describe, expect, it, beforeAll, beforeEach, afterAll } from 'vitest';
+import { describe, expect, it, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtempSync } from 'node:fs';
+import { sql } from 'drizzle-orm';
+
+const { updateSiteConcurrencyLimit } = vi.hoisted(() => ({
+  updateSiteConcurrencyLimit: vi.fn(),
+}));
+
+vi.mock('../../services/proxyChannelCoordinator.js', () => ({
+  proxyChannelCoordinator: { updateSiteConcurrencyLimit },
+}));
 
 type DbModule = typeof import('../../db/index.js');
 
@@ -34,6 +43,7 @@ describe('sites proxy settings', () => {
   });
 
   beforeEach(async () => {
+    updateSiteConcurrencyLimit.mockClear();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
   });
@@ -41,6 +51,160 @@ describe('sites proxy settings', () => {
   afterAll(async () => {
     await app.close();
     delete process.env.DATA_DIR;
+  });
+
+  it('notifies the coordinator with persisted concurrency only after successful creates and updates', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'coordinated-site',
+        url: 'https://coordinated-site.example.com',
+        platform: 'new-api',
+        maxConcurrency: 7,
+      },
+    });
+
+    expect(created.statusCode).toBe(200);
+    const siteId = (created.json() as { id: number }).id;
+    expect(updateSiteConcurrencyLimit).toHaveBeenCalledTimes(1);
+    expect(updateSiteConcurrencyLimit).toHaveBeenLastCalledWith(siteId, 7);
+
+    updateSiteConcurrencyLimit.mockClear();
+    const updated = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${siteId}`,
+      payload: { maxConcurrency: 0 },
+    });
+
+    expect(updated.statusCode).toBe(200);
+    expect(updateSiteConcurrencyLimit).toHaveBeenCalledTimes(1);
+    expect(updateSiteConcurrencyLimit).toHaveBeenLastCalledWith(siteId, null);
+  });
+
+  it('does not notify the coordinator when create or update validation fails', async () => {
+    const invalidCreate = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'invalid-coordinated-site',
+        url: 'https://invalid-coordinated-site.example.com',
+        platform: 'new-api',
+        maxConcurrency: 1.5,
+      },
+    });
+
+    expect(invalidCreate.statusCode).toBe(400);
+    expect(updateSiteConcurrencyLimit).not.toHaveBeenCalled();
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'valid-coordinated-site',
+        url: 'https://valid-coordinated-site.example.com',
+        platform: 'new-api',
+      },
+    });
+    const siteId = (created.json() as { id: number }).id;
+    updateSiteConcurrencyLimit.mockClear();
+
+    const invalidUpdate = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${siteId}`,
+      payload: { maxConcurrency: 10001 },
+    });
+
+    expect(invalidUpdate.statusCode).toBe(400);
+    expect(updateSiteConcurrencyLimit).not.toHaveBeenCalled();
+  });
+
+  it('does not notify the coordinator when the site transaction fails', async () => {
+    await db.run(sql.raw(`
+      CREATE TRIGGER fail_site_concurrency_update
+      BEFORE UPDATE ON sites
+      WHEN NEW.max_concurrency = 8
+      BEGIN
+        SELECT RAISE(ABORT, 'forced site transaction failure');
+      END
+    `));
+    try {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/sites',
+        payload: {
+          name: 'db-failure-coordinated-site',
+          url: 'https://db-failure-coordinated-site.example.com',
+          platform: 'new-api',
+        },
+      });
+      const siteId = (created.json() as { id: number }).id;
+      updateSiteConcurrencyLimit.mockClear();
+
+      const failedUpdate = await app.inject({
+        method: 'PUT',
+        url: `/api/sites/${siteId}`,
+        payload: { maxConcurrency: 8 },
+      });
+
+      expect(failedUpdate.statusCode).toBe(500);
+      expect(updateSiteConcurrencyLimit).not.toHaveBeenCalled();
+    } finally {
+      await db.run(sql.raw('DROP TRIGGER IF EXISTS fail_site_concurrency_update'));
+    }
+  });
+
+  it('persists normalized site max concurrency on create and preserves it when omitted from an update', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'limited-site',
+        url: 'https://limited-site.example.com',
+        platform: 'new-api',
+        maxConcurrency: '12',
+      },
+    });
+
+    expect(created.statusCode).toBe(200);
+    const site = created.json() as { id: number; maxConcurrency?: number | null };
+    expect(site.maxConcurrency).toBe(12);
+
+    const unchanged = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}`,
+      payload: { name: 'still-limited-site' },
+    });
+
+    expect(unchanged.statusCode).toBe(200);
+    expect((unchanged.json() as { maxConcurrency?: number | null }).maxConcurrency).toBe(12);
+
+    const updated = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}`,
+      payload: { maxConcurrency: 0 },
+    });
+
+    expect(updated.statusCode).toBe(200);
+    expect((updated.json() as { maxConcurrency?: number | null }).maxConcurrency).toBeNull();
+  });
+
+  it.each([-1, 1.5, 10001])('rejects invalid maxConcurrency %s', async (maxConcurrency) => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'invalid-limited-site',
+        url: 'https://invalid-limited-site.example.com',
+        platform: 'new-api',
+        maxConcurrency,
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      error: 'Invalid maxConcurrency. Expected an integer from 0 to 10000.',
+    });
   });
 
   it('stores proxy settings, external checkin url, and custom headers when creating a site', async () => {

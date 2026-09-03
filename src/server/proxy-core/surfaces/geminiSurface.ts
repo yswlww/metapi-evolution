@@ -42,6 +42,16 @@ import { detectDownstreamClientContext, type DownstreamClientContext } from '../
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';
 import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
+import {
+  runWithProxySiteApiEndpointPool,
+  SiteApiEndpointRequestError,
+} from '../../services/siteApiEndpointService.js';
+import { bindSiteLeaseToResponse } from '../../services/siteConcurrencyResponse.js';
+import {
+  isSiteConcurrencyLimitError,
+  replySiteConcurrencyLimit,
+  createProxyRequestAbortSignal,
+} from '../../routes/proxy/siteConcurrencyBoundary.js';
 import { fetchWithObservedFirstByte, getObservedResponseMeta } from '../firstByteTimeout.js';
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 import { shouldAbortSameSiteEndpointFallback } from '../../services/proxyRetryPolicy.js';
@@ -418,11 +428,35 @@ export async function geminiProxyRoute(app: FastifyInstance) {
 
         const targetUrl = geminiGenerateContentTransformer.resolveModelsUrl(selected.site.url, apiVersion, selected.tokenValue);
         const upstreamPath = `/${apiVersion}/models`;
-        const upstream = await fetch(
-          targetUrl,
-          { method: 'GET' },
-        );
-        const text = await readRuntimeResponseText(upstream);
+        const abort = createProxyRequestAbortSignal(request, reply);
+        let upstream: Response;
+        let text: string;
+        try {
+          ({ upstream, text } = await runWithProxySiteApiEndpointPool(
+            selected.site,
+            async (target) => {
+              const targetModelsUrl = geminiGenerateContentTransformer.resolveModelsUrl(target.baseUrl, apiVersion, selected.tokenValue);
+              const response = await fetch(targetModelsUrl, { method: 'GET', signal: abort.signal });
+              const responseText = await readRuntimeResponseText(response);
+              if (!response.ok) {
+                throw new SiteApiEndpointRequestError(responseText || `HTTP ${response.status}`, {
+                  status: response.status,
+                  rawErrText: responseText || null,
+                });
+              }
+              return { upstream: response as unknown as Response, text: responseText };
+            },
+            { signal: abort.signal },
+          ));
+        } catch (error) {
+          if (isSiteConcurrencyLimitError(error)) {
+            replySiteConcurrencyLimit(reply, error);
+            return;
+          }
+          throw error;
+        } finally {
+          abort.dispose();
+        }
         await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
           attemptIndex: retryCount,
           endpoint: 'gemini-models',
@@ -466,7 +500,12 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           return reply.code(upstream.status).type(upstream.headers.get('content-type') || 'application/json').send(text);
         }
       } catch (error) {
+        if (isSiteConcurrencyLimitError(error)) {
+          replySiteConcurrencyLimit(reply, error);
+          return;
+        }
         await tokenRouter.recordFailure?.(selected.channel.id, {
+          status: error instanceof SiteApiEndpointRequestError && error.status ? error.status : 500,
           errorText: error instanceof Error ? error.message : 'Gemini upstream request failed',
         });
         lastStatus = 502;
@@ -527,6 +566,8 @@ export async function geminiProxyRoute(app: FastifyInstance) {
         error: { message: 'Gemini model path is required', type: 'invalid_request_error' },
       });
     }
+
+    const abort = createProxyRequestAbortSignal(request, reply);
 
     const policy = getDownstreamRoutingPolicy(request);
     const forcedChannelId = getTesterForcedChannelId({
@@ -761,33 +802,169 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               startedAtMs: Date.now(),
             },
           );
-          let upstream = await dispatchWithObservedFirstByte();
-          let firstByteLatencyMs = getObservedResponseMeta(upstream)?.firstByteLatencyMs ?? null;
-          let contentType = upstream.headers.get('content-type') || 'application/json';
-          let recoverApplied = false;
-          if (upstream.status === 401 && oauth) {
-            try {
-              const refreshed = await refreshOauthAccessTokenSingleflight(selected.account.id);
-              selected.tokenValue = refreshed.accessToken;
-              selected.account = {
-                ...selected.account,
-                accessToken: refreshed.accessToken,
-                extraConfig: refreshed.extraConfig ?? selected.account.extraConfig,
-              };
-              oauth = getOauthInfoFromAccount(selected.account);
-              directDispatchState = buildDirectDispatchState();
-              upstream = await dispatchWithObservedFirstByte();
-              firstByteLatencyMs = getObservedResponseMeta(upstream)?.firstByteLatencyMs ?? null;
-              contentType = upstream.headers.get('content-type') || 'application/json';
-              recoverApplied = true;
-            } catch {
-              // Preserve the original 401 response when refresh fails.
+
+          let dispatchResult: { upstream: Response; firstByteLatencyMs: number | null; recoverApplied: boolean } | null = null;
+          try {
+            dispatchResult = await runWithProxySiteApiEndpointPool(
+              selected.site,
+              async (target, lease): Promise<{ upstream: Response; firstByteLatencyMs: number | null; recoverApplied: boolean }> => {
+                // Rebuild dispatch state using the selected endpoint's baseUrl
+                const siteApiDirectDispatchState = (() => {
+                  const targetUrl = isInternalGemini
+                    ? `${target.baseUrl}${upstreamPath}`
+                    : geminiGenerateContentTransformer.resolveActionUrl(
+                      target.baseUrl,
+                      apiVersion,
+                      actualModelAction,
+                      selected.tokenValue,
+                      query,
+                    );
+                  return {
+                    ...directDispatchState,
+                    targetUrl,
+                    dispatch: (signal?: AbortSignal) => (
+                      isInternalGemini
+                        ? dispatchRuntimeRequest({
+                          siteUrl: target.baseUrl,
+                          targetUrl,
+                          signal,
+                          request: {
+                            endpoint: 'chat',
+                            path: upstreamPath,
+                            headers: directDispatchState.requestHeaders,
+                            body: directDispatchState.requestBody as Record<string, unknown>,
+                            runtime: {
+                              executor: isGeminiCli ? 'gemini-cli' : 'antigravity',
+                              modelName: actualModel,
+                              stream: isStreamAction,
+                              oauthProjectId: oauth?.projectId || null,
+                              action: internalGeminiAction,
+                            },
+                          },
+                          buildInit: async (_requestUrl, requestForFetch) => withSiteRecordProxyRequestInit(selected.site, {
+                            method: 'POST',
+                            headers: requestForFetch.headers,
+                            body: JSON.stringify(requestForFetch.body),
+                          }, channelProxyUrl),
+                        })
+                        : fetch(targetUrl, {
+                          method: 'POST',
+                          headers: directDispatchState.requestHeaders,
+                          body: JSON.stringify(directDispatchState.requestBody),
+                          signal,
+                        })
+                    ),
+                  };
+                })();
+
+                let upstream = await fetchWithObservedFirstByte(
+                  (signal) => siteApiDirectDispatchState.dispatch(signal),
+                  { firstByteTimeoutMs, startedAtMs: Date.now() },
+                );
+                let recoverApplied = false;
+                if (upstream.status === 401 && oauth) {
+                  try {
+                    const refreshed = await refreshOauthAccessTokenSingleflight(selected.account.id);
+                    selected.tokenValue = refreshed.accessToken;
+                    selected.account = {
+                      ...selected.account,
+                      accessToken: refreshed.accessToken,
+                      extraConfig: refreshed.extraConfig ?? selected.account.extraConfig,
+                    };
+                    oauth = getOauthInfoFromAccount(selected.account);
+                    const refreshedBaseState = buildDirectDispatchState();
+                    const refreshedTargetUrl = isInternalGemini
+                      ? `${target.baseUrl}${upstreamPath}`
+                      : geminiGenerateContentTransformer.resolveActionUrl(
+                        target.baseUrl,
+                        apiVersion,
+                        actualModelAction,
+                        selected.tokenValue,
+                        query,
+                      );
+                    const refreshedRequestHeaders = isInternalGemini
+                      ? {
+                        ...refreshedBaseState.requestHeaders,
+                        Authorization: `Bearer ${selected.tokenValue}`,
+                      }
+                      : refreshedBaseState.requestHeaders;
+                    upstream = await fetchWithObservedFirstByte(
+                      (signal) => (
+                        isInternalGemini
+                          ? dispatchRuntimeRequest({
+                            siteUrl: target.baseUrl,
+                            targetUrl: refreshedTargetUrl,
+                            signal,
+                            request: {
+                              endpoint: 'chat',
+                              path: upstreamPath,
+                              headers: refreshedRequestHeaders,
+                              body: refreshedBaseState.requestBody as Record<string, unknown>,
+                              runtime: {
+                                executor: isGeminiCli ? 'gemini-cli' : 'antigravity',
+                                modelName: actualModel,
+                                stream: isStreamAction,
+                                oauthProjectId: oauth?.projectId || null,
+                                action: internalGeminiAction,
+                              },
+                            },
+                            buildInit: async (_requestUrl, requestForFetch) => withSiteRecordProxyRequestInit(selected.site, {
+                              method: 'POST',
+                              headers: requestForFetch.headers,
+                              body: JSON.stringify(requestForFetch.body),
+                            }, channelProxyUrl),
+                          })
+                          : fetch(refreshedTargetUrl, {
+                            method: 'POST',
+                            headers: refreshedRequestHeaders,
+                            body: JSON.stringify(refreshedBaseState.requestBody),
+                            signal,
+                          })
+                      ),
+                      { firstByteTimeoutMs, startedAtMs: Date.now() },
+                    );
+                    recoverApplied = true;
+                  } catch {
+                    // Preserve the original 401 response when refresh fails.
+                  }
+                }
+                const firstByteLatencyMs = getObservedResponseMeta(upstream)?.firstByteLatencyMs ?? null;
+                if (!upstream.ok) {
+                  const errorText = await readRuntimeResponseText(upstream as unknown as import('undici').Response);
+                  throw new SiteApiEndpointRequestError(errorText || `HTTP ${upstream.status}`, {
+                    status: upstream.status,
+                    rawErrText: errorText || null,
+                    firstByteLatencyMs,
+                  });
+                }
+                return {
+                  upstream: bindSiteLeaseToResponse(upstream as unknown as Response, lease, abort.signal),
+                  firstByteLatencyMs,
+                  recoverApplied,
+                };
+              },
+              { signal: abort.signal },
+            );
+          } catch (err) {
+            if (isSiteConcurrencyLimitError(err)) {
+              abort.dispose();
+              const response = replySiteConcurrencyLimit(reply, err as any);
+              if (response !== undefined) {
+                return; // reply was sent
+              }
+              // Client disconnected mid-stream; do not continue
+              return;
             }
+            throw err;
           }
+          let upstream = dispatchResult!.upstream;
+          let firstByteLatencyMs = dispatchResult!.firstByteLatencyMs;
+          let recoverApplied = dispatchResult!.recoverApplied;
+          let contentType = upstream.headers.get('content-type') || 'application/json';
           if (!upstream.ok) {
             lastStatus = upstream.status;
             lastContentType = contentType;
-            lastText = await readRuntimeResponseText(upstream);
+            lastText = await readRuntimeResponseText(upstream as unknown as import('undici').Response);
             await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
               attemptIndex: retryCount,
               endpoint: isInternalGemini ? 'gemini-internal' : 'gemini-native',
@@ -841,7 +1018,8 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           }
 
           if (geminiGenerateContentTransformer.stream.isSseContentType(contentType)) {
-            const upstreamReader = getRuntimeResponseReader(upstream);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const upstreamReader = getRuntimeResponseReader(upstream as any);
             const reader = isInternalGemini && !isGeminiCliDownstream && upstreamReader
               ? createGeminiCliStreamReader(upstreamReader)
               : upstreamReader;
@@ -1035,12 +1213,14 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               });
               return;
             } finally {
+              abort.dispose();
               reader.releaseLock();
               reply.raw.end();
             }
           }
 
-          const text = await readRuntimeResponseText(upstream);
+          const text = await readRuntimeResponseText(upstream as any);
+          abort.dispose();
           const aggregateState = geminiGenerateContentTransformer.stream.createAggregateState();
           let parsedUsage = EMPTY_PROXY_USAGE;
           try {
@@ -1273,120 +1453,107 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           dispatchRequest,
         });
         const debugAttemptBase = reserveSurfaceProxyDebugAttemptBase(debugTrace, endpointCandidates.length);
-        const endpointResult = await executeEndpointFlow({
-          siteUrl: selected.site.url,
-          disableCrossProtocolFallback: config.disableCrossProtocolFallback,
-          firstByteTimeoutMs,
-          endpointCandidates,
-          buildRequest: (endpoint) => buildEndpointRequest(endpoint),
-          dispatchRequest,
-          tryRecover: endpointStrategy.tryRecover,
-          shouldAbortRemainingEndpoints: (ctx) => shouldAbortSameSiteEndpointFallback(
-            ctx.response.status,
-            ctx.rawErrText || ctx.errText,
-          ),
-          onAttemptFailure: async (ctx) => {
-            const memoryWrite = recordUpstreamEndpointFailure({
-              ...endpointRuntimeContext,
-              endpoint: ctx.request.endpoint,
-              status: ctx.response.status,
-              errorText: ctx.rawErrText,
-            });
-            await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
-              attemptIndex: debugAttemptBase + ctx.endpointIndex,
-              endpoint: ctx.request.endpoint,
-              requestPath: ctx.request.path,
-              targetUrl: ctx.targetUrl,
-              runtimeExecutor: ctx.request.runtime?.executor || 'default',
-              requestHeaders: ctx.request.headers,
-              requestBody: ctx.request.body,
-              responseStatus: ctx.response.status,
-              responseHeaders: buildSurfaceProxyDebugResponseHeaders(ctx.response),
-              responseBody: parseSurfaceProxyDebugTextPayload(ctx.rawErrText),
-              rawErrorText: ctx.rawErrText,
-              recoverApplied: ctx.recoverApplied === true,
-              downgradeDecision: false,
-              downgradeReason: null,
-              memoryWrite,
-            });
-          },
-          onAttemptSuccess: async (ctx) => {
-            const memoryWrite = recordUpstreamEndpointSuccess({
-              ...endpointRuntimeContext,
-              endpoint: ctx.request.endpoint,
-            });
-            const responseBody = await captureSurfaceProxyDebugSuccessResponseBody(debugTrace, ctx);
-            await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
-              attemptIndex: debugAttemptBase + ctx.endpointIndex,
-              endpoint: ctx.request.endpoint,
-              requestPath: ctx.request.path,
-              targetUrl: ctx.targetUrl,
-              runtimeExecutor: ctx.request.runtime?.executor || 'default',
-              requestHeaders: ctx.request.headers,
-              requestBody: ctx.request.body,
-              responseStatus: ctx.response.status,
-              responseHeaders: buildSurfaceProxyDebugResponseHeaders(ctx.response),
-              responseBody,
-              rawErrorText: null,
-              recoverApplied: ctx.recoverApplied === true,
-              downgradeDecision: false,
-              downgradeReason: null,
-              memoryWrite,
-            });
-          },
-          shouldDowngrade: endpointStrategy.shouldDowngrade,
-          onDowngrade: async (ctx) => {
-            await safeUpdateSurfaceProxyDebugAttempt(debugTrace, debugAttemptBase + ctx.endpointIndex, {
-              downgradeDecision: true,
-              downgradeReason: ctx.errText,
-              rawErrorText: ctx.rawErrText,
-            });
-          },
-        });
-        if (!endpointResult.ok) {
-          lastStatus = endpointResult.status;
-          lastContentType = 'application/json';
-          lastText = JSON.stringify({
-            error: {
-              message: endpointResult.errText,
-              type: 'upstream_error',
+        let endpointResult: Awaited<ReturnType<typeof executeEndpointFlow>> | null = null;
+        try {
+          endpointResult = await runWithProxySiteApiEndpointPool(
+            selected.site,
+            async (target, lease) => {
+              const result = await executeEndpointFlow({
+                siteUrl: target.baseUrl,
+                disableCrossProtocolFallback: config.disableCrossProtocolFallback,
+                firstByteTimeoutMs,
+                endpointCandidates,
+                buildRequest: (endpoint) => buildEndpointRequest(endpoint),
+                dispatchRequest,
+                tryRecover: endpointStrategy.tryRecover,
+                shouldAbortRemainingEndpoints: (ctx) => shouldAbortSameSiteEndpointFallback(
+                  ctx.response.status,
+                  ctx.rawErrText || ctx.errText,
+                ),
+                onAttemptFailure: async (ctx) => {
+                  const memoryWrite = recordUpstreamEndpointFailure({
+                    ...endpointRuntimeContext,
+                    endpoint: ctx.request.endpoint,
+                    status: ctx.response.status,
+                    errorText: ctx.rawErrText,
+                  });
+                  await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
+                    attemptIndex: debugAttemptBase + ctx.endpointIndex,
+                    endpoint: ctx.request.endpoint,
+                    requestPath: ctx.request.path,
+                    targetUrl: ctx.targetUrl,
+                    runtimeExecutor: ctx.request.runtime?.executor || 'default',
+                    requestHeaders: ctx.request.headers,
+                    requestBody: ctx.request.body,
+                    responseStatus: ctx.response.status,
+                    responseHeaders: buildSurfaceProxyDebugResponseHeaders(ctx.response),
+                    responseBody: parseSurfaceProxyDebugTextPayload(ctx.rawErrText),
+                    rawErrorText: ctx.rawErrText,
+                    recoverApplied: ctx.recoverApplied === true,
+                    downgradeDecision: false,
+                    downgradeReason: null,
+                    memoryWrite,
+                  });
+                },
+                onAttemptSuccess: async (ctx) => {
+                  const memoryWrite = recordUpstreamEndpointSuccess({
+                    ...endpointRuntimeContext,
+                    endpoint: ctx.request.endpoint,
+                  });
+                  const responseBody = await captureSurfaceProxyDebugSuccessResponseBody(debugTrace, ctx);
+                  await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
+                    attemptIndex: debugAttemptBase + ctx.endpointIndex,
+                    endpoint: ctx.request.endpoint,
+                    requestPath: ctx.request.path,
+                    targetUrl: ctx.targetUrl,
+                    runtimeExecutor: ctx.request.runtime?.executor || 'default',
+                    requestHeaders: ctx.request.headers,
+                    requestBody: ctx.request.body,
+                    responseStatus: ctx.response.status,
+                    responseHeaders: buildSurfaceProxyDebugResponseHeaders(ctx.response),
+                    responseBody,
+                    rawErrorText: null,
+                    recoverApplied: ctx.recoverApplied === true,
+                    downgradeDecision: false,
+                    downgradeReason: null,
+                    memoryWrite,
+                  });
+                },
+                shouldDowngrade: endpointStrategy.shouldDowngrade,
+                onDowngrade: async (ctx) => {
+                  await safeUpdateSurfaceProxyDebugAttempt(debugTrace, debugAttemptBase + ctx.endpointIndex, {
+                    downgradeDecision: true,
+                    downgradeReason: ctx.errText,
+                    rawErrorText: ctx.rawErrText,
+                  });
+                },
+              });
+              if (!result.ok) {
+                throw new SiteApiEndpointRequestError(result.errText, {
+                  status: result.status,
+                  rawErrText: result.rawErrText || result.errText,
+                });
+              }
+              return {
+                ...result,
+                upstream: bindSiteLeaseToResponse(result.upstream as unknown as Response, lease, abort.signal) as unknown as typeof result.upstream,
+              };
             },
-          });
-          await tokenRouter.recordFailure?.(selected.channel.id, {
-            status: endpointResult.status,
-            errorText: endpointResult.rawErrText || endpointResult.errText,
-          });
-          await logProxy(
-            selected,
-            requestedModel,
-            'failed',
-            lastStatus,
-            Date.now() - startTime,
-            endpointResult.errText,
-            retryCount,
-            downstreamPath,
-            null,
-            clientContext,
-            0,
-            0,
-            0,
-            isStreamAction,
-            null,
+            { signal: abort.signal },
           );
-          if (canRetryChannelSelection(retryCount, forcedChannelId)) {
-            retryCount += 1;
-            continue;
+        } catch (err) {
+          if (isSiteConcurrencyLimitError(err)) {
+            abort.dispose();
+            replySiteConcurrencyLimit(reply, err as any);
+            return;
           }
-          await finalizeDebugFailure(lastStatus, JSON.parse(lastText), null).catch(async () => {
-            await finalizeDebugFailure(lastStatus, parseSurfaceProxyDebugTextPayload(lastText), null);
-          });
-          return reply.code(lastStatus).type(lastContentType).send(lastText);
+          throw err;
         }
-
         upstreamPath = endpointResult.upstreamPath;
         const upstream = endpointResult.upstream;
         const firstByteLatencyMs = getObservedResponseMeta(upstream)?.firstByteLatencyMs ?? null;
         const rawText = await readRuntimeResponseText(upstream);
+        abort.dispose();
         let upstreamData: unknown = rawText;
         try {
           upstreamData = JSON.parse(rawText);
@@ -1439,7 +1606,10 @@ export async function geminiProxyRoute(app: FastifyInstance) {
         }
         return reply.code(upstream.status).send(downstreamPayload);
       } catch (error) {
-        lastStatus = 502;
+        const endpointStatus = error instanceof SiteApiEndpointRequestError
+          ? error.status
+          : null;
+        lastStatus = endpointStatus ?? 502;
         lastContentType = 'application/json';
         lastText = JSON.stringify({
           error: {
@@ -1448,13 +1618,14 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           },
         });
         await tokenRouter.recordFailure?.(selected.channel.id, {
+          status: endpointStatus ?? undefined,
           errorText: error instanceof Error ? error.message : 'Gemini upstream request failed',
         });
         await logProxy(
           selected,
           requestedModel,
           'failed',
-          0,
+          lastStatus,
           Date.now() - startTime,
           error instanceof Error ? error.message : 'Gemini upstream request failed',
           retryCount,

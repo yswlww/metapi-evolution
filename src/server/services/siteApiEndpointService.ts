@@ -2,6 +2,7 @@ import { asc, eq } from 'drizzle-orm';
 import { normalizePlatformAlias } from '../../shared/platformIdentity.js';
 import { db, schema } from '../db/index.js';
 import { RETRYABLE_TIMEOUT_PATTERNS } from './proxyRetryPolicy.js';
+import { proxyChannelCoordinator, type ProxySiteLease } from './proxyChannelCoordinator.js';
 import { assertOrcaRouterTokenTransport } from './orcarouterTransport.js';
 
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
@@ -315,5 +316,60 @@ export async function runWithSiteApiEndpointPool<T>(
 
       attemptedEndpointIds.add(target.endpointId);
     }
+  }
+}
+async function loadCurrentSiteMaxConcurrency(siteId: number): Promise<
+  | { kind: 'loaded'; maxConcurrency: number | null }
+  | { kind: 'legacy-mock' }
+  | { kind: 'unavailable' }
+> {
+  try {
+    if (!(schema.sites as { maxConcurrency?: unknown } | undefined)?.maxConcurrency) {
+      return { kind: 'legacy-mock' };
+    }
+    const row = await db.select({ maxConcurrency: schema.sites.maxConcurrency })
+      .from(schema.sites)
+      .where(eq(schema.sites.id, siteId))
+      .get();
+    return row
+      ? { kind: 'loaded', maxConcurrency: row.maxConcurrency ?? null }
+      : { kind: 'unavailable' };
+  } catch {
+    return { kind: 'unavailable' };
+  }
+}
+
+export async function runWithProxySiteApiEndpointPool<T>(
+  site: SiteRow,
+  operation: (target: SiteApiEndpointTarget, lease: ProxySiteLease) => Promise<T>,
+  options?: { signal?: AbortSignal },
+): Promise<T> {
+  const revisionBeforeLoad = proxyChannelCoordinator.getSiteConcurrencyRevision(site.id);
+  const loadedLimit = await loadCurrentSiteMaxConcurrency(site.id);
+  let lease: ProxySiteLease;
+  if (loadedLimit.kind === 'loaded') {
+    lease = await proxyChannelCoordinator.acquireSiteLeaseWithAuthoritativeLimit({
+      siteId: site.id,
+      maxConcurrency: loadedLimit.maxConcurrency,
+      expectedRevision: revisionBeforeLoad,
+      signal: options?.signal,
+    });
+  } else if (loadedLimit.kind === 'legacy-mock') {
+    lease = await proxyChannelCoordinator.acquireSiteLease({
+      siteId: site.id,
+      maxConcurrency: site.maxConcurrency,
+      signal: options?.signal,
+    });
+  } else {
+    lease = await proxyChannelCoordinator.acquireSiteLeaseWithCurrentLimit({
+      siteId: site.id,
+      signal: options?.signal,
+    });
+  }
+
+  try {
+    return await runWithSiteApiEndpointPool(site, (target) => operation(target, lease));
+  } finally {
+    if (!lease.isTransferred()) lease.release();
   }
 }

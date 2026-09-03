@@ -7,6 +7,7 @@ import { config } from '../../config.js';
 import { createProxyAuthRateLimitHook } from '../../middleware/auth.js';
 import { createGlobalRateLimitHook, registerGlobalRateLimit } from '../../middleware/globalRateLimit.js';
 import { resetRequestRateLimitStore } from '../../middleware/requestRateLimit.js';
+import { resetProxyChannelCoordinatorState } from '../../services/proxyChannelCoordinator.js';
 import { resetCodexSessionResponseStore } from '../../proxy-core/runtime/codexSessionResponseStore.js';
 
 const fetchMock = vi.fn();
@@ -471,6 +472,7 @@ describe('responses websocket transport', () => {
 
   beforeEach(() => {
     resetCodexSessionResponseStore();
+    resetProxyChannelCoordinatorState();
     resetRequestRateLimitStore();
     (config as any).requestRateLimitMax = originalRequestRateLimitMax;
     (config as any).requestRateLimitWindowMs = originalRequestRateLimitWindowMs;

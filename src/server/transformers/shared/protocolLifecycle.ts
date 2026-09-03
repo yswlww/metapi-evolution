@@ -79,6 +79,9 @@ export function createProxyStreamLifecycle<TEvent>(input: ProxyStreamLifecycleIn
         if (!shouldStop) {
           await input.onEof?.();
         }
+      } catch (error) {
+        await reader.cancel(error).catch(() => {});
+        throw error;
       } finally {
         reader.releaseLock();
         input.response.end();

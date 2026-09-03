@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../../config.js';
+import { proxyChannelCoordinator, resetProxyChannelCoordinatorState } from '../../services/proxyChannelCoordinator.js';
 import { resetUpstreamEndpointRuntimeState } from '../../services/upstreamEndpointRuntimeMemory.js';
 
 const fetchMock = vi.fn();
@@ -73,6 +74,11 @@ vi.mock('../../services/proxyUsageFallbackService.js', () => ({
   resolveProxyUsageWithSelfLogFallback: (arg: any) => resolveProxyUsageWithSelfLogFallbackMock(arg),
 }));
 
+vi.mock('../../services/oauth/quota.js', () => ({
+  recordOauthQuotaHeadersSnapshot: async () => undefined,
+  recordOauthQuotaResetHint: async () => undefined,
+}));
+
 vi.mock('../../db/index.js', () => ({
   db: {
     insert: (arg: any) => dbInsertMock(arg),
@@ -118,6 +124,7 @@ describe('responses proxy compact upstream routing', () => {
   });
 
   beforeEach(() => {
+    resetProxyChannelCoordinatorState();
     resetUpstreamEndpointRuntimeState();
     config.responsesCompactFallbackToResponsesEnabled = false;
     fetchMock.mockReset();
@@ -150,6 +157,133 @@ describe('responses proxy compact upstream routing', () => {
     config.responsesCompactFallbackToResponsesEnabled = originalResponsesCompactFallbackToResponsesEnabled;
     if (app) {
       await app.close();
+    }
+  });
+
+  it('holds a responses compact lease until the upstream body reaches EOF', async () => {
+    const site = {
+      id: 9_003,
+      name: 'responses-compact-stream-site',
+      url: 'https://responses-compact-stream.example.com',
+      platform: 'openai',
+      maxConcurrency: 1,
+    };
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site,
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-demo',
+      actualModel: 'upstream-gpt',
+    });
+    let upstreamClosed = false;
+    let closeUpstream!: () => void;
+    fetchMock.mockResolvedValue(new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(JSON.stringify({
+          id: 'resp_compact_held',
+          object: 'response.compaction',
+          input_tokens: 4,
+          output_tokens: 2,
+          total_tokens: 6,
+          output: [],
+        })));
+        closeUpstream = () => {
+          if (upstreamClosed) return;
+          upstreamClosed = true;
+          controller.close();
+        };
+      },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    const originalAcquire = proxyChannelCoordinator.acquireSiteLease.bind(proxyChannelCoordinator);
+    let releaseMock = vi.fn();
+    const acquireSpy = vi.spyOn(proxyChannelCoordinator, 'acquireSiteLease').mockImplementation(async (input) => {
+      const lease = await originalAcquire(input);
+      const release = lease.release;
+      releaseMock = vi.fn(() => release());
+      return { ...lease, release: releaseMock };
+    });
+    try {
+      const pendingResponse = app.inject({
+        method: 'POST',
+        url: '/v1/responses/compact',
+        payload: {
+          model: 'gpt-5.2',
+          input: 'hold compact lease',
+        },
+      });
+      await vi.waitFor(() => {
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(proxyChannelCoordinator.getSiteConcurrencySnapshot(site.id).activeLeaseCount).toBe(1);
+      });
+      expect(releaseMock).not.toHaveBeenCalled();
+
+      closeUpstream();
+      const response = await pendingResponse;
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ id: 'resp_compact_held' });
+      expect(releaseMock).toHaveBeenCalledTimes(1);
+      expect(proxyChannelCoordinator.getSiteConcurrencySnapshot(site.id).activeLeaseCount).toBe(0);
+    } finally {
+      acquireSpy.mockRestore();
+      closeUpstream?.();
+    }
+  });
+
+  it('returns a site concurrency 503 before responses compact failure bookkeeping or retry', async () => {
+    const site = {
+      id: 9_002,
+      name: 'responses-compact-limited-site',
+      url: 'https://responses-compact-limited.example.com',
+      platform: 'openai',
+      maxConcurrency: 1,
+    };
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site,
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-demo',
+      actualModel: 'upstream-gpt',
+    });
+    const originalQueueLimit = config.proxySiteConcurrencyQueueLimit;
+    const originalQueueWaitMs = config.proxySiteConcurrencyQueueWaitMs;
+    config.proxySiteConcurrencyQueueLimit = 0;
+    config.proxySiteConcurrencyQueueWaitMs = 0;
+    const blockingLease = await proxyChannelCoordinator.acquireSiteLease({
+      siteId: site.id,
+      maxConcurrency: 1,
+    });
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/responses/compact',
+        payload: {
+          model: 'gpt-5.2',
+          input: 'limited',
+        },
+      });
+
+      expect(response.statusCode).toBe(503);
+      expect(response.headers['retry-after']).toBe('1');
+      expect(response.json()).toEqual({
+        error: {
+          type: 'site_concurrency_limit',
+          message: 'Site concurrency limit reached',
+        },
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(recordFailureMock).not.toHaveBeenCalled();
+      expect(reportProxyAllFailedMock).not.toHaveBeenCalled();
+      expect(selectNextChannelMock).not.toHaveBeenCalled();
+    } finally {
+      blockingLease.release();
+      config.proxySiteConcurrencyQueueLimit = originalQueueLimit;
+      config.proxySiteConcurrencyQueueWaitMs = originalQueueWaitMs;
     }
   });
 

@@ -64,10 +64,19 @@ import {
   createSurfaceDispatchRequest,
   getSurfaceStickyPreferredChannelId,
   recordSurfaceSuccess,
+  runSurfaceEndpointFlowWithSiteConcurrency,
   selectSurfaceChannelForAttempt,
   trySurfaceOauthRefreshRecovery,
 } from './sharedSurface.js';
-import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
+import {
+  runWithProxySiteApiEndpointPool,
+  SiteApiEndpointRequestError,
+} from '../../services/siteApiEndpointService.js';
+import {
+  createProxyRequestAbortSignal,
+  isSiteConcurrencyLimitError,
+  replySiteConcurrencyLimit,
+} from '../../routes/proxy/siteConcurrencyBoundary.js';
 import {
   buildSurfaceProxyDebugResponseHeaders,
   captureSurfaceProxyDebugSuccessResponseBody,
@@ -545,19 +554,24 @@ export async function handleChatSurfaceRequest(
       });
     }
     const channelLease = leaseResult.lease;
+    const abort = createProxyRequestAbortSignal(request, reply);
 
     try {
-      const endpointResult = await runWithSiteApiEndpointPool(selected.site, async (target) => {
-        const result = await executeEndpointResultForSiteApiBaseUrl(target.baseUrl);
-        if (!result.ok) {
-          const upstreamFailure = new SiteApiEndpointRequestError(result.errText || 'unknown error', {
-            status: result.status || 502,
-            rawErrText: result.rawErrText || result.errText || 'unknown error',
-          }) as SiteApiEndpointRequestError & { siteApiEndpointUpstreamFailure?: boolean };
-          upstreamFailure.siteApiEndpointUpstreamFailure = true;
-          throw upstreamFailure;
-        }
-        return result;
+      const endpointResult = await runSurfaceEndpointFlowWithSiteConcurrency({
+        site: selected.site,
+        abortSignal: abort.signal,
+        executeEndpointFlowForBaseUrl: async (siteApiBaseUrl) => {
+          const result = await executeEndpointResultForSiteApiBaseUrl(siteApiBaseUrl);
+          if (!result.ok) {
+            const upstreamFailure = new SiteApiEndpointRequestError(result.errText || 'unknown error', {
+              status: result.status || 502,
+              rawErrText: result.rawErrText || result.errText || 'unknown error',
+            }) as SiteApiEndpointRequestError & { siteApiEndpointUpstreamFailure?: boolean };
+            upstreamFailure.siteApiEndpointUpstreamFailure = true;
+            throw upstreamFailure;
+          }
+          return result;
+        },
       });
 
       const upstream = endpointResult.upstream;
@@ -986,6 +1000,16 @@ export async function handleChatSurfaceRequest(
 
       return reply.send(downstreamResponse);
     } catch (err: any) {
+      if (isSiteConcurrencyLimitError(err)) {
+        const response = replySiteConcurrencyLimit(reply, err);
+        await finalizeDebugFailure(503, {
+          error: {
+            type: 'site_concurrency_limit',
+            message: 'Site concurrency limit reached',
+          },
+        }, null);
+        return response;
+      }
       clearSurfaceStickyChannel({
         stickySessionKey,
         selected,
@@ -1067,6 +1091,7 @@ export async function handleChatSurfaceRequest(
       return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
       } finally {
         channelLease.release();
+        abort.dispose();
       }
     }
 }
@@ -1306,6 +1331,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
       });
     }
     const channelLease = leaseResult.lease;
+    const abort = createProxyRequestAbortSignal(request, reply);
 
     const buildRequest = (siteUrl?: string) => {
       const upstreamRequest = buildClaudeCountTokensUpstreamRequest({
@@ -1327,15 +1353,18 @@ export async function handleClaudeCountTokensSurfaceRequest(
     };
 
     try {
-      const countTokensResult = await runWithSiteApiEndpointPool(selected.site, async (target) => {
-        let upstreamRequest = buildRequest(target.baseUrl);
-        const dispatchRequest = createSurfaceDispatchRequest({
-          site: selected.site,
-          siteUrl: target.baseUrl,
-          accountExtraConfig: selected.account.extraConfig,
-        });
-        let upstream = await dispatchRequest(upstreamRequest);
-        let recoverApplied = false;
+      const countTokensResult = await runWithProxySiteApiEndpointPool(
+        selected.site,
+        async (target) => {
+          const siteApiBaseUrl = target.baseUrl;
+          let upstreamRequest = buildRequest(siteApiBaseUrl);
+          const dispatchRequest = createSurfaceDispatchRequest({
+            site: selected.site,
+            siteUrl: siteApiBaseUrl,
+            accountExtraConfig: selected.account.extraConfig,
+          });
+          let upstream = await dispatchRequest(upstreamRequest);
+          let recoverApplied = false;
 
         if ((upstream.status === 401 || upstream.status === 403) && oauth) {
           const recoverContext = {
@@ -1346,13 +1375,13 @@ export async function handleClaudeCountTokensSurfaceRequest(
           const recovered = await trySurfaceOauthRefreshRecovery({
             ctx: recoverContext,
             selected,
-            siteUrl: target.baseUrl,
-            buildRequest: () => buildRequest(target.baseUrl),
+            siteUrl: siteApiBaseUrl,
+            buildRequest: () => buildRequest(siteApiBaseUrl),
             dispatchRequest,
             captureFailureBody: false,
           });
           if (recovered?.upstream?.ok) {
-            upstreamRequest = buildRequest(target.baseUrl);
+            upstreamRequest = buildRequest(siteApiBaseUrl);
             upstream = recovered.upstream;
             recoverApplied = true;
           } else {
@@ -1374,7 +1403,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
           attemptIndex: retryCount,
           endpoint: upstreamRequest.endpoint,
           requestPath: upstreamRequest.path,
-          targetUrl: `${target.baseUrl}${upstreamRequest.path}`,
+          targetUrl: `${siteApiBaseUrl}${upstreamRequest.path}`,
           runtimeExecutor: upstreamRequest.runtime?.executor || 'default',
           requestHeaders: upstreamRequest.headers,
           requestBody: upstreamRequest.body,
@@ -1401,7 +1430,9 @@ export async function handleClaudeCountTokensSurfaceRequest(
           payload,
           latency,
         };
-      });
+        },
+        { signal: abort.signal },
+      );
 
       const {
         upstream,
@@ -1435,6 +1466,16 @@ export async function handleClaudeCountTokensSurfaceRequest(
       );
       return reply.code(upstream.status).type(contentType).send(payload);
     } catch (error: any) {
+      if (isSiteConcurrencyLimitError(error)) {
+        const response = replySiteConcurrencyLimit(reply, error);
+        await finalizeDebugFailure(503, {
+          error: {
+            type: 'site_concurrency_limit',
+            message: 'Site concurrency limit reached',
+          },
+        }, null);
+        return response;
+      }
       clearSurfaceStickyChannel({
         stickySessionKey,
         selected,
@@ -1508,6 +1549,7 @@ export async function handleClaudeCountTokensSurfaceRequest(
       return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
     } finally {
       channelLease.release();
+      abort.dispose();
     }
   }
 }

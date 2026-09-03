@@ -21,6 +21,8 @@ import { analyzePrimarySiteUrl } from '../../../shared/sitePrimaryUrl.js';
 import { normalizePlatformAlias } from '../../../shared/platformIdentity.js';
 import { getOrcaRouterTokenTransportError } from '../../services/orcarouterTransport.js';
 import { probeSiteModels } from '../../services/modelService.js';
+import { normalizeSiteMaxConcurrency } from '../../../shared/siteMaxConcurrency.js';
+import { proxyChannelCoordinator } from '../../services/proxyChannelCoordinator.js';
 
 function sseWrite(raw: import('http').ServerResponse, event: string, data: unknown) {
   try { raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* ignore */ }
@@ -503,8 +505,17 @@ export async function sitesRoutes(app: FastifyInstance) {
       isPinned,
       sortOrder,
       globalWeight,
+      maxConcurrency,
       apiEndpoints,
     } = createBody;
+    const hasMaxConcurrency = Object.prototype.hasOwnProperty.call(createBody, 'maxConcurrency');
+    const maxConcurrencyResult = hasMaxConcurrency
+      ? normalizeSiteMaxConcurrency(maxConcurrency)
+      : null;
+    if (maxConcurrencyResult && !maxConcurrencyResult.ok) {
+      return reply.code(400).send({ error: maxConcurrencyResult.error });
+    }
+    const normalizedMaxConcurrency = maxConcurrencyResult?.ok ? maxConcurrencyResult.value : null;
     const normalizedStatus = normalizeSiteStatus(status);
     if (status !== undefined && !normalizedStatus) {
       return reply.code(400).send({ error: 'Invalid site status. Expected active or disabled.' });
@@ -600,6 +611,7 @@ export async function sitesRoutes(app: FastifyInstance) {
         const siteInsert = await tx.insert(schema.sites).values({
           name,
           url: canonicalUrl,
+          maxConcurrency: normalizedMaxConcurrency,
           platform: detectedPlatform,
           proxyUrl: normalizedProxyUrl.proxyUrl,
           useSystemProxy: normalizedUseSystemProxy ?? false,
@@ -638,6 +650,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (!result) {
       return reply.code(500).send({ error: 'Create site failed' });
     }
+    proxyChannelCoordinator.updateSiteConcurrencyLimit(siteId, result.maxConcurrency);
     invalidateSiteCaches();
     return {
       ...result,
@@ -664,6 +677,13 @@ export async function sitesRoutes(app: FastifyInstance) {
 
     const updates: any = {};
     const body = parsedBody.data as typeof parsedBody.data & { apiEndpoints?: unknown };
+    const hasMaxConcurrency = Object.prototype.hasOwnProperty.call(body, 'maxConcurrency');
+    const maxConcurrencyResult = hasMaxConcurrency
+      ? normalizeSiteMaxConcurrency(body.maxConcurrency)
+      : null;
+    if (maxConcurrencyResult && !maxConcurrencyResult.ok) {
+      return reply.code(400).send({ error: maxConcurrencyResult.error });
+    }
     const normalizedStatus = normalizeSiteStatus(body.status);
     if (body.status !== undefined && !normalizedStatus) {
       return reply.code(400).send({ error: 'Invalid site status. Expected active or disabled.' });
@@ -765,6 +785,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (body.isPinned !== undefined) updates.isPinned = normalizedPinned;
     if (body.sortOrder !== undefined) updates.sortOrder = normalizedSortOrder;
     if (body.globalWeight !== undefined) updates.globalWeight = normalizedGlobalWeight;
+    if (hasMaxConcurrency && maxConcurrencyResult?.ok) updates.maxConcurrency = maxConcurrencyResult.value;
     const anyBody = body as Record<string, unknown>;
     if (anyBody.postRefreshProbeEnabled !== undefined) updates.postRefreshProbeEnabled = anyBody.postRefreshProbeEnabled === true || anyBody.postRefreshProbeEnabled === 1;
     if (anyBody.postRefreshProbeModel !== undefined) updates.postRefreshProbeModel = String(anyBody.postRefreshProbeModel || '').trim();
@@ -804,9 +825,14 @@ export async function sitesRoutes(app: FastifyInstance) {
       await applySiteStatusSideEffects(id, existingSite.name, normalizedStatus);
     }
 
+    const result = await loadSiteWithApiEndpoints(id);
+    if (!result) {
+      return reply.code(500).send({ error: 'Update site failed' });
+    }
+    proxyChannelCoordinator.updateSiteConcurrencyLimit(id, result.maxConcurrency);
     invalidateSiteCaches();
 
-    return await loadSiteWithApiEndpoints(id);
+    return result;
   });
 
   // Delete a site

@@ -5,6 +5,7 @@ import { normalizePayloadRulesConfig } from './services/payloadRules.js';
 const DEFAULT_REQUEST_BODY_LIMIT = 20 * 1024 * 1024;
 const DEFAULT_CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const DEFAULT_CLAUDE_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
+const NODE_MAX_TIMEOUT_MS = 2_147_483_647;
 export const TOKEN_ROUTER_FAILURE_COOLDOWN_MAX_SEC_CEILING = 30 * 24 * 60 * 60;
 
 function parseBoolean(value: string | undefined, fallback = false): boolean {
@@ -17,6 +18,20 @@ function parseNumber(value: string | undefined, fallback: number): number {
   if (value === undefined) return fallback;
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
+  return parsed;
+}
+
+function parseIntegerInRange(
+  value: string | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < min || parsed > max) {
+    return fallback;
+  }
   return parsed;
 }
 
@@ -63,6 +78,18 @@ function parseListenHost(env: NodeJS.ProcessEnv): string {
 
 export function buildConfig(env: NodeJS.ProcessEnv) {
   const dataDir = env.DATA_DIR || './data';
+  const proxySiteConcurrencyLeaseTtlMs = parseIntegerInRange(
+    env.PROXY_SITE_CONCURRENCY_LEASE_TTL_MS,
+    90_000,
+    5_000,
+    NODE_MAX_TIMEOUT_MS,
+  );
+  const proxySiteConcurrencyLeaseKeepaliveMs = parseIntegerInRange(
+    env.PROXY_SITE_CONCURRENCY_LEASE_KEEPALIVE_MS,
+    Math.min(15_000, proxySiteConcurrencyLeaseTtlMs - 1),
+    1_000,
+    proxySiteConcurrencyLeaseTtlMs - 1,
+  );
 
   return {
     authToken: env.AUTH_TOKEN || 'change-me-admin-token',
@@ -134,6 +161,20 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     proxySessionChannelQueueWaitMs: Math.max(0, Math.trunc(parseNumber(env.PROXY_SESSION_CHANNEL_QUEUE_WAIT_MS, 1_500))),
     proxySessionChannelLeaseTtlMs: Math.max(5_000, Math.trunc(parseNumber(env.PROXY_SESSION_CHANNEL_LEASE_TTL_MS, 90_000))),
     proxySessionChannelLeaseKeepaliveMs: Math.max(1_000, Math.trunc(parseNumber(env.PROXY_SESSION_CHANNEL_LEASE_KEEPALIVE_MS, 15_000))),
+    proxySiteConcurrencyQueueLimit: parseIntegerInRange(
+      env.PROXY_SITE_CONCURRENCY_QUEUE_LIMIT,
+      100,
+      0,
+      10_000,
+    ),
+    proxySiteConcurrencyQueueWaitMs: parseIntegerInRange(
+      env.PROXY_SITE_CONCURRENCY_QUEUE_WAIT_MS,
+      1_500,
+      0,
+      600_000,
+    ),
+    proxySiteConcurrencyLeaseTtlMs,
+    proxySiteConcurrencyLeaseKeepaliveMs,
     codexUpstreamWebsocketEnabled: parseBoolean(env.CODEX_UPSTREAM_WEBSOCKET_ENABLED, false),
     responsesCompactFallbackToResponsesEnabled: parseBoolean(env.RESPONSES_COMPACT_FALLBACK_TO_RESPONSES_ENABLED, false),
     disableCrossProtocolFallback: parseBoolean(env.DISABLE_CROSS_PROTOCOL_FALLBACK, false),
