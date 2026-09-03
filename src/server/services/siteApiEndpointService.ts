@@ -302,6 +302,9 @@ async function loadCurrentSiteMaxConcurrency(siteId: number): Promise<
   | { ok: false; error: false }
 > {
   try {
+    if (!(schema.sites as { maxConcurrency?: unknown } | undefined)?.maxConcurrency) {
+      return { ok: false, error: false };
+    }
     const row = await db.select({ maxConcurrency: schema.sites.maxConcurrency })
       .from(schema.sites)
       .where(eq(schema.sites.id, siteId))
