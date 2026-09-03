@@ -9,6 +9,7 @@ describe('payload rule platform options', () => {
       '',
       'codex',
       'sub2api',
+      'axonhub',
       'new-api',
       'one-api',
       'cliproxyapi',

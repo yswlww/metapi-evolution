@@ -1,3 +1,4 @@
+import { detectPlatformByUrlHint, parseHttpUrlCandidate } from '../../../shared/platformIdentity.js';
 import {
   StandardApiProviderAdapterBase,
   normalizePlatformBaseUrl,
@@ -10,18 +11,13 @@ export class CliProxyApiAdapter extends StandardApiProviderAdapterBase {
   protected override checkinUnsupportedMessage = 'CLIProxyAPI does not support checkin';
 
   async detect(url: string): Promise<boolean> {
-    const normalized = (url || '').toLowerCase();
+    const parsed = parseHttpUrlCandidate(url);
+    if (!parsed) return false;
+    if (detectPlatformByUrlHint(url) === this.platformName) return true;
 
-    if (/:8317(\/|$)/.test(normalized)) {
-      return true;
-    }
-
-    if (normalized.includes('cliproxy')) {
-      return true;
-    }
-
+    const normalized = parsed.toString();
+    const base = normalizePlatformBaseUrl(normalized);
     try {
-      const base = normalizePlatformBaseUrl(url);
       const { fetch } = await import('undici');
       const res = await fetch(`${base}/v0/management/openai-compatibility`, {
         method: 'GET',

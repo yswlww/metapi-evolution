@@ -136,19 +136,23 @@ Metapi 当前有三类主要配置入口：
 
 ### 2. OAuth 与 Provider 登录
 
-这一节只在你需要覆盖默认 OAuth client 配置时才看。
+这一节说明 OAuth client 的环境变量配置。Codex 和 Claude 保留各自的现有默认行为；Gemini CLI 和 Antigravity 不包含内置 Google OAuth client 凭据。
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
 | `CODEX_CLIENT_ID` | 覆盖内置 Codex OAuth Client ID | 内置默认值 |
 | `CLAUDE_CLIENT_ID` | 覆盖内置 Claude OAuth Client ID | 内置默认值 |
 | `CLAUDE_CLIENT_SECRET` | 预留的 Claude OAuth Client Secret（默认留空） | 空 |
-| `GEMINI_CLI_CLIENT_ID` | 覆盖内置 Gemini CLI OAuth Client ID | 内置默认值 |
-| `GEMINI_CLI_CLIENT_SECRET` | 覆盖内置 Gemini CLI OAuth Client Secret | 内置默认值 |
+| `GEMINI_CLI_CLIENT_ID` | Gemini CLI OAuth Client ID | 空（使用 Gemini CLI OAuth 时必填） |
+| `GEMINI_CLI_CLIENT_SECRET` | Gemini CLI OAuth Client Secret | 空（使用 Gemini CLI OAuth 时必填） |
+| `ANTIGRAVITY_CLIENT_ID` | Antigravity OAuth Client ID | 空（使用 Antigravity OAuth 时必填） |
+| `ANTIGRAVITY_CLIENT_SECRET` | Antigravity OAuth Client Secret | 空（使用 Antigravity OAuth 时必填） |
 
 说明：
 
-- `Antigravity` 当前不需要额外环境变量即可启用。
+- 使用 Gemini CLI OAuth 时，必须同时提供 `GEMINI_CLI_CLIENT_ID` 和 `GEMINI_CLI_CLIENT_SECRET`；不使用该 provider 时可以留空。
+- 使用 Antigravity OAuth 时，必须同时提供 `ANTIGRAVITY_CLIENT_ID` 和 `ANTIGRAVITY_CLIENT_SECRET`；不使用该 provider 时可以留空。
+- 这些 Google OAuth 凭据必须通过部署 secret manager，或未跟踪的本地 `.env` / 容器环境变量提供；不要把真实值写入仓库。`.env.example` 中的字段保持为空。
 - 如果你的部署环境访问 provider 受限，优先先在 UI 里配置**系统代理**。
 - 如果 OAuth 页面运行在远程服务器上，还要考虑 SSH 隧道或手动回填 callback，详见 [OAuth 管理](./oauth.md)。
 
@@ -208,6 +212,34 @@ Metapi 当前有三类主要配置入口：
 
 - **批量测活开关本身**已经在 UI 里有了
 - 这里只剩下间隔、超时、并发这些更高级的细项还没有 UI
+
+### 5. 请求速率限制
+
+请求限流分为两层：全局粗粒度保护，以及认证成功后的身份级保护。三个限流环境变量如下：
+
+| 变量名 | 说明 | 默认值 |
+|--------|------|--------|
+| `REQUEST_RATE_LIMIT_MAX` | 每个 TCP socket 在一个窗口内允许的全局请求数 | `12000` |
+| `REQUEST_RATE_LIMIT_WINDOW_MS` | 全局和认证限流共用的窗口长度（毫秒） | `60000` |
+| `AUTHENTICATED_RATE_LIMIT_MAX` | 每个认证身份在一个窗口内允许的请求数 | `1200` |
+
+#### 限流身份与覆盖范围
+
+- **全局层**使用 `REQUEST_RATE_LIMIT_MAX` 和 `REQUEST_RATE_LIMIT_WINDOW_MS`，按 TCP socket 的 `remoteAddress` 计数。这是有意保守的粗粒度保护：同一个 socket 共享一个桶，不按用户、Token 或 provider 细分。
+- **管理员 API**在管理员认证成功后，使用固定的 `admin` 身份计数。因此当前进程内所有已认证的管理员 API 请求共享一个 `AUTHENTICATED_RATE_LIMIT_MAX` 桶。
+- **下游代理**在代理认证成功后按认证结果计数：托管下游密钥使用 `managed:<managed-key-id>` 身份，各托管密钥相互独立；全局 `PROXY_TOKEN` 使用 `global` 身份，使用该全局 Token 的代理请求共享一个桶。
+- **Responses 原始 WebSocket**升级在提取令牌和数据库认证之前，先按 TCP socket `remoteAddress` 进入全局粗粒度边界；认证成功后，连接创建和每个请求 frame 分别使用认证身份桶，并共享 `AUTHENTICATED_RATE_LIMIT_MAX` 上限。连接桶与 frame 桶相互独立，frame 被拒绝时返回 WebSocket `429` 错误和重试秒数，不会继续路由或消耗托管配额。
+- 认证失败的请求不会进入上述认证身份桶，但仍会受到全局层保护。
+
+全局层直接使用 socket 地址，不使用 `X-Forwarded-For` 作为限流身份；管理员、托管密钥和全局代理 Token 的认证身份也不由 `X-Forwarded-For` 决定。反向代理即使改变该请求头，也不会为这些限流边界生成新的桶。现有的 IP 白名单和路由专属保护仍按各自既有语义工作。
+
+限流计数器和 Responses WebSocket 的内部 HTTP fallback 上下文都保存在当前 Node.js 进程内。多进程、多容器或多副本部署时，每个实例都有独立计数，不能自动形成集群级上限；需要跨实例统一限制时，建议接入共享限流存储（例如 Redis），或在服务前使用具备共享状态的网关、WAF 或负载均衡器。
+
+`GET /api/desktop/health` 是健康探测例外，不要求认证，也不参与全局限流。其他更靠近敏感操作的路由仍保留更严格的路由级 guard；例如修改管理员 Token 的路由仍限制为每个来源地址每 60 秒最多 3 次。这些更严格的限制与全局、认证边界叠加，不会因新增全局限流而取消。
+
+全局边界超限时返回 HTTP `429`，JSON 固定为 `{"statusCode":429,"error":"Too many requests","retryAfter":"..."}`，并设置秒数形式的 `Retry-After` 响应头。既有路由级 guard 保持项目兼容的 `{"success":false,"message":"请求过于频繁，请稍后再试"}` JSON 形状，同时设置 `Retry-After`；两种形状都表示同一类 429 限流结果。
+
+根插件会在注册 API 和 proxy 路由之前安装全局限流；根级 enforcement hook 在 CORS 之后、退休路由 guard 和认证之前执行。因此未来新增 provider 或在根插件之后注册的新路由会自动受到全局保护，无需为每个 provider 或路由另行配置 limiter；认证代理路由仍沿用其既有的认证身份级保护。
 
 ---
 

@@ -26,6 +26,10 @@ const expectedComposeVariables = [
   'TELEGRAM_MESSAGE_THREAD_ID',
   'TELEGRAM_USE_SYSTEM_PROXY',
   'TZ',
+  'GEMINI_CLI_CLIENT_ID',
+  'GEMINI_CLI_CLIENT_SECRET',
+  'ANTIGRAVITY_CLIENT_ID',
+  'ANTIGRAVITY_CLIENT_SECRET',
 ] as const;
 
 const expectedComposeMappings = [
@@ -43,6 +47,10 @@ const expectedComposeMappings = [
   'TELEGRAM_API_BASE_URL: "${TELEGRAM_API_BASE_URL:-}"',
   'TELEGRAM_MESSAGE_THREAD_ID: "${TELEGRAM_MESSAGE_THREAD_ID:-}"',
   'TELEGRAM_USE_SYSTEM_PROXY: ${TELEGRAM_USE_SYSTEM_PROXY:-false}',
+  'GEMINI_CLI_CLIENT_ID: "${GEMINI_CLI_CLIENT_ID:-}"',
+  'GEMINI_CLI_CLIENT_SECRET: "${GEMINI_CLI_CLIENT_SECRET:-}"',
+  'ANTIGRAVITY_CLIENT_ID: "${ANTIGRAVITY_CLIENT_ID:-}"',
+  'ANTIGRAVITY_CLIENT_SECRET: "${ANTIGRAVITY_CLIENT_SECRET:-}"',
 ] as const;
 
 describe('docker workflows', () => {
@@ -120,5 +128,32 @@ describe('docker workflows', () => {
     expect(dockerfile).not.toContain('npm ci --no-audit --no-fund');
     expect(dockerfile).toContain('RUN npm run build:web && npm run build:server');
     expect(dockerfile).toContain('npm prune --omit=dev --no-audit --no-fund');
+  });
+
+  it('forwards Google OAuth variables through hosted deployment templates without defaults', () => {
+    const dockerEnvExample = readFileSync(resolve(process.cwd(), 'docker/.env.example'), 'utf8');
+    const render = readFileSync(resolve(process.cwd(), 'render.yaml'), 'utf8');
+    const zeabur = readFileSync(resolve(process.cwd(), 'zeabur-template.yaml'), 'utf8');
+    const oauthVariables = [
+      'GEMINI_CLI_CLIENT_ID',
+      'GEMINI_CLI_CLIENT_SECRET',
+      'ANTIGRAVITY_CLIENT_ID',
+      'ANTIGRAVITY_CLIENT_SECRET',
+    ] as const;
+
+    for (const variable of oauthVariables) {
+      expect(dockerEnvExample, `${variable} should be blank by default`).toMatch(
+        new RegExp(`^${variable}=$`, 'm'),
+      );
+      expect(render, `render.yaml should expose ${variable} as a runtime secret`).toContain(
+        `- key: ${variable}\n        sync: false`,
+      );
+      expect(zeabur, `zeabur-template.yaml should declare ${variable}`).toContain(
+        `- key: ${variable}`,
+      );
+      expect(zeabur, `zeabur-template.yaml should inject ${variable}`).toContain(
+        `          ${variable}:\n            default: \${${variable}}\n            expose: false`,
+      );
+    }
   });
 });
