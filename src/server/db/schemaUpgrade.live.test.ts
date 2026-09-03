@@ -30,5 +30,5 @@ describe('schema upgrade parity', () => {
     });
     const live = await introspectLiveSchema({ dialect: 'postgres', connectionString: postgresUrl });
     expect(live).toEqual(currentContract);
-  });
+  }, LIVE_SCHEMA_UPGRADE_TIMEOUT_MS);
 });
