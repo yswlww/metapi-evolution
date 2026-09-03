@@ -1,18 +1,17 @@
 import { db, schema } from '../db/index.js';
 import { getAdapter } from './platforms/index.js';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { appendSessionTokenRebindHint, isTokenExpiredError } from './alertRules.js';
 import { reportTokenExpired } from './alertService.js';
 import {
   buildStoredSub2ApiSubscriptionSummary,
-  getAutoReloginConfig,
   getCredentialModeFromExtraConfig,
   getSub2ApiAuthFromExtraConfig,
   mergeAccountExtraConfig,
   resolveProxyUrlFromExtraConfig,
   resolvePlatformUserId,
 } from './accountExtraConfig.js';
-import { decryptAccountPassword } from './accountCredentialService.js';
+import { autoReloginAccount } from './accountAutoReloginService.js';
 import { extractRuntimeHealth, setAccountRuntimeHealth } from './accountHealthService.js';
 import { updateTodayIncomeSnapshot } from './todayIncomeRewardService.js';
 import type { BalanceInfo } from './platforms/base.js';
@@ -68,6 +67,32 @@ function isUnsupportedCheckinRuntimeHealth(health: ReturnType<typeof extractRunt
 const INCOME_LOG_TYPES = [1, 4] as const;
 const LOG_PAGE_SIZE = 100;
 const LOG_MAX_PAGES = 6;
+const BALANCE_CONFIG_PERSIST_MAX_ATTEMPTS = 3;
+
+type BalanceConfigPatch = {
+  todayIncome?: number;
+  sub2apiSubscription?: NonNullable<BalanceInfo['subscriptionSummary']>;
+};
+
+function hasBalanceConfigPatch(patch: BalanceConfigPatch): boolean {
+  return patch.todayIncome !== undefined || patch.sub2apiSubscription !== undefined;
+}
+
+function mergeBalanceConfigPatch(
+  extraConfig: string | null | undefined,
+  patch: BalanceConfigPatch,
+): string | null {
+  let merged = extraConfig;
+  if (patch.todayIncome !== undefined) {
+    merged = updateTodayIncomeSnapshot(merged, patch.todayIncome);
+  }
+  if (patch.sub2apiSubscription) {
+    merged = mergeAccountExtraConfig(merged, {
+      sub2apiSubscription: buildStoredSub2ApiSubscriptionSummary(patch.sub2apiSubscription),
+    });
+  }
+  return merged ?? null;
+}
 
 function supportsTodayIncomeLogFallback(platform?: string | null): boolean {
   const normalized = (platform || '').toLowerCase();
@@ -208,34 +233,6 @@ async function fetchTodayIncomeFromLogs(params: {
   return Math.round(totalIncome * 1_000_000) / 1_000_000;
 }
 
-async function tryAutoRelogin(account: any, site: any): Promise<string | null> {
-  const adapter = getAdapter(site.platform);
-  if (!adapter) return null;
-
-  const relogin = getAutoReloginConfig(account.extraConfig);
-  if (!relogin) return null;
-
-  const password = decryptAccountPassword(relogin.passwordCipher);
-  if (!password) return null;
-
-  const loginResult = await withAccountProxyOverride(
-    resolveProxyUrlFromExtraConfig(account.extraConfig),
-    () => adapter.login(site.url, relogin.username, password),
-  );
-  if (!loginResult.success || !loginResult.accessToken) return null;
-
-  await db.update(schema.accounts)
-    .set({
-      accessToken: loginResult.accessToken,
-      status: account.status === 'expired' ? 'active' : account.status,
-      updatedAt: new Date().toISOString(),
-    })
-    .where(eq(schema.accounts.id, account.id))
-    .run();
-
-  return loginResult.accessToken;
-}
-
 export async function refreshBalance(accountId: number) {
   const rows = await db
     .select()
@@ -250,7 +247,7 @@ export async function refreshBalance(accountId: number) {
   const site = rows[0].sites;
 
   if (isSiteDisabled(site.status)) {
-    setAccountRuntimeHealth(account.id, {
+    await setAccountRuntimeHealth(account.id, {
       state: 'disabled',
       reason: '站点已禁用',
       source: 'balance',
@@ -277,7 +274,7 @@ export async function refreshBalance(accountId: number) {
     };
   }
 
-  const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
+  let activePlatformUserId = resolvePlatformUserId(account.extraConfig, account.username);
   let activeAccessToken = account.accessToken;
   let activeExtraConfig = account.extraConfig;
   let balanceInfo: BalanceInfo | null = null;
@@ -300,10 +297,10 @@ export async function refreshBalance(accountId: number) {
     }
   }
   const readBalance = async (token: string) => withAccountProxyOverride(accountProxyUrl,
-    () => adapter.getBalance(site.url, token, platformUserId));
+    () => adapter.getBalance(site.url, token, activePlatformUserId));
   const handleBalanceError = async (err: any) => {
     const message = appendSessionTokenRebindHint(err?.message || 'unknown error');
-    setAccountRuntimeHealth(account.id, {
+    await setAccountRuntimeHealth(account.id, {
       state: 'unhealthy',
       reason: message,
       source: 'balance',
@@ -343,9 +340,11 @@ export async function refreshBalance(accountId: number) {
         await handleBalanceError(retryErr);
       }
     } else if (shouldAttemptAutoRelogin(message)) {
-      const refreshedAccessToken = await tryAutoRelogin(account, site);
-      if (refreshedAccessToken) {
-        activeAccessToken = refreshedAccessToken;
+      const refreshed = await autoReloginAccount(account, site);
+      if (refreshed) {
+        activeAccessToken = refreshed.accessToken;
+        activePlatformUserId = refreshed.platformUserId;
+        activeExtraConfig = refreshed.extraConfig;
         try {
           balanceInfo = await readBalance(activeAccessToken);
         } catch (retryErr: any) {
@@ -372,7 +371,7 @@ export async function refreshBalance(accountId: number) {
         baseUrl: site.url,
         accessToken: activeAccessToken,
         platform: site.platform,
-        platformUserId,
+        platformUserId: activePlatformUserId,
       }));
       if (typeof fallbackIncome === 'number' && Number.isFinite(fallbackIncome)) {
         balanceInfo.todayIncome = fallbackIncome;
@@ -380,37 +379,86 @@ export async function refreshBalance(accountId: number) {
     } catch {}
   }
 
-  let nextExtraConfig = activeExtraConfig;
+  const balanceConfigPatch: BalanceConfigPatch = {};
   if (typeof balanceInfo.todayIncome === 'number' && Number.isFinite(balanceInfo.todayIncome)) {
-    nextExtraConfig = updateTodayIncomeSnapshot(nextExtraConfig, balanceInfo.todayIncome);
+    balanceConfigPatch.todayIncome = balanceInfo.todayIncome;
   }
   if (balanceInfo.subscriptionSummary && isSub2ApiPlatform(site.platform)) {
-    nextExtraConfig = mergeAccountExtraConfig(nextExtraConfig, {
-      sub2apiSubscription: buildStoredSub2ApiSubscriptionSummary(balanceInfo.subscriptionSummary),
-    });
+    balanceConfigPatch.sub2apiSubscription = balanceInfo.subscriptionSummary;
   }
 
-  const existingRuntimeHealth = extractRuntimeHealth(nextExtraConfig);
-  const keepUnsupportedCheckinDegraded = isUnsupportedCheckinRuntimeHealth(existingRuntimeHealth);
-
-  const updates: Record<string, unknown> = {
+  const buildBalanceTelemetryUpdates = (): Record<string, unknown> => ({
     balance: balanceInfo.balance,
     balanceUsed: balanceInfo.used,
     quota: balanceInfo.quota,
-    status: account.status === 'expired' ? 'active' : account.status,
     lastBalanceRefresh: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-  };
-  if (nextExtraConfig !== account.extraConfig) {
-    updates.extraConfig = nextExtraConfig;
+  });
+
+  let finalExtraConfig = activeExtraConfig;
+  let persistedBalance = false;
+  for (let attempt = 0; attempt < BALANCE_CONFIG_PERSIST_MAX_ATTEMPTS; attempt += 1) {
+    const currentAccount = await db.select()
+      .from(schema.accounts)
+      .where(eq(schema.accounts.id, accountId))
+      .get();
+    if (!currentAccount) break;
+    if (currentAccount.accessToken !== activeAccessToken) return balanceInfo;
+
+    const mergedExtraConfig = hasBalanceConfigPatch(balanceConfigPatch)
+      ? mergeBalanceConfigPatch(currentAccount.extraConfig, balanceConfigPatch)
+      : currentAccount.extraConfig;
+    const extraConfigCondition = currentAccount.extraConfig == null
+      ? isNull(schema.accounts.extraConfig)
+      : eq(schema.accounts.extraConfig, currentAccount.extraConfig);
+    const updatedAtCondition = currentAccount.updatedAt == null
+      ? isNull(schema.accounts.updatedAt)
+      : eq(schema.accounts.updatedAt, currentAccount.updatedAt);
+    const updates = buildBalanceTelemetryUpdates();
+    if (account.status === 'expired' && currentAccount.status === 'expired') {
+      updates.status = 'active';
+    }
+    if (hasBalanceConfigPatch(balanceConfigPatch)) {
+      updates.extraConfig = mergedExtraConfig;
+    }
+
+    const result = await db.update(schema.accounts)
+      .set(updates)
+      .where(and(
+        eq(schema.accounts.id, accountId),
+        extraConfigCondition,
+        updatedAtCondition,
+      ))
+      .run();
+    if (result.changes > 0) {
+      finalExtraConfig = mergedExtraConfig;
+      persistedBalance = true;
+      break;
+    }
   }
 
-  await db.update(schema.accounts)
-    .set(updates)
-    .where(eq(schema.accounts.id, accountId))
-    .run();
+  if (!persistedBalance) {
+    const result = await db.update(schema.accounts)
+      .set(buildBalanceTelemetryUpdates())
+      .where(and(
+        eq(schema.accounts.id, accountId),
+        eq(schema.accounts.accessToken, activeAccessToken),
+      ))
+      .run();
+    if (result.changes <= 0) return balanceInfo;
 
-  setAccountRuntimeHealth(account.id, {
+    const finalAccount = await db.select()
+      .from(schema.accounts)
+      .where(eq(schema.accounts.id, accountId))
+      .get();
+    if (!finalAccount || finalAccount.accessToken !== activeAccessToken) return balanceInfo;
+    finalExtraConfig = finalAccount.extraConfig;
+  }
+
+  const existingRuntimeHealth = extractRuntimeHealth(finalExtraConfig);
+  const keepUnsupportedCheckinDegraded = isUnsupportedCheckinRuntimeHealth(existingRuntimeHealth);
+
+  await setAccountRuntimeHealth(account.id, {
     state: keepUnsupportedCheckinDegraded ? 'degraded' : 'healthy',
     reason: keepUnsupportedCheckinDegraded
       ? (existingRuntimeHealth?.reason || '\u7ad9\u70b9\u4e0d\u652f\u6301\u7b7e\u5230\u63a5\u53e3')

@@ -1,10 +1,10 @@
+import { detectPlatformByUrlHint } from '../../../shared/platformIdentity.js';
 import { GeminiAdapter } from './gemini.js';
 
 export class GeminiCliAdapter extends GeminiAdapter {
   override readonly platformName = 'gemini-cli';
 
   override async detect(url: string): Promise<boolean> {
-    const normalized = (url || '').toLowerCase();
-    return normalized.includes('cloudcode-pa.googleapis.com');
+    return detectPlatformByUrlHint(url) === this.platformName;
   }
 }

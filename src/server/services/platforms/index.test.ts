@@ -43,6 +43,32 @@ describe('getAdapter platform aliases', () => {
     expect(adapter?.platformName).toBe('anyrouter');
   });
 
+  it('discovers AxonHub models through its OpenAI-compatible endpoint', async () => {
+    await withHttpServer((req, res) => {
+      if (req.url === '/v1/models' && req.headers.authorization === 'Bearer axon-key') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          object: 'list',
+          data: [
+            { id: 'gpt-5.5', object: 'model' },
+            { id: 'claude-opus-4-6', object: 'model' },
+          ],
+        }));
+        return;
+      }
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { type: 'Unauthorized', message: 'Invalid API key' } }));
+    }, async (baseUrl) => {
+      const adapter = getAdapter('axonhub');
+
+      expect(adapter?.platformName).toBe('axonhub');
+      await expect(adapter?.getModels(baseUrl, 'axon-key')).resolves.toEqual([
+        'gpt-5.5',
+        'claude-opus-4-6',
+      ]);
+    });
+  });
+
   it('handles case-insensitive platform strings', () => {
     const adapter = getAdapter('Veloera');
     expect(adapter?.platformName).toBe('veloera');
@@ -61,6 +87,53 @@ describe('getAdapter platform aliases', () => {
     expect(getAdapter('openai')?.platformName).toBe('openai');
     expect(getAdapter('claude')?.platformName).toBe('claude');
     expect(getAdapter('gemini')?.platformName).toBe('gemini');
+  });
+
+  it.each([
+    ['openai', 'https://api.openai.com.attacker.test/'],
+    ['claude', 'https://api.anthropic.com.attacker.test/'],
+    ['gemini', 'https://generativelanguage.googleapis.com.attacker.test/'],
+    ['gemini-cli', 'https://cloudcode-pa.googleapis.com.attacker.test/'],
+  ] as const)('does not let %s detect look-alike URL %s', async (platform, url) => {
+    const adapter = getAdapter(platform);
+    expect(adapter).toBeDefined();
+    await expect(adapter!.detect(url)).resolves.toBe(false);
+  });
+
+  const rawProviderTextCases = [
+    ['codex', 'chatgpt.com/backend-api/codex'],
+    ['anyrouter', 'anyrouter'],
+    ['one-hub', 'one-hub'],
+    ['done-hub', 'done-hub'],
+    ['antigravity', 'antigravity'],
+    ['cliproxyapi', 'cliproxy'],
+    ['sub2api', 'sub2api'],
+  ] as const;
+
+  it.each(rawProviderTextCases)('ignores %s text in path, query, fragment, and userinfo', async (_platform, text) => {
+    await withHttpServer((_req, res) => {
+      res.writeHead(404).end();
+    }, async (baseUrl) => {
+      const parsed = new URL(baseUrl);
+      const cases = [
+        `${baseUrl}/unrelated/${text}`,
+        `${baseUrl}/?next=${encodeURIComponent(text)}`,
+        `${baseUrl}/#${encodeURIComponent(text)}`,
+        `${parsed.protocol}//${encodeURIComponent(text)}@${parsed.host}/`,
+      ];
+
+      for (const url of cases) {
+        await expect(detectPlatform(url)).resolves.toBeUndefined();
+      }
+    });
+  });
+
+  it('rejects OpenAI provider text in a URL fragment at registry level', async () => {
+    await withHttpServer((_req, res) => {
+      res.writeHead(404).end();
+    }, async (baseUrl) => {
+      await expect(detectPlatform(`${baseUrl}/#api.openai.com/v1`)).resolves.toBeUndefined();
+    });
   });
 
   it('supports antigravity adapter aliases', () => {
@@ -91,6 +164,15 @@ describe('getAdapter platform aliases', () => {
     expect(openai?.platformName).toBe('openai');
     expect(claude?.platformName).toBe('claude');
     expect(gemini?.platformName).toBe('gemini');
+  });
+
+  it('rejects provider text in an unrelated URL path', async () => {
+    await withHttpServer((_req, res) => {
+      res.writeHead(404).end();
+    }, async (baseUrl) => {
+      const adapter = await detectPlatform(`${baseUrl}/api.openai.com/v1`);
+      expect(adapter).toBeUndefined();
+    });
   });
 
   it('detects one-hub by title under custom domain before generic new-api', async () => {
@@ -126,6 +208,20 @@ describe('getAdapter platform aliases', () => {
     }, async (baseUrl) => {
       const adapter = await detectPlatform(baseUrl);
       expect(adapter?.platformName).toBe('done-hub');
+    });
+  });
+
+  it('detects AxonHub by title under a custom domain', async () => {
+    await withHttpServer((req, res) => {
+      if (req.url === '/') {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<html><head><title>AxonHub Console</title></head><body></body></html>');
+        return;
+      }
+      res.writeHead(404).end();
+    }, async (baseUrl) => {
+      const adapter = await detectPlatform(baseUrl);
+      expect(adapter?.platformName).toBe('axonhub');
     });
   });
 

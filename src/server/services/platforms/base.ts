@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
+import { normalizePlatformUserId } from '../platformUserId.js';
 
 export interface CheckinResult {
   success: boolean;
@@ -37,11 +38,32 @@ export interface BalanceInfo {
   subscriptionSummary?: SubscriptionSummary;
 }
 
-interface LoginResult {
+export interface LoginResult {
   success: boolean;
   accessToken?: string;
   username?: string;
+  platformUserId?: number;
   message?: string;
+}
+
+function getRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+export function extractPlatformUserIdFromLoginPayload(payload: unknown): number | undefined {
+  const response = getRecord(payload);
+  const data = getRecord(response?.data);
+  const dataUser = getRecord(data?.user);
+  const user = getRecord(response?.user);
+  const candidates = [data?.id, dataUser?.id, user?.id, response?.id];
+
+  for (const candidate of candidates) {
+    const id = normalizePlatformUserId(candidate);
+    if (id) return id;
+  }
+  return undefined;
 }
 
 export interface UserInfo {
@@ -163,10 +185,12 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
         body: JSON.stringify({ username, password }),
       });
       if (res?.success && res?.data) {
+        const platformUserId = extractPlatformUserIdFromLoginPayload(res);
         return {
           success: true,
           accessToken: typeof res.data === 'string' ? res.data : res.data.token || res.data.access_token,
           username,
+          ...(platformUserId ? { platformUserId } : {}),
         };
       }
       return { success: false, message: res?.message || '登录失败' };

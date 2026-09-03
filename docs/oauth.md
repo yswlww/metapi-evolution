@@ -54,7 +54,16 @@ OAuth 管理
 
 ## 授权前的准备
 
-### 1. 确保 Metapi 能访问 provider 的 OAuth 端点
+### 1. 准备 Google OAuth client 凭据
+
+Gemini CLI 和 Antigravity 都不包含内置的 Google OAuth client 凭据。下面四个环境变量的默认值均为空，并且只在使用对应 provider 时必填：
+
+- 使用 Gemini CLI OAuth 时，同时提供 `GEMINI_CLI_CLIENT_ID` 和 `GEMINI_CLI_CLIENT_SECRET`
+- 使用 Antigravity OAuth 时，同时提供 `ANTIGRAVITY_CLIENT_ID` 和 `ANTIGRAVITY_CLIENT_SECRET`
+
+请通过部署 secret manager，或未跟踪的本地 `.env` / 容器环境变量提供这些值；不要把真实凭据写入仓库。未使用的 provider 可以保持对应字段为空，`.env.example` 也只保留空白模板。缺少对应配置时，该 provider 的 OAuth 流程无法启动。
+
+### 2. 确保 Metapi 能访问 provider 的 OAuth 端点
 
 如果你的部署环境访问外网受限，可以：
 
@@ -63,7 +72,7 @@ OAuth 管理
 
 相关环境变量见 [配置说明](/configuration) 里的「OAuth 与 Provider 登录」一节。
 
-### 2. 远程部署要提前考虑回调方式
+### 3. 远程部署要提前考虑回调方式
 
 OAuth 默认使用 Metapi 本机上的 loopback 回调地址，例如本机 `127.0.0.1` 端口。
 
@@ -72,7 +81,7 @@ OAuth 默认使用 Metapi 本机上的 loopback 回调地址，例如本机 `127
 1. **SSH 隧道**：按页面给出的命令，把回调端口转发到远端
 2. **手动回填 callback URL**：如果浏览器已经完成授权，但自动回调没打通，可把最终回调地址手动贴回管理页
 
-### 3. 了解它和普通站点接入的边界
+### 4. 了解它和普通站点接入的边界
 
 OAuth 连接更适合“provider 原生账号授权”，而不是：
 

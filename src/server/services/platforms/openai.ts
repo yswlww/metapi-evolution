@@ -1,11 +1,11 @@
+import { detectPlatformByUrlHint } from '../../../shared/platformIdentity.js';
 import { StandardApiProviderAdapterBase } from './standardApiProvider.js';
 
 export class OpenAiAdapter extends StandardApiProviderAdapterBase {
-  readonly platformName = 'openai';
+  readonly platformName: string = 'openai';
 
   async detect(url: string): Promise<boolean> {
-    const normalized = (url || '').toLowerCase();
-    return normalized.includes('api.openai.com');
+    return detectPlatformByUrlHint(url) === this.platformName;
   }
 
   async getModels(baseUrl: string, apiToken: string): Promise<string[]> {

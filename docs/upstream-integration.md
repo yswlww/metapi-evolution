@@ -299,6 +299,30 @@ CPA 这类站点推荐直接使用 **API Key**：
 
 ---
 
+### AxonHub
+
+**适用场景：** 官方 AxonHub 入口 `hub.linux.do`，以及通过页面标题检测或手动选择接入的自定义部署。Metapi 会将其作为独立的 OpenAI 兼容平台处理。
+
+#### 站点配置
+
+| 字段 | 说明 | 示例 |
+|------|------|------|
+| **站点名称** | 自定义名称 | `LINUX DO Hub` |
+| **站点 URL** | AxonHub 根地址（不需要填写完整 API 路径） | `https://hub.linux.do` |
+| **平台类型** | 可自动检测，也可手动选择 `axonhub` | - |
+
+#### 账号凭证
+
+**仅支持 API Key：** 在账号页选择「API Key」连接方式并粘贴 AxonHub 生成的密钥。Metapi 通过 `GET /v1/models` 验证密钥并发现模型。
+
+#### 协议兼容
+
+- 上游优先使用 `/v1/responses`，再尝试 `/v1/chat/completions` 和 `/v1/messages`
+- 某个 AxonHub 端点返回 `410 Gone` 时，会自动尝试该模型的下一个兼容协议
+- 不支持用户名密码登录、自动签到、站点余额或用户信息抓取
+
+---
+
 ### Claude (Anthropic)
 
 **适用场景：** 直连 Anthropic Claude API
@@ -528,6 +552,7 @@ Metapi 支持自动识别站点类型，当前检测优先级如下：
 | `generativelanguage.googleapis.com` | Gemini |
 | `chatgpt.com/backend-api/codex` | Codex |
 | `127.0.0.1:8317` / `localhost:8317` / `cliproxy` | CLIProxyAPI / CPA |
+| `hub.linux.do` | AxonHub（自定义部署可通过页面标题检测或手动选择） |
 | `anyrouter` | AnyRouter |
 | `donehub` / `done-hub` | DoneHub |
 | `onehub` / `one-hub` | OneHub |

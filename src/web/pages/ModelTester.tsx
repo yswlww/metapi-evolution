@@ -6,6 +6,7 @@ import {
   DEFAULT_INPUTS,
   DEFAULT_MODE_STATE,
   DEFAULT_PARAMETER_ENABLED,
+  DEFAULT_IMAGE_PARAMETER_ENABLED,
   MODEL_TESTER_STORAGE_KEY,
   MESSAGE_STATUS,
   buildApiPayload,
@@ -43,6 +44,7 @@ import {
   type ModelTesterInputs,
   type ModelTesterModeState,
     type ParameterEnabled,
+    type ImageGenerationParameterEnabled,
     type PlaygroundMode,
     type PlaygroundProtocol,
     type PlaygroundMultipartFile,
@@ -58,6 +60,8 @@ import {
 } from './helpers/conversationFileCapabilities.js';
 import ConversationComposer from './model-tester/ConversationComposer.js';
 import DebugPanel from './model-tester/DebugPanel.js';
+import ImageGenerationPanel from './model-tester/ImageGenerationPanel.js';
+import ImageResultGallery from './model-tester/ImageResultGallery.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { useIsMobile } from '../components/useIsMobile.js';
@@ -132,6 +136,18 @@ const formatJson = (value: unknown): string => {
   } catch {
     return String(value);
   }
+};
+
+const getImageGenerationOutputFormat = (envelope: ProxyTestEnvelope): string | null => {
+  if (envelope.path !== '/v1/images/generations') return null;
+  const body = envelope.rawMode
+    ? parseCustomRequestBody(envelope.rawJsonText || '')
+    : envelope.jsonBody;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const outputFormat = (body as Record<string, unknown>).output_format;
+  return typeof outputFormat === 'string' && outputFormat.trim()
+    ? outputFormat.trim()
+    : null;
 };
 
 const extractErrorMessage = (error: unknown): string => {
@@ -665,6 +681,7 @@ export default function ModelTester() {
   const [inputs, setInputs] = useState<ModelTesterInputs>(DEFAULT_INPUTS);
   const [modeState, setModeState] = useState<ModelTesterModeState>(DEFAULT_MODE_STATE);
   const [parameterEnabled, setParameterEnabled] = useState<ParameterEnabled>(DEFAULT_PARAMETER_ENABLED);
+  const [imageParameterEnabled, setImageParameterEnabled] = useState<ImageGenerationParameterEnabled>(DEFAULT_IMAGE_PARAMETER_ENABLED);
   const [forcedChannelId, setForcedChannelId] = useState<number | null>(null);
   const [forcedChannelOptions, setForcedChannelOptions] = useState<ForcedChannelOption[]>([]);
   const [loadingForcedChannels, setLoadingForcedChannels] = useState(false);
@@ -688,6 +705,7 @@ export default function ModelTester() {
   const [debugTimeline, setDebugTimeline] = useState<DebugTimelineEntry[]>([]);
   const [debugTimestamp, setDebugTimestamp] = useState('');
   const [nonConversationResult, setNonConversationResult] = useState<unknown>(null);
+  const [imageResultOutputFormat, setImageResultOutputFormat] = useState<string | null>(null);
 
   const [searchQueryValue, setSearchQueryValue] = useState('');
   const [searchAllowedDomains, setSearchAllowedDomains] = useState('');
@@ -758,6 +776,14 @@ export default function ModelTester() {
     setParameterEnabled((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
 
+  const toggleImageParameter = useCallback((key: keyof ImageGenerationParameterEnabled) => {
+    setImageParameterEnabled((prev) => ({ ...prev, [key]: !prev[key] }));
+  }, []);
+
+  const updateImageSettings = useCallback((changes: Partial<ModelTesterModeState>) => {
+    setModeState((prev) => ({ ...prev, ...changes }));
+  }, []);
+
   useEffect(() => {
     const restored = parseModelTesterSession(localStorage.getItem(MODEL_TESTER_STORAGE_KEY));
     restoredSessionRef.current = restored;
@@ -767,6 +793,7 @@ export default function ModelTester() {
     setInput(restored.input);
     setInputs(restored.inputs);
     setModeState(restored.modeState);
+    setImageParameterEnabled(restored.imageParameterEnabled || DEFAULT_IMAGE_PARAMETER_ENABLED);
     setParameterEnabled(restored.parameterEnabled);
     setPendingPayload(restored.pendingPayload);
     setPendingJobId(restored.pendingJobId || null);
@@ -779,7 +806,15 @@ export default function ModelTester() {
     setSearchQueryValue(restored.modeState.searchQuery);
     setSearchAllowedDomains(restored.modeState.searchAllowedDomains);
     setSearchBlockedDomains(restored.modeState.searchBlockedDomains);
-    setAssetPrompt(restored.modeState.imagesPrompt || restored.modeState.videosPrompt);
+    setAssetPrompt(
+      restored.inputs.mode === 'images.generate'
+        ? restored.modeState.imagesPrompt
+        : restored.inputs.mode === 'images.edit'
+          ? (restored.modeState.imagesEditPrompt || restored.modeState.imagesPrompt)
+          : restored.inputs.mode === 'videos.create'
+            ? restored.modeState.videosPrompt
+            : '',
+    );
     setVideoInspectId(restored.modeState.videosInspectId);
     setVideoInspectAction(restored.inputs.videoInspectAction === 'delete' ? 'DELETE' : 'GET');
     setConversationFiles(restored.conversationFiles);
@@ -909,16 +944,19 @@ export default function ModelTester() {
       input,
       inputs,
       parameterEnabled,
+      imageParameterEnabled,
       messages,
       conversationFiles,
       modeState: {
+        ...modeState,
         embeddingsInput: embeddingInputText,
         searchQuery: searchQueryValue,
         searchAllowedDomains,
         searchBlockedDomains,
-        imagesPrompt: inputs.mode === 'images.generate' || inputs.mode === 'images.edit' ? assetPrompt : '',
+        imagesPrompt: modeState.imagesPrompt,
+        imagesEditPrompt: inputs.mode === 'images.edit' ? assetPrompt : modeState.imagesEditPrompt,
         imagesMaskDataUrl: imageMaskFile?.dataUrl || '',
-        videosPrompt: inputs.mode === 'videos.create' ? assetPrompt : '',
+        videosPrompt: inputs.mode === 'videos.create' ? assetPrompt : modeState.videosPrompt,
         videosInspectId: videoInspectId,
         extraJson: customRequestBody,
       },
@@ -943,6 +981,8 @@ export default function ModelTester() {
     customRequestBody,
     embeddingInputText,
     imageMaskFile?.dataUrl,
+    imageParameterEnabled,
+    modeState,
     parameterEnabled,
     pendingJobId,
     pendingPayload,
@@ -1293,18 +1333,20 @@ export default function ModelTester() {
     }
 
     if (inputs.mode === 'images.generate') {
-      if (!assetPrompt.trim()) return null;
-      return {
-        method: 'POST',
-        path: '/v1/images/generations',
-        requestKind: 'json',
-        stream: false,
-        jobMode: false,
-        rawMode: customRequestMode,
-        ...(customRequestMode
-          ? { rawJsonText: customRequestBody }
-          : { jsonBody: { model: inputs.model, prompt: assetPrompt.trim() } }),
-      };
+      if (customRequestMode) {
+        if (!customRequestBody.trim()) return null;
+        return {
+          method: 'POST',
+          path: '/v1/images/generations',
+          requestKind: 'json',
+          stream: false,
+          jobMode: false,
+          rawMode: true,
+          rawJsonText: customRequestBody,
+        };
+      }
+      if (!modeState.imagesPrompt.trim()) return null;
+      return buildImagesGenerationsRequestEnvelope(inputs, modeState, imageParameterEnabled);
     }
 
     if (inputs.mode === 'images.edit') {
@@ -1388,7 +1430,7 @@ export default function ModelTester() {
     }
 
     return null;
-  }, [assetPrompt, customRequestBody, customRequestMode, embeddingInputText, imageMaskFile, imageSourceFile, inputs.mode, inputs.model, searchAllowedDomains, searchBlockedDomains, searchMaxResults, searchQueryValue, videoInspectAction, videoInspectId]);
+  }, [assetPrompt, buildImagesGenerationsRequestEnvelope, customRequestBody, customRequestMode, embeddingInputText, imageMaskFile, imageParameterEnabled, imageSourceFile, inputs.mode, inputs.model, modeState, searchAllowedDomains, searchBlockedDomains, searchMaxResults, searchQueryValue, videoInspectAction, videoInspectId]);
 
   const previewPayload = useMemo(() => {
     if (inputs.mode !== 'conversation') {
@@ -1498,11 +1540,16 @@ export default function ModelTester() {
     [filteredModels],
   );
   const canSend = useMemo(() => {
-    if (sending || pendingJobId || !inputs.model) return false;
+    const hasCustomImageGenerationBody = inputs.mode === 'images.generate'
+      && customRequestMode
+      && parseCustomRequestBody(customRequestBody) !== null;
+    if (sending || pendingJobId || (!inputs.model && !hasCustomImageGenerationBody)) return false;
     if (inputs.mode !== 'conversation') {
       if (inputs.mode === 'embeddings') return Boolean(embeddingInputText.trim());
       if (inputs.mode === 'search') return Boolean(searchQueryValue.trim());
-      if (inputs.mode === 'images.generate') return Boolean(assetPrompt.trim());
+      if (inputs.mode === 'images.generate') return customRequestMode
+        ? hasCustomImageGenerationBody
+        : Boolean(modeState.imagesPrompt.trim());
       if (inputs.mode === 'images.edit') return Boolean(assetPrompt.trim()) && Boolean(imageSourceFile);
       if (inputs.mode === 'videos.create') return Boolean(assetPrompt.trim());
       if (inputs.mode === 'videos.inspect') return Boolean(videoInspectId.trim());
@@ -1511,7 +1558,7 @@ export default function ModelTester() {
     const hasPrompt = input.trim().length > 0;
     if (!customRequestMode) return hasPrompt || (conversationFileSupported && conversationFiles.length > 0);
     return hasPrompt || customRequestBody.trim().length > 0;
-  }, [assetPrompt, conversationFileSupported, conversationFiles.length, customRequestBody, customRequestMode, embeddingInputText, imageSourceFile, input, inputs.mode, inputs.model, pendingJobId, searchQueryValue, sending, videoInspectId]);
+  }, [assetPrompt, conversationFileSupported, conversationFiles.length, customRequestBody, customRequestMode, embeddingInputText, imageSourceFile, input, inputs.mode, inputs.model, modeState.imagesPrompt, pendingJobId, searchQueryValue, sending, videoInspectId]);
 
   const startChatJob = useCallback(async (payload: TestChatPayload) => {
     try {
@@ -1853,7 +1900,10 @@ export default function ModelTester() {
 
   const dispatchProxyEnvelope = useCallback(async (envelope: ProxyTestEnvelope, nextMessages?: ChatMessage[]) => {
     const effectiveEnvelope = attachEnvelopeForcedChannel(envelope);
+    const requestedImageOutputFormat = getImageGenerationOutputFormat(effectiveEnvelope);
     setError('');
+    setNonConversationResult(null);
+    setImageResultOutputFormat(null);
     setDebugRequest(formatJson(effectiveEnvelope.rawMode
       ? { path: effectiveEnvelope.path, rawJsonText: effectiveEnvelope.rawJsonText, forcedChannelId: effectiveEnvelope.forcedChannelId }
       : effectiveEnvelope));
@@ -1872,6 +1922,7 @@ export default function ModelTester() {
       setDebugResponse(formatJson(result));
       setActiveDebugTab(DEBUG_TABS.RESPONSE);
       setNonConversationResult(result);
+      setImageResultOutputFormat(requestedImageOutputFormat);
 
       if (nextMessages) {
         setMessages((prev) => applyAssistantSuccess(nextMessages, result));
@@ -2114,12 +2165,29 @@ export default function ModelTester() {
     setDebugTimeline([]);
     setDebugTimestamp('');
     setNonConversationResult(null);
+    setImageResultOutputFormat(null);
     setSearchQueryValue('');
     setSearchAllowedDomains('');
     setSearchBlockedDomains('');
     setSearchMaxResults(10);
     setEmbeddingInputText('');
     setAssetPrompt('');
+    setModeState((prev) => ({
+      ...prev,
+      imagesPrompt: '',
+      imagesEditPrompt: '',
+      imagesN: null,
+      imagesSize: DEFAULT_MODE_STATE.imagesSize,
+      imagesQuality: DEFAULT_MODE_STATE.imagesQuality,
+      imagesStyle: DEFAULT_MODE_STATE.imagesStyle,
+      imagesResponseFormat: DEFAULT_MODE_STATE.imagesResponseFormat,
+      imagesOutputFormat: DEFAULT_MODE_STATE.imagesOutputFormat,
+      imagesBackground: DEFAULT_MODE_STATE.imagesBackground,
+      imagesOutputCompression: null,
+      imagesModeration: DEFAULT_MODE_STATE.imagesModeration,
+      imagesUser: '',
+    }));
+    setImageParameterEnabled(DEFAULT_IMAGE_PARAMETER_ENABLED);
     setVideoInspectId('');
     setVideoInspectAction('GET');
     setImageSourceFile(null);
@@ -2590,9 +2658,20 @@ export default function ModelTester() {
             </div>
           </div>
 
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 8, fontWeight: 600 }}>
-              采样参数
-            </div>
+          {inputs.mode === 'images.generate' ? (
+            <ImageGenerationPanel
+              isMobile={isMobile}
+              settings={modeState}
+              enabled={imageParameterEnabled}
+              customRequestMode={customRequestMode}
+              onSettingsChange={updateImageSettings}
+              onToggle={toggleImageParameter}
+            />
+          ) : (
+            <>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 8, fontWeight: 600 }}>
+                采样参数
+              </div>
 
           <ParameterRow
             title="温度"
@@ -2708,6 +2787,8 @@ export default function ModelTester() {
               disabled={!parameterEnabled.seed || customRequestMode}
             />
           </ParameterRow>
+            </>
+          )}
         </div>
 
         <div className="card" style={{ padding: 0, overflow: 'hidden', minHeight: isMobile ? 'auto' : 680, maxHeight: isMobile ? 'none' : 740, display: 'flex', flexDirection: 'column', order: isMobile ? 1 : 0 }}>
@@ -2745,25 +2826,14 @@ export default function ModelTester() {
                   </div>
                 </div>
 
-                {Array.isArray((nonConversationResult as any)?.data) && (nonConversationResult as any).data.some((item: any) => item?.url || item?.b64_json) && (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-                    {(nonConversationResult as any).data.map((item: any, index: number) => {
-                      const imageSrc = typeof item?.url === 'string'
-                        ? item.url
-                        : (typeof item?.b64_json === 'string' ? `data:image/png;base64,${item.b64_json}` : '');
-                      if (!imageSrc) return null;
-                      return (
-                        <div key={`image-${index}`} style={{
-                          border: '1px solid var(--color-border-light)',
-                          borderRadius: 'var(--radius-md)',
-                          overflow: 'hidden',
-                          background: 'var(--color-bg-card)',
-                        }}>
-                          <img src={imageSrc} alt={`generated-${index}`} style={{ width: '100%', display: 'block' }} />
-                        </div>
-                      );
-                    })}
-                  </div>
+                {(inputs.mode === 'images.generate' || inputs.mode === 'images.edit') && (
+                  <ImageResultGallery
+                    result={nonConversationResult}
+                    outputFormat={inputs.mode === 'images.generate'
+                      ? imageResultOutputFormat
+                      : modeState.imagesOutputFormat}
+                    isMobile={isMobile}
+                  />
                 )}
 
                 <pre style={{
@@ -3035,7 +3105,7 @@ export default function ModelTester() {
                     </div>
                   </>
                 )}
-                {(inputs.mode === 'images.generate' || inputs.mode === 'images.edit' || inputs.mode === 'videos.create') && (
+                {(inputs.mode === 'images.edit' || inputs.mode === 'videos.create') && (
                   <>
                     <textarea
                       value={assetPrompt}

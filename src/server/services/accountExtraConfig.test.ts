@@ -192,6 +192,14 @@ describe('accountExtraConfig', () => {
     expect(requiresManagedAccountTokens(structuredOauthAccount)).toBe(false);
   });
 
+  it('rejects malformed stored platform user IDs and falls back to a safe username suffix', () => {
+    for (const invalid of ['80305abc', '80305.9', '0', '-1', String(Number.MAX_SAFE_INTEGER + 1), true, {}, []]) {
+      const extraConfig = JSON.stringify({ platformUserId: invalid });
+      expect(getPlatformUserIdFromExtraConfig(extraConfig)).toBeUndefined();
+      expect(resolvePlatformUserId(extraConfig, 'demo-user_7659')).toBe(7659);
+    }
+  });
+
   it('parses stored sub2api subscription summary from extra config', () => {
     const extraConfig = mergeAccountExtraConfig(null, {
       sub2apiSubscription: buildStoredSub2ApiSubscriptionSummary({

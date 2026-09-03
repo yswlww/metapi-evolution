@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { and, eq } from 'drizzle-orm';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -39,6 +40,80 @@ describe('TokenRouter oauth route units', () => {
     await db.delete(schema.sites).run();
     invalidateTokenRouterCache();
   });
+
+  async function createExactValidationFixture() {
+    const site = await db.insert(schema.sites).values({
+      name: 'ChatGPT Codex OAuth',
+      url: 'https://chatgpt.com/backend-api/codex',
+      platform: 'codex',
+      status: 'active',
+    }).returning().get();
+    const accountA = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'exact-a@example.com',
+      accessToken: 'oauth-exact-a',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'exact-a',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: { provider: 'codex', accountId: 'exact-a', email: 'exact-a@example.com' },
+      }),
+    }).returning().get();
+    const accountB = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'exact-b@example.com',
+      accessToken: 'oauth-exact-b',
+      apiToken: null,
+      status: 'active',
+      oauthProvider: 'codex',
+      oauthAccountKey: 'exact-b',
+      extraConfig: JSON.stringify({
+        credentialMode: 'session',
+        oauth: { provider: 'codex', accountId: 'exact-b', email: 'exact-b@example.com' },
+      }),
+    }).returning().get();
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-5.4',
+      enabled: true,
+    }).returning().get();
+    const routeUnit = await db.insert(schema.oauthRouteUnits).values({
+      siteId: site.id,
+      provider: 'codex',
+      name: 'Exact Validation Pool',
+      strategy: 'round_robin',
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.oauthRouteUnitMembers).values([
+      { unitId: routeUnit.id, accountId: accountA.id, sortOrder: 0 },
+      { unitId: routeUnit.id, accountId: accountB.id, sortOrder: 1 },
+    ]).run();
+    await db.insert(schema.modelAvailability).values([
+      { accountId: accountA.id, modelName: 'gpt-5.4', available: true },
+      { accountId: accountB.id, modelName: 'gpt-5.4', available: true },
+    ]).run();
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: accountA.id,
+      tokenId: null,
+      oauthRouteUnitId: routeUnit.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      manualOverride: false,
+    }).returning().get();
+    return { site, accountA, accountB, channel };
+  }
+
+  async function previewExactChannel(
+    router: InstanceType<TokenRouterModule['TokenRouter']>,
+    model: string,
+    channelId: number,
+    accountId: number,
+  ) {
+    return await router.previewPreferredChannel(model, channelId, accountId);
+  }
 
   afterAll(() => {
     invalidateTokenRouterCache();
@@ -118,6 +193,138 @@ describe('TokenRouter oauth route units', () => {
     expect(second?.channel.id).toBe(channel.id);
     expect(first?.account.id).toBe(accountA.id);
     expect(second?.account.id).toBe(accountB.id);
+  });
+
+  it('validates the exact oauth route-unit member without rotating or recording selection', async () => {
+    const { site, accountA, accountB, channel } = await createExactValidationFixture();
+    const router = new TokenRouter();
+    const selected = await router.selectChannel('gpt-5.4');
+    expect(selected?.channel.id).toBe(channel.id);
+    expect(selected?.account.id).toBe(accountA.id);
+
+    const selectedMember = await db.select()
+      .from(schema.oauthRouteUnitMembers)
+      .where(and(
+        eq(schema.oauthRouteUnitMembers.unitId, selected?.channel.oauthRouteUnitId ?? 0),
+        eq(schema.oauthRouteUnitMembers.accountId, accountA.id),
+      ))
+      .get();
+    const selectedChannel = await db.select()
+      .from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, channel.id))
+      .get();
+    const otherMember = await db.select()
+      .from(schema.oauthRouteUnitMembers)
+      .where(and(
+        eq(schema.oauthRouteUnitMembers.unitId, selected?.channel.oauthRouteUnitId ?? 0),
+        eq(schema.oauthRouteUnitMembers.accountId, accountB.id),
+      ))
+      .get();
+
+    const previewed = await previewExactChannel(router, 'gpt-5.4', channel.id, accountA.id) as typeof selected;
+
+    expect(previewed?.channel.id).toBe(channel.id);
+    expect(previewed?.account.id).toBe(accountA.id);
+    expect(previewed?.tokenValue).toBe('oauth-exact-a');
+    await expect(router.previewPreferredChannel('gpt-5.4', channel.id, accountA.id, {
+      supportedModels: [],
+      allowedRouteIds: [],
+      siteWeightMultipliers: {},
+      excludedSiteIds: [site.id],
+      excludedCredentialRefs: [],
+    })).resolves.toBeNull();
+    const refreshedMember = await db.select()
+      .from(schema.oauthRouteUnitMembers)
+      .where(eq(schema.oauthRouteUnitMembers.id, selectedMember?.id ?? 0))
+      .get();
+    const refreshedChannel = await db.select()
+      .from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, channel.id))
+      .get();
+    const refreshedOtherMember = await db.select()
+      .from(schema.oauthRouteUnitMembers)
+      .where(eq(schema.oauthRouteUnitMembers.id, otherMember?.id ?? 0))
+      .get();
+    expect(refreshedMember?.lastSelectedAt).toBe(selectedMember?.lastSelectedAt);
+    expect(refreshedChannel?.lastSelectedAt).toBe(selectedChannel?.lastSelectedAt);
+    expect(refreshedOtherMember?.lastSelectedAt).toBe(otherMember?.lastSelectedAt);
+  });
+
+  it('returns null for an unavailable exact member without selecting another route-unit member', async () => {
+    const { accountA, accountB, channel } = await createExactValidationFixture();
+    const router = new TokenRouter();
+    const selected = await router.selectChannel('gpt-5.4');
+    expect(selected?.account.id).toBe(accountA.id);
+    const otherMemberBefore = await db.select()
+      .from(schema.oauthRouteUnitMembers)
+      .where(and(
+        eq(schema.oauthRouteUnitMembers.unitId, selected?.channel.oauthRouteUnitId ?? 0),
+        eq(schema.oauthRouteUnitMembers.accountId, accountB.id),
+      ))
+      .get();
+    await db.update(schema.oauthRouteUnitMembers).set({
+      cooldownUntil: new Date(Date.now() + 60_000).toISOString(),
+    }).where(and(
+      eq(schema.oauthRouteUnitMembers.unitId, selected?.channel.oauthRouteUnitId ?? 0),
+      eq(schema.oauthRouteUnitMembers.accountId, accountA.id),
+    )).run();
+
+    const previewed = await previewExactChannel(router, 'gpt-5.4', channel.id, accountA.id);
+
+    expect(previewed).toBeNull();
+    const otherMemberAfter = await db.select()
+      .from(schema.oauthRouteUnitMembers)
+      .where(eq(schema.oauthRouteUnitMembers.id, otherMemberBefore?.id ?? 0))
+      .get();
+    expect(otherMemberAfter?.lastSelectedAt).toBe(otherMemberBefore?.lastSelectedAt);
+  });
+
+  it('refreshes an ordinary exact channel without recording a selection', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Exact ordinary site',
+      url: 'https://ordinary-exact.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'ordinary-exact@example.com',
+      accessToken: 'ordinary-access-token',
+      apiToken: 'ordinary-exact-api-token',
+      status: 'active',
+    }).returning().get();
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4.1',
+      enabled: true,
+    }).returning().get();
+    const channel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: null,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      manualOverride: false,
+    }).returning().get();
+
+    const router = new TokenRouter();
+    const selected = await router.selectChannel('gpt-4.1');
+    const selectedChannel = await db.select()
+      .from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, channel.id))
+      .get();
+
+    const previewed = await previewExactChannel(router, 'gpt-4.1', channel.id, account.id) as typeof selected;
+
+    expect(selected?.channel.id).toBe(channel.id);
+    expect(previewed?.channel.id).toBe(channel.id);
+    expect(previewed?.account.id).toBe(account.id);
+    expect(previewed?.tokenValue).toBe('ordinary-exact-api-token');
+    const refreshedChannel = await db.select()
+      .from(schema.routeChannels)
+      .where(eq(schema.routeChannels.id, channel.id))
+      .get();
+    expect(refreshedChannel?.lastSelectedAt).toBe(selectedChannel?.lastSelectedAt);
   });
 
   it('sticks to the same oauth route unit member until it becomes unavailable', async () => {

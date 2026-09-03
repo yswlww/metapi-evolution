@@ -6,6 +6,7 @@ const adapterMock = {
 };
 
 const selectAllMock = vi.fn();
+const selectGetMock = vi.fn();
 const updateSetMock = vi.fn();
 const insertValuesMock = vi.fn();
 const reportTokenExpiredMock = vi.fn();
@@ -18,13 +19,14 @@ const undiciFetchMock = vi.fn();
 vi.mock('../db/index.js', () => {
   const selectChain = {
     all: () => selectAllMock(),
+    get: () => selectGetMock(),
     where: () => selectChain,
     innerJoin: () => selectChain,
     from: () => selectChain,
   };
 
   const updateWhereChain = {
-    run: () => ({}),
+    run: () => ({ changes: 1 }),
   };
 
   const updateSetChain = {
@@ -51,7 +53,14 @@ vi.mock('../db/index.js', () => {
       insert: () => insertChain,
     },
     schema: {
-      accounts: { id: 'id', siteId: 'siteId', status: 'status' },
+      accounts: {
+        id: 'id',
+        siteId: 'siteId',
+        accessToken: 'accessToken',
+        status: 'status',
+        extraConfig: 'extraConfig',
+        updatedAt: 'updatedAt',
+      },
       sites: { id: 'id' },
       events: {},
     },
@@ -88,6 +97,7 @@ describe('balanceService auto relogin', () => {
     adapterMock.getBalance.mockReset();
     adapterMock.login.mockReset();
     selectAllMock.mockReset();
+    selectGetMock.mockReset();
     updateSetMock.mockReset();
     insertValuesMock.mockReset();
     reportTokenExpiredMock.mockReset();
@@ -96,6 +106,7 @@ describe('balanceService auto relogin', () => {
     setAccountRuntimeHealthMock.mockReset();
     extractRuntimeHealthMock.mockReset();
     undiciFetchMock.mockReset();
+    selectGetMock.mockImplementation(() => selectAllMock()[0]?.accounts ?? null);
 
     extractRuntimeHealthMock.mockReturnValue(null);
     undiciFetchMock.mockResolvedValue({
@@ -104,7 +115,7 @@ describe('balanceService auto relogin', () => {
     });
   });
 
-  it('retries balance fetch once after successful auto relogin', async () => {
+  it('retries balance fetch with the authoritative login ID and preserves merged config', async () => {
     selectAllMock.mockReturnValue([
       {
         accounts: {
@@ -112,8 +123,14 @@ describe('balanceService auto relogin', () => {
           username: 'linuxdo_11494',
           accessToken: 'stale-token',
           status: 'active',
+          updatedAt: '2026-08-28T00:00:00.000Z',
           extraConfig: JSON.stringify({
             platformUserId: 11494,
+            credentialMode: 'session',
+            proxyUrl: 'http://proxy.example:8080',
+            oauth: { provider: 'legacy-provider' },
+            sub2apiAuth: { refreshToken: 'keep-me' },
+            unrelated: 'preserve-me',
             autoRelogin: { username: 'linuxdo_11494', passwordCipher: 'cipher' },
           }),
         },
@@ -125,12 +142,13 @@ describe('balanceService auto relogin', () => {
         },
       },
     ]);
+    selectGetMock.mockImplementation(() => selectAllMock()[0]?.accounts ?? null);
 
     adapterMock.getBalance
       .mockRejectedValueOnce(new Error('HTTP 401: access token required'))
       .mockResolvedValueOnce({ balance: 12, used: 1, quota: 13 });
     decryptPasswordMock.mockReturnValue('plain-password');
-    adapterMock.login.mockResolvedValue({ success: true, accessToken: 'fresh-token' });
+    adapterMock.login.mockResolvedValue({ success: true, accessToken: 'fresh-token', platformUserId: 80311 });
 
     const { refreshBalance } = await import('./balanceService.js');
     const result = await refreshBalance(1);
@@ -140,7 +158,21 @@ describe('balanceService auto relogin', () => {
     expect(adapterMock.getBalance).toHaveBeenCalledTimes(2);
     expect(adapterMock.getBalance.mock.calls[0][1]).toBe('stale-token');
     expect(adapterMock.getBalance.mock.calls[1][1]).toBe('fresh-token');
-    expect(updateSetMock.mock.calls.some((call) => call[0]?.accessToken === 'fresh-token')).toBe(true);
+    expect(adapterMock.getBalance.mock.calls[0][2]).toBe(11494);
+    expect(adapterMock.getBalance.mock.calls[1][2]).toBe(80311);
+    const reloginUpdate = updateSetMock.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((updates) => updates.accessToken === 'fresh-token');
+    expect(reloginUpdate).toEqual(expect.objectContaining({ accessToken: 'fresh-token' }));
+    expect(JSON.parse(String(reloginUpdate?.extraConfig))).toEqual(expect.objectContaining({
+      platformUserId: 80311,
+      credentialMode: 'session',
+      proxyUrl: 'http://proxy.example:8080',
+      oauth: { provider: 'legacy-provider' },
+      sub2apiAuth: { refreshToken: 'keep-me' },
+      unrelated: 'preserve-me',
+      autoRelogin: { username: 'linuxdo_11494', passwordCipher: 'cipher' },
+    }));
     expect(reportTokenExpiredMock).not.toHaveBeenCalled();
   });
 
@@ -475,6 +507,7 @@ describe('balanceService auto relogin', () => {
           username: 'linuxdo_7659',
           accessToken: 'active-token',
           status: 'active',
+          updatedAt: '2026-08-28T00:00:00.000Z',
           extraConfig: null,
         },
         sites: {
@@ -485,6 +518,7 @@ describe('balanceService auto relogin', () => {
         },
       },
     ]);
+    selectGetMock.mockImplementation(() => selectAllMock()[0]?.accounts ?? null);
 
     adapterMock.getBalance.mockResolvedValueOnce({ balance: 12, used: 1, quota: 13 });
     undiciFetchMock

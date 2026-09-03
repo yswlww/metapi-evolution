@@ -71,6 +71,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@fastify/cors": "^11.2.0",
+    "@fastify/rate-limit": "^11.2.0",
     "@fastify/static": "^9.0.0",
     "@visactor/react-vchart": "^2.0.22",
     "better-sqlite3": "^12.10.0",

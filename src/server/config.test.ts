@@ -3,6 +3,60 @@ import { describe, expect, it } from 'vitest';
 import { buildConfig, buildFastifyOptions } from './config.js';
 
 describe('buildConfig', () => {
+  it('uses safe request rate-limit defaults', () => {
+    const config = buildConfig({});
+
+    expect(config.requestRateLimitMax).toBe(12_000);
+    expect(config.requestRateLimitWindowMs).toBe(60_000);
+    expect(config.authenticatedRateLimitMax).toBe(1_200);
+  });
+
+  it('normalizes request rate-limit environment overrides', () => {
+    const config = buildConfig({
+      REQUEST_RATE_LIMIT_MAX: '2400',
+      REQUEST_RATE_LIMIT_WINDOW_MS: '30000',
+      AUTHENTICATED_RATE_LIMIT_MAX: '300',
+    });
+
+    expect(config.requestRateLimitMax).toBe(2_400);
+    expect(config.requestRateLimitWindowMs).toBe(30_000);
+    expect(config.authenticatedRateLimitMax).toBe(300);
+  });
+
+  it('truncates fractional limits and clamps zero or negative values', () => {
+    const config = buildConfig({
+      REQUEST_RATE_LIMIT_MAX: '4.9',
+      REQUEST_RATE_LIMIT_WINDOW_MS: '999.9',
+      AUTHENTICATED_RATE_LIMIT_MAX: '-2.5',
+    });
+
+    expect(config.requestRateLimitMax).toBe(4);
+    expect(config.requestRateLimitWindowMs).toBe(1_000);
+    expect(config.authenticatedRateLimitMax).toBe(1);
+
+    const zeroConfig = buildConfig({
+      REQUEST_RATE_LIMIT_MAX: '0',
+      REQUEST_RATE_LIMIT_WINDOW_MS: '0',
+      AUTHENTICATED_RATE_LIMIT_MAX: '0',
+    });
+
+    expect(zeroConfig.requestRateLimitMax).toBe(1);
+    expect(zeroConfig.requestRateLimitWindowMs).toBe(1_000);
+    expect(zeroConfig.authenticatedRateLimitMax).toBe(1);
+  });
+
+  it('falls back safely for non-finite and invalid rate-limit values', () => {
+    const config = buildConfig({
+      REQUEST_RATE_LIMIT_MAX: 'NaN',
+      REQUEST_RATE_LIMIT_WINDOW_MS: 'Infinity',
+      AUTHENTICATED_RATE_LIMIT_MAX: 'not-a-number',
+    });
+
+    expect(config.requestRateLimitMax).toBe(12_000);
+    expect(config.requestRateLimitWindowMs).toBe(60_000);
+    expect(config.authenticatedRateLimitMax).toBe(1_200);
+  });
+
   it('defaults to external listen host for server deployments', () => {
     const config = buildConfig({});
 
@@ -63,15 +117,45 @@ describe('buildConfig', () => {
     expect(config.telegramMessageThreadId).toBe('77');
   });
 
-  it('ships CLI-aligned OAuth defaults', () => {
+  it('does not embed Google OAuth client material by default', () => {
+    const config = buildConfig({});
+
+    expect(config.geminiCliClientId).toBe('');
+    expect(config.geminiCliClientSecret).toBe('');
+    expect(config.antigravityClientId).toBe('');
+    expect(config.antigravityClientSecret).toBe('');
+  });
+
+  it('trims runtime Google OAuth configuration', () => {
+    const config = buildConfig({
+      GEMINI_CLI_CLIENT_ID: ' gemini-test-client-id ',
+      GEMINI_CLI_CLIENT_SECRET: ' gemini-test-client-secret ',
+      ANTIGRAVITY_CLIENT_ID: ' antigravity-test-client-id ',
+      ANTIGRAVITY_CLIENT_SECRET: ' antigravity-test-client-secret ',
+    });
+
+    expect(config.geminiCliClientId).toBe('gemini-test-client-id');
+    expect(config.geminiCliClientSecret).toBe('gemini-test-client-secret');
+    expect(config.antigravityClientId).toBe('antigravity-test-client-id');
+    expect(config.antigravityClientSecret).toBe('antigravity-test-client-secret');
+  });
+
+  it('preserves the default Codex OAuth client ID', () => {
     const config = buildConfig({});
 
     expect(config.codexClientId).toBe('app_EMoamEEZ73f0CkXaXp7hrann');
-    expect(config.codexResponsesWebsocketBeta).toBe('responses_websockets=2026-02-06');
+  });
+
+  it('preserves the default Claude OAuth client ID', () => {
+    const config = buildConfig({});
+
     expect(config.claudeClientId).toBe('9d1c250a-e61b-44d9-88ed-5944d1962f5e');
-    expect(config.claudeClientSecret).toBe('');
-    expect(config.geminiCliClientId).toBe('681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com');
-    expect(config.geminiCliClientSecret).toBe('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');
+  });
+
+  it('preserves the default Codex websocket beta value', () => {
+    const config = buildConfig({});
+
+    expect(config.codexResponsesWebsocketBeta).toBe('responses_websockets=2026-02-06');
   });
 
   it('allows overriding the codex websocket beta gate from environment', () => {

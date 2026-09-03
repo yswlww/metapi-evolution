@@ -1,5 +1,6 @@
 import type { Response as UndiciResponse } from 'undici';
 import type { DownstreamFormat } from './normalized.js';
+import { getPlatformCapabilities } from '../../../shared/platformCapabilities.js';
 import {
   buildMinimalJsonHeadersForCompatibility,
   isEndpointDispatchDeniedError,
@@ -54,6 +55,7 @@ type CreateChatEndpointStrategyInput = {
 };
 
 export function createChatEndpointStrategy(input: CreateChatEndpointStrategyInput) {
+  const platformCapabilities = getPlatformCapabilities(input.sitePlatform);
   return {
     async tryRecover(ctx: EndpointAttemptContext): Promise<EndpointRecoverResult> {
       if (shouldRetryNormalizedMessagesBody({
@@ -129,6 +131,10 @@ export function createChatEndpointStrategy(input: CreateChatEndpointStrategyInpu
       });
       return (
         ctx.response.status >= 500
+        || (
+          ctx.response.status === 410
+          && platformCapabilities.retryAlternativeEndpointOnGone
+        )
         || isEndpointDowngradeError(ctx.response.status, ctx.rawErrText)
         || isMessagesRequiredError(ctx.rawErrText)
         || isEndpointDispatchDeniedError(ctx.response.status, ctx.rawErrText)

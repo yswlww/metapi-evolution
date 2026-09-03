@@ -9,6 +9,7 @@ import {
   buildEndpointCapabilityProfile,
 } from './upstreamEndpointRuntimeMemory.js';
 import type { DownstreamFormat } from '../transformers/shared/normalized.js';
+import { getPlatformCapabilities } from '../../shared/platformCapabilities.js';
 
 export type EndpointPreference = DownstreamFormat | 'responses';
 export type EndpointDerivationHints = {
@@ -88,6 +89,7 @@ function preferredEndpointOrder(
   hints?: EndpointDerivationHints,
 ): UpstreamEndpoint[] {
   const platform = normalizePlatformName(sitePlatform);
+  const platformCapabilities = getPlatformCapabilities(sitePlatform);
   const oauthProvider = asTrimmedString(hints?.oauthProvider).toLowerCase();
 
   if (hints?.requestKind === 'responses-compact') {
@@ -102,7 +104,7 @@ function preferredEndpointOrder(
     return ['chat'];
   }
 
-  if (platform === 'openai') {
+  if (platformCapabilities.openAiResponsesFirst) {
     return ['responses', 'chat', 'messages'];
   }
 
@@ -151,6 +153,7 @@ export async function resolveUpstreamEndpointCandidates(
   hints?: EndpointDerivationHints,
 ): Promise<UpstreamEndpoint[]> {
   const sitePlatform = normalizePlatformName(context.site.platform);
+  const platformCapabilities = getPlatformCapabilities(context.site.platform);
   if (hints?.requestKind === 'responses-compact') {
     return ['responses'];
   }
@@ -216,7 +219,9 @@ export async function resolveUpstreamEndpointCandidates(
       if (sitePlatform === 'gemini') return ['responses', 'chat'] as UpstreamEndpoint[];
       if (sitePlatform === 'gemini-cli') return ['chat'] as UpstreamEndpoint[];
       if (sitePlatform === 'antigravity') return ['messages'] as UpstreamEndpoint[];
-      if (sitePlatform === 'openai') return ['responses', 'chat', 'messages'] as UpstreamEndpoint[];
+      if (platformCapabilities.openAiResponsesFirst) {
+        return ['responses', 'chat', 'messages'] as UpstreamEndpoint[];
+      }
       return rankConversationFileEndpoints({
         sitePlatform,
         requestedOrder: preferMessagesForClaudeModel
@@ -242,7 +247,7 @@ export async function resolveUpstreamEndpointCandidates(
   const forceMessagesFirstForClaudeModel = (
     downstreamFormat === 'openai'
     && preferMessagesForClaudeModel
-    && sitePlatform !== 'openai'
+    && !platformCapabilities.openAiResponsesFirst
     && sitePlatform !== 'gemini'
     && sitePlatform !== 'antigravity'
     && sitePlatform !== 'gemini-cli'
@@ -275,7 +280,7 @@ export async function resolveUpstreamEndpointCandidates(
 
     const shouldIgnoreCatalogOrderingForClaudeMessages = (
       preferMessagesForClaudeModel
-      && (downstreamFormat !== 'responses' || sitePlatform !== 'openai')
+      && (downstreamFormat !== 'responses' || !platformCapabilities.openAiResponsesFirst)
     );
     if (shouldIgnoreCatalogOrderingForClaudeMessages) {
       return finalizeCandidates(prioritizedPreferredEndpoints);

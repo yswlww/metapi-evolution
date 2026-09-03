@@ -7,19 +7,38 @@ import { reportTokenExpired } from './alertService.js';
 import { refreshBalance } from './balanceService.js';
 import { parseCheckinRewardAmount } from './checkinRewardParser.js';
 import {
-  getAutoReloginConfig,
   getPlatformUserIdFromExtraConfig,
   guessPlatformUserIdFromUsername,
   mergeAccountExtraConfig,
   resolveProxyUrlFromExtraConfig,
   resolvePlatformUserId,
 } from './accountExtraConfig.js';
-import { decryptAccountPassword } from './accountCredentialService.js';
+import { autoReloginAccount } from './accountAutoReloginService.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
 import { withAccountProxyOverride } from './siteProxy.js';
 
 type CheckinExecutionStatus = 'success' | 'failed' | 'skipped';
+
+export const CHECKIN_REWARD_BALANCE_FRESHNESS_MS = 10 * 60 * 1000;
+
+export function isCheckinRewardBalanceFresh(
+  balance: unknown,
+  lastBalanceRefresh: unknown,
+  checkinStartedAt: number,
+): boolean {
+  if (typeof balance !== 'number' || !Number.isFinite(balance)) return false;
+  if (!Number.isFinite(checkinStartedAt)) return false;
+
+  const refreshTime = lastBalanceRefresh instanceof Date
+    ? lastBalanceRefresh.getTime()
+    : (typeof lastBalanceRefresh === 'number'
+      ? lastBalanceRefresh
+      : (typeof lastBalanceRefresh === 'string' ? Date.parse(lastBalanceRefresh) : Number.NaN));
+  if (!Number.isFinite(refreshTime) || refreshTime > checkinStartedAt) return false;
+
+  return checkinStartedAt - refreshTime <= CHECKIN_REWARD_BALANCE_FRESHNESS_MS;
+}
 
 function isSiteDisabled(status?: string | null): boolean {
   return (status || 'active') === 'disabled';
@@ -92,34 +111,6 @@ function inferRewardFromBalanceDelta(previousBalance: unknown, latestBalance: un
   return Math.round(delta * 1_000_000) / 1_000_000;
 }
 
-async function tryAutoRelogin(account: any, site: any): Promise<string | null> {
-  const adapter = getAdapter(site.platform);
-  if (!adapter) return null;
-
-  const relogin = getAutoReloginConfig(account.extraConfig);
-  if (!relogin) return null;
-
-  const password = decryptAccountPassword(relogin.passwordCipher);
-  if (!password) return null;
-
-  const result = await withAccountProxyOverride(
-    resolveProxyUrlFromExtraConfig(account.extraConfig),
-    () => adapter.login(site.url, relogin.username, password),
-  );
-  if (!result.success || !result.accessToken) return null;
-
-  await db.update(schema.accounts)
-    .set({
-      accessToken: result.accessToken,
-      updatedAt: new Date().toISOString(),
-      status: account.status === 'expired' ? 'active' : account.status,
-    })
-    .where(eq(schema.accounts.id, account.id))
-    .run();
-
-  return result.accessToken;
-}
-
 export async function checkinAccount(accountId: number, options?: { skipEvent?: boolean; scheduleMode?: 'cron' | 'interval' }) {
   const rows = await db
     .select()
@@ -175,19 +166,23 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
   const guessedPlatformUserId = storedPlatformUserId
     ? undefined
     : guessPlatformUserIdFromUsername(account.username);
-  const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
+  let activeExtraConfig = account.extraConfig;
+  let activePlatformUserId = resolvePlatformUserId(activeExtraConfig, account.username);
 
   const accountProxyUrl = resolveProxyUrlFromExtraConfig(account.extraConfig);
   let activeAccessToken = account.accessToken;
+  const checkinStartedAt = Date.now();
   let result = await withAccountProxyOverride(accountProxyUrl,
-    () => adapter.checkin(site.url, activeAccessToken, platformUserId));
+    () => adapter.checkin(site.url, activeAccessToken, activePlatformUserId));
 
   if (!result.success && shouldAttemptAutoRelogin(result.message)) {
-    const refreshedAccessToken = await tryAutoRelogin(account, site);
-    if (refreshedAccessToken) {
-      activeAccessToken = refreshedAccessToken;
+    const refreshed = await autoReloginAccount(account, site);
+    if (refreshed) {
+      activeAccessToken = refreshed.accessToken;
+      activePlatformUserId = refreshed.platformUserId;
+      activeExtraConfig = refreshed.extraConfig;
       result = await withAccountProxyOverride(accountProxyUrl,
-        () => adapter.checkin(site.url, activeAccessToken, platformUserId));
+        () => adapter.checkin(site.url, activeAccessToken, activePlatformUserId));
     }
   }
 
@@ -224,8 +219,8 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
     if (shouldAdvanceLastCheckinAt) {
       updates.lastCheckinAt = new Date().toISOString();
     }
-    if (!storedPlatformUserId && guessedPlatformUserId) {
-      updates.extraConfig = mergeAccountExtraConfig(account.extraConfig, {
+    if (!getPlatformUserIdFromExtraConfig(activeExtraConfig) && guessedPlatformUserId) {
+      updates.extraConfig = mergeAccountExtraConfig(activeExtraConfig, {
         platformUserId: guessedPlatformUserId,
       });
     }
@@ -248,7 +243,11 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
     }
 
     const parsedReward = parseCheckinRewardAmount(logReward) || parseCheckinRewardAmount(result.message);
-    if (directCheckinSuccess && parsedReward <= 0) {
+    if (
+      directCheckinSuccess &&
+      parsedReward <= 0 &&
+      isCheckinRewardBalanceFresh(account.balance, account.lastBalanceRefresh, checkinStartedAt)
+    ) {
       const inferredReward = inferRewardFromBalanceDelta(account.balance, refreshedBalanceInfo?.balance);
       if (inferredReward > 0) {
         logReward = inferredReward.toString();
