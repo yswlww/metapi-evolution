@@ -571,7 +571,9 @@ async function handleResponsesWebsocketConnection(
   let selectedChannel: SelectedChannel | null = null;
   let messageQueue = Promise.resolve();
 
+  const connectionAbort = new AbortController();
   socket.once('close', () => {
+    connectionAbort.abort();
     const sessionKeys = runtimeSessionKeys.size > 0
       ? Array.from(runtimeSessionKeys)
       : [websocketSessionId];
@@ -744,6 +746,7 @@ async function handleResponsesWebsocketConnection(
                     });
                   }
                 },
+                { signal: connectionAbort.signal },
               );
               lastResponseOutput = collectResponsesOutput(runtimeResult.events);
               for (const payload of runtimeResult.events) {

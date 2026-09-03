@@ -948,7 +948,6 @@ export async function geminiProxyRoute(app: FastifyInstance) {
             }
             throw err;
           }
-          abort.dispose();
           let upstream = dispatchResult!.upstream;
           let firstByteLatencyMs = dispatchResult!.firstByteLatencyMs;
           let recoverApplied = dispatchResult!.recoverApplied;
@@ -1581,6 +1580,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
         const upstream = endpointResult.upstream;
         const firstByteLatencyMs = getObservedResponseMeta(upstream)?.firstByteLatencyMs ?? null;
         const rawText = await readRuntimeResponseText(upstream);
+        abort.dispose();
         let upstreamData: unknown = rawText;
         try {
           upstreamData = JSON.parse(rawText);
