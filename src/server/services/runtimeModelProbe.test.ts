@@ -127,4 +127,38 @@ describe('probeRuntimeModel', () => {
     expect(result.latencyMs).not.toBeNull();
     expect(elapsedMs).toBeLessThan(200);
   });
+
+  it.each(['orca-router', 'orca router'])('does not dispatch an insecure legacy %s runtime probe', async (platform) => {
+    resolveUpstreamEndpointCandidatesMock.mockResolvedValue(['chat']);
+    dispatchRuntimeRequestMock.mockResolvedValue(new Response('{}', { status: 200 }));
+
+    const { probeRuntimeModel } = await import('./runtimeModelProbe.js');
+    const result = await probeRuntimeModel({
+      site: { ...site, platform, url: 'http://legacy.orcarouter.example' },
+      account,
+      modelName: 'orcarouter/auto',
+      timeoutMs: 100,
+    });
+
+    expect(result.status).toBe('inconclusive');
+    expect(result.reason).toContain('credential-free HTTPS');
+    expect(buildUpstreamEndpointRequestMock).not.toHaveBeenCalled();
+    expect(dispatchRuntimeRequestMock).not.toHaveBeenCalled();
+  });
+
+  it('dispatches a credential-free HTTPS OrcaRouter alias runtime probe', async () => {
+    resolveUpstreamEndpointCandidatesMock.mockResolvedValue(['chat']);
+    dispatchRuntimeRequestMock.mockResolvedValue(new Response('{}', { status: 200 }));
+
+    const { probeRuntimeModel } = await import('./runtimeModelProbe.js');
+    await probeRuntimeModel({
+      site: { ...site, platform: 'orca-router', url: 'https://custom.orcarouter.example' },
+      account,
+      modelName: 'orcarouter/auto',
+      timeoutMs: 100,
+    });
+
+    expect(buildUpstreamEndpointRequestMock).toHaveBeenCalled();
+    expect(dispatchRuntimeRequestMock).toHaveBeenCalled();
+  });
 });

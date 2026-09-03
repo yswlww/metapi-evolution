@@ -39,6 +39,50 @@ describe('upstreamRequestBuilder', () => {
     expect(request.body.store).toBe(false);
   });
 
+  it('keeps generic OpenAI-compatible HTTP request construction unchanged', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'chat',
+      modelName: 'generic-model',
+      stream: false,
+      tokenValue: 'generic-key',
+      sitePlatform: 'openai',
+      siteUrl: 'http://generic.example.com',
+      openaiBody: { model: 'generic-model', messages: [{ role: 'user', content: 'hello' }] },
+      downstreamFormat: 'openai',
+    });
+
+    expect(request.path).toBe('/v1/chat/completions');
+    expect(request.headers.Authorization).toBe('Bearer generic-key');
+  });
+
+  it.each(['orca-router', 'orca router'])('rejects insecure %s requests before constructing a bearer header', (sitePlatform) => {
+    expect(() => buildUpstreamEndpointRequest({
+      endpoint: 'chat',
+      modelName: 'orcarouter/auto',
+      stream: false,
+      tokenValue: 'orc-builder-key',
+      sitePlatform,
+      siteUrl: 'http://legacy.orcarouter.example',
+      openaiBody: { model: 'orcarouter/auto', messages: [{ role: 'user', content: 'hello' }] },
+      downstreamFormat: 'openai',
+    })).toThrow('credential-free HTTPS');
+  });
+
+  it('constructs a bearer request for a credential-free HTTPS OrcaRouter alias', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'chat',
+      modelName: 'orcarouter/auto',
+      stream: false,
+      tokenValue: 'orc-builder-key',
+      sitePlatform: 'orca-router',
+      siteUrl: 'https://custom.orcarouter.example',
+      openaiBody: { model: 'orcarouter/auto', messages: [{ role: 'user', content: 'hello' }] },
+      downstreamFormat: 'openai',
+    });
+
+    expect(request.headers.Authorization).toBe('Bearer orc-builder-key');
+  });
+
   it('forces store=false for sub2api native responses passthrough bodies', () => {
     const request = buildUpstreamEndpointRequest({
       endpoint: 'responses',

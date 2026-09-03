@@ -12,6 +12,7 @@ import { buildOauthProviderHeaders } from '../../services/oauth/service.js';
 import { getOauthInfoFromAccount } from '../../services/oauth/oauthAccount.js';
 import { refreshOauthAccessTokenSingleflight } from '../../services/oauth/refreshSingleflight.js';
 import { resolveChannelProxyUrl, withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
+import { assertOrcaRouterTokenTransport } from '../../services/orcarouterTransport.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { getDownstreamRoutingPolicy } from '../../services/downstreamRoutingPolicy.js';
 import { executeEndpointFlow, type BuiltEndpointRequest } from '../orchestration/endpointFlow.js';
@@ -393,6 +394,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
       });
 
       try {
+        assertOrcaRouterTokenTransport(selected.site.platform, selected.site.url);
         if (!isDirectGeminiFamilyPlatform(selected.site.platform)) {
           let models = await readRouteAwareGeminiModels(request);
           if (models.length <= 0) {
@@ -661,6 +663,7 @@ export async function geminiProxyRoute(app: FastifyInstance) {
       let upstreamPath = '';
 
       try {
+        assertOrcaRouterTokenTransport(selected.site.platform, selected.site.url);
         if (isDirectGeminiFamily) {
           await safeUpdateSurfaceProxyDebugCandidates(debugTrace, {
             decisionSummary: {

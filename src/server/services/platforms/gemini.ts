@@ -1,3 +1,4 @@
+import { detectPlatformByUrlHint } from '../../../shared/platformIdentity.js';
 import { StandardApiProviderAdapterBase, normalizePlatformBaseUrl } from './standardApiProvider.js';
 
 function stripModelPrefix(name: string): string {
@@ -41,12 +42,7 @@ export class GeminiAdapter extends StandardApiProviderAdapterBase {
   readonly platformName: string = 'gemini';
 
   async detect(url: string): Promise<boolean> {
-    const normalized = (url || '').toLowerCase();
-    return (
-      normalized.includes('generativelanguage.googleapis.com')
-      || normalized.includes('googleapis.com/v1beta/openai')
-      || normalized.includes('gemini.google.com')
-    );
+    return detectPlatformByUrlHint(url) === this.platformName;
   }
 
   async getModels(baseUrl: string, apiToken: string): Promise<string[]> {

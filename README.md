@@ -66,8 +66,8 @@
 
 **Metapi** 作为这些中转站之上的**元聚合层（Meta-Aggregation Layer）**，把多个站点统一到 **一个入口（可按项目配置多个下游 API Key）**——下游所有工具（Cursor、Claude Code、Codex、Open WebUI 等）即可无感接入全部模型。当前支持的上游范围已经不止传统聚合面板，还包括：
 
-- 聚合面板： [New API](https://github.com/QuantumNous/new-api)、[One API](https://github.com/songquanpeng/one-api)、[OneHub](https://github.com/MartialBE/one-hub)、[DoneHub](https://github.com/deanxv/done-hub)、[Veloera](https://github.com/Veloera/Veloera)、[AnyRouter](https://anyrouter.top)、[Sub2API](https://github.com/Wei-Shaw/sub2api)
-- 通用兼容接口：OpenAI / Claude / Gemini compatible endpoints，以及 `cliproxyapi` / CPA
+- 聚合面板： [New API](https://github.com/QuantumNous/new-api)、[One API](https://github.com/songquanpeng/one-api)、[OneHub](https://github.com/MartialBE/one-hub)、[DoneHub](https://github.com/deanxv/done-hub)、[Veloera](https://github.com/Veloera/Veloera)、[AnyRouter](https://anyrouter.top)、[Sub2API](https://github.com/Wei-Shaw/sub2api)、[AxonHub](https://github.com/looplj/axonhub)
+- 通用兼容接口：OrcaRouter（OpenAI 兼容 API Key）、OpenAI / Claude / Gemini compatible endpoints，以及 `cliproxyapi` / CPA
 - 官方预设：阿里云 / 智谱 / 豆包 Coding Plan，DeepSeek，Moonshot(Kimi)，MiniMax，ModelScope
 - OAuth 连接：Codex、Claude、Gemini CLI、Antigravity
 
@@ -191,6 +191,8 @@
 | **DoneHub**   | `done-hub`  | OneHub 增强分支      |
 | **Veloera**   | `veloera`   | API 网关平台         |
 | **AnyRouter** | `anyrouter` | 通用路由平台         |
+| **AxonHub**   | `axonhub`   | OpenAI 兼容网关，Responses 优先 |
+| **OrcaRouter** | `orcarouter` | OpenAI 兼容 API Key 代理与模型发现 |
 | **Sub2API**   | `sub2api`   | 订阅制中转平台       |
 
 各平台适配器覆盖模型枚举、余额查询、Token 管理、代理接入等通用能力；登录、签到、用户信息等能力按平台而异。
@@ -308,6 +310,10 @@ services:
       NOTIFY_COOLDOWN_SEC: ${NOTIFY_COOLDOWN_SEC:-300}
       ADMIN_IP_ALLOWLIST: "${ADMIN_IP_ALLOWLIST:-}"
       SYSTEM_PROXY_URL: "${SYSTEM_PROXY_URL:-}"
+      GEMINI_CLI_CLIENT_ID: "${GEMINI_CLI_CLIENT_ID:-}"
+      GEMINI_CLI_CLIENT_SECRET: "${GEMINI_CLI_CLIENT_SECRET:-}"
+      ANTIGRAVITY_CLIENT_ID: "${ANTIGRAVITY_CLIENT_ID:-}"
+      ANTIGRAVITY_CLIENT_SECRET: "${ANTIGRAVITY_CLIENT_SECRET:-}"
       TELEGRAM_ENABLED: ${TELEGRAM_ENABLED:-false}
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
       TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"

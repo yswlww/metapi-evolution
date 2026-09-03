@@ -20,6 +20,7 @@ import {
   getInputHeader,
   headerValueToString,
 } from '../proxy-core/providers/headerUtils.js';
+import { assertOrcaRouterTokenTransport } from './orcarouterTransport.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
@@ -490,6 +491,7 @@ export function buildUpstreamEndpointRequest(input: {
   };
 } {
   const sitePlatform = normalizePlatformName(input.sitePlatform);
+  assertOrcaRouterTokenTransport(sitePlatform, input.siteUrl);
   const providerProfile = resolveProviderProfile(sitePlatform);
   const isClaudeUpstream = sitePlatform === 'claude';
   const isGeminiUpstream = sitePlatform === 'gemini';

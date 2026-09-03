@@ -4,18 +4,23 @@ import { AddressInfo } from 'node:net';
 import WebSocket, { WebSocketServer } from 'ws';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../../config.js';
-import { resetCodexSessionResponseStore } from '../../proxy-core/runtime/codexSessionResponseStore.js';
+import { createProxyAuthRateLimitHook } from '../../middleware/auth.js';
+import { createGlobalRateLimitHook, registerGlobalRateLimit } from '../../middleware/globalRateLimit.js';
+import { resetRequestRateLimitStore } from '../../middleware/requestRateLimit.js';
 import { resetProxyChannelCoordinatorState } from '../../services/proxyChannelCoordinator.js';
+import { resetCodexSessionResponseStore } from '../../proxy-core/runtime/codexSessionResponseStore.js';
 
 const fetchMock = vi.fn();
 const selectChannelMock = vi.fn();
 const selectNextChannelMock = vi.fn();
 const selectPreferredChannelMock = vi.fn();
+const previewPreferredChannelMock = vi.fn();
 const previewSelectedChannelMock = vi.fn();
 const recordSuccessMock = vi.fn();
 const recordFailureMock = vi.fn();
 const authorizeDownstreamTokenMock = vi.fn();
 const consumeManagedKeyRequestMock = vi.fn();
+const recordManagedKeyCostUsageMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
 const reportProxyAllFailedMock = vi.fn();
 const reportTokenExpiredMock = vi.fn();
@@ -45,6 +50,7 @@ vi.mock('../../services/tokenRouter.js', () => ({
     selectChannel: (...args: unknown[]) => selectChannelMock(...args),
     selectNextChannel: (...args: unknown[]) => selectNextChannelMock(...args),
     selectPreferredChannel: (...args: unknown[]) => selectPreferredChannelMock(...args),
+    previewPreferredChannel: (...args: unknown[]) => previewPreferredChannelMock(...args),
     previewSelectedChannel: (...args: unknown[]) => previewSelectedChannelMock(...args),
     recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
     recordFailure: (...args: unknown[]) => recordFailureMock(...args),
@@ -63,6 +69,7 @@ vi.mock('../../services/alertService.js', () => ({
 vi.mock('../../services/downstreamApiKeyService.js', () => ({
   authorizeDownstreamToken: (...args: unknown[]) => authorizeDownstreamTokenMock(...args),
   consumeManagedKeyRequest: (...args: unknown[]) => consumeManagedKeyRequestMock(...args),
+  recordManagedKeyCostUsage: (...args: unknown[]) => recordManagedKeyCostUsageMock(...args),
   isModelAllowedByPolicyOrAllowedRoutes: async (
     model: string,
     policy: { supportedModels?: string[]; allowedRouteIds?: number[]; denyAllWhenEmpty?: boolean },
@@ -151,6 +158,7 @@ function createSseResponse(chunks: string[], status = 200) {
 }
 
 function createSelectedChannel(options?: {
+  accountId?: number;
   siteName?: string;
   siteUrl?: string;
   sitePlatform?: string;
@@ -162,16 +170,27 @@ function createSelectedChannel(options?: {
   const sitePlatform = options?.sitePlatform ?? 'codex';
   const isCodex = sitePlatform === 'codex';
   return {
-    channel: { id: 11, routeId: 22 },
+    channel: {
+      id: 11,
+      routeId: 22,
+      enabled: true,
+      tokenId: null,
+      cooldownUntil: null,
+      sourceModel: options?.actualModel ?? (isCodex ? 'gpt-5.4' : 'gpt-4.1'),
+    },
     site: {
       id: 44,
       name: options?.siteName ?? (isCodex ? 'codex-site' : 'openai-site'),
       url: options?.siteUrl ?? (isCodex ? 'https://chatgpt.com/backend-api/codex' : 'https://api.openai.com'),
       platform: sitePlatform,
+      status: 'active',
     },
     account: {
-      id: 33,
+      id: options?.accountId ?? 33,
       username: options?.username ?? (isCodex ? 'codex-user@example.com' : 'openai-user@example.com'),
+      status: 'active',
+      apiToken: isCodex ? null : (options?.tokenValue ?? 'sk-openai-token'),
+      accessToken: isCodex ? (options?.tokenValue ?? 'oauth-access-token') : null,
       extraConfig: options?.extraConfig ?? (isCodex
         ? JSON.stringify({
           credentialMode: 'session',
@@ -209,6 +228,54 @@ function waitForSocketClose(socket: WebSocket) {
 function waitForSocketUpgrade(socket: WebSocket) {
   return new Promise<{ headers: Record<string, string | string[] | undefined> }>((resolve, reject) => {
     socket.once('upgrade', (response) => resolve({ headers: response.headers as Record<string, string | string[] | undefined> }));
+    socket.once('error', reject);
+  });
+}
+
+function waitForSocketUnexpectedResponse(socket: WebSocket) {
+  return new Promise<{
+    statusCode: number | undefined;
+    headers: Record<string, string | string[] | undefined>;
+    body: string;
+  }>((resolve, reject) => {
+    socket.once('unexpected-response', (_request, response) => {
+      const chunks: Buffer[] = [];
+      response.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+      response.once('end', () => resolve({
+        statusCode: response.statusCode,
+        headers: response.headers as Record<string, string | string[] | undefined>,
+        body: Buffer.concat(chunks).toString('utf8'),
+      }));
+      response.once('error', reject);
+    });
+    socket.once('error', reject);
+  });
+}
+
+function waitForSocketUpgradeOutcome(socket: WebSocket) {
+  return new Promise<{
+    statusCode: number | undefined;
+    headers: Record<string, string | string[] | undefined>;
+    body: string;
+  }>((resolve, reject) => {
+    const onUpgrade = (response: { statusCode?: number; headers: Record<string, string | string[] | undefined> }) => {
+      resolve({
+        statusCode: response.statusCode ?? 101,
+        headers: response.headers,
+        body: '',
+      });
+    };
+    socket.once('upgrade', onUpgrade);
+    socket.once('unexpected-response', (_request, response) => {
+      const chunks: Buffer[] = [];
+      response.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+      response.once('end', () => resolve({
+        statusCode: response.statusCode,
+        headers: response.headers as Record<string, string | string[] | undefined>,
+        body: Buffer.concat(chunks).toString('utf8'),
+      }));
+      response.once('error', reject);
+    });
     socket.once('error', reject);
   });
 }
@@ -269,16 +336,6 @@ function waitForSocketMessageMatching(
   });
 }
 
-async function waitForCondition(predicate: () => boolean, timeoutMs = 1_000) {
-  const startedAt = Date.now();
-  while (!predicate()) {
-    if (Date.now() - startedAt >= timeoutMs) {
-      throw new Error('Timed out waiting for condition');
-    }
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-}
-
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -312,9 +369,37 @@ function createClientSocketForPath(path: string, headers: Record<string, string>
   return socket;
 }
 
+async function createDirectHttpSearchApp(options: {
+  globalMax?: number;
+  authenticatedMax?: number;
+} = {}): Promise<FastifyInstance> {
+  const { chatProxyRoute, claudeMessagesProxyRoute } = await import('./chat.js');
+  const { responsesProxyRoute } = await import('./responses.js');
+  const { searchProxyRoute } = await import('./search.js');
+  const app = Fastify({ trustProxy: true });
+  await registerGlobalRateLimit(app, {
+    max: options.globalMax ?? 10,
+    windowMs: 60_000,
+  });
+  app.addHook('onRequest', createGlobalRateLimitHook(app));
+  app.addHook('onRequest', createProxyAuthRateLimitHook({
+    bucket: 'direct-http-search-authenticated',
+    max: options.authenticatedMax ?? 10,
+    windowMs: 60_000,
+  }));
+  await app.register(chatProxyRoute);
+  await app.register(claudeMessagesProxyRoute);
+  await app.register(responsesProxyRoute);
+  await app.register(searchProxyRoute);
+  return app;
+}
+
 describe('responses websocket transport', () => {
   const originalCodexResponsesWebsocketBeta = config.codexResponsesWebsocketBeta;
   const originalCodexUpstreamWebsocketEnabled = config.codexUpstreamWebsocketEnabled;
+  const originalRequestRateLimitMax = config.requestRateLimitMax;
+  const originalRequestRateLimitWindowMs = config.requestRateLimitWindowMs;
+  const originalAuthenticatedRateLimitMax = config.authenticatedRateLimitMax;
   let app: FastifyInstance;
   let baseUrl: string;
   let upstreamServer: WebSocketServer;
@@ -332,8 +417,15 @@ describe('responses websocket transport', () => {
 
   beforeAll(async () => {
     const { responsesProxyRoute } = await import('./responses.js');
+    const { searchProxyRoute } = await import('./search.js');
     app = Fastify();
+    app.addHook('onRequest', createProxyAuthRateLimitHook({
+      bucket: 'proxy-authenticated',
+      max: config.authenticatedRateLimitMax,
+      windowMs: config.requestRateLimitWindowMs,
+    }));
     await app.register(responsesProxyRoute);
+    await app.register(searchProxyRoute);
     await app.listen({ port: 0, host: '127.0.0.1' });
     const address = app.server.address() as AddressInfo;
     baseUrl = `ws://127.0.0.1:${address.port}`;
@@ -381,15 +473,21 @@ describe('responses websocket transport', () => {
   beforeEach(() => {
     resetCodexSessionResponseStore();
     resetProxyChannelCoordinatorState();
+    resetRequestRateLimitStore();
+    (config as any).requestRateLimitMax = originalRequestRateLimitMax;
+    (config as any).requestRateLimitWindowMs = originalRequestRateLimitWindowMs;
+    (config as any).authenticatedRateLimitMax = originalAuthenticatedRateLimitMax;
     fetchMock.mockReset();
     selectChannelMock.mockReset();
     selectNextChannelMock.mockReset();
     selectPreferredChannelMock.mockReset();
+    previewPreferredChannelMock.mockReset();
     previewSelectedChannelMock.mockReset();
     recordSuccessMock.mockReset();
     recordFailureMock.mockReset();
     authorizeDownstreamTokenMock.mockReset();
     consumeManagedKeyRequestMock.mockReset();
+    recordManagedKeyCostUsageMock.mockReset();
     refreshModelsAndRebuildRoutesMock.mockReset();
     reportProxyAllFailedMock.mockReset();
     reportTokenExpiredMock.mockReset();
@@ -401,6 +499,7 @@ describe('responses websocket transport', () => {
     selectChannelMock.mockReturnValue(selectedChannel);
     selectNextChannelMock.mockReturnValue(null);
     selectPreferredChannelMock.mockReturnValue(null);
+    previewPreferredChannelMock.mockResolvedValue(selectedChannel);
     previewSelectedChannelMock.mockResolvedValue(selectedChannel);
     upstreamConnectionCount = 0;
     upstreamUpgradeHeaders = {};
@@ -449,6 +548,10 @@ describe('responses websocket transport', () => {
       } catch {}
     }
     trackedClientSockets.clear();
+    resetRequestRateLimitStore();
+    (config as any).requestRateLimitMax = originalRequestRateLimitMax;
+    (config as any).requestRateLimitWindowMs = originalRequestRateLimitWindowMs;
+    (config as any).authenticatedRateLimitMax = originalAuthenticatedRateLimitMax;
   });
 
   afterAll(async () => {
@@ -476,7 +579,1132 @@ describe('responses websocket transport', () => {
     }
   });
 
+  it('rejects repeated missing-token websocket upgrades before authentication work', async () => {
+    (config as any).requestRateLimitMax = 1;
+
+    const firstSocket = createClientSocketForPath(`${baseUrl}/v1/responses`);
+    const first = await waitForSocketUnexpectedResponse(firstSocket);
+    const secondSocket = createClientSocketForPath(`${baseUrl}/v1/responses`);
+    const second = await waitForSocketUnexpectedResponse(secondSocket);
+
+    expect(first.statusCode).toBe(401);
+    expect(second.statusCode).toBe(429);
+    expect(second.headers['retry-after']).toMatch(/^\d+$/);
+    expect(JSON.parse(second.body)).toMatchObject({
+      statusCode: 429,
+      error: 'Too many requests',
+      retryAfter: expect.any(String),
+    });
+    expect(authorizeDownstreamTokenMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects repeated invalid websocket upgrades before another authentication call', async () => {
+    (config as any).requestRateLimitMax = 1;
+    authorizeDownstreamTokenMock.mockResolvedValue({
+      ok: false,
+      statusCode: 403,
+      error: 'Invalid API key',
+      reason: 'invalid',
+    });
+
+    const firstSocket = createClientSocket(baseUrl, {
+      Authorization: 'Bearer invalid-websocket-token',
+    });
+    const first = await waitForSocketUnexpectedResponse(firstSocket);
+    const secondSocket = createClientSocket(baseUrl, {
+      Authorization: 'Bearer invalid-websocket-token',
+    });
+    const second = await waitForSocketUnexpectedResponse(secondSocket);
+
+    expect(first.statusCode).toBe(403);
+    expect(second.statusCode).toBe(429);
+    expect(second.headers['retry-after']).toMatch(/^\d+$/);
+    expect(JSON.parse(second.body)).toMatchObject({
+      statusCode: 429,
+      error: 'Too many requests',
+      retryAfter: expect.any(String),
+    });
+    expect(authorizeDownstreamTokenMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the pre-auth websocket bucket on the TCP address despite forwarded-header changes', async () => {
+    (config as any).requestRateLimitMax = 1;
+    authorizeDownstreamTokenMock.mockResolvedValue({
+      ok: false,
+      statusCode: 403,
+      error: 'Invalid API key',
+      reason: 'invalid',
+    });
+
+    const firstSocket = createClientSocket(baseUrl, {
+      Authorization: 'Bearer invalid-forwarded-token',
+      'x-forwarded-for': '198.51.100.1',
+    });
+    const first = await waitForSocketUnexpectedResponse(firstSocket);
+    const secondSocket = createClientSocket(baseUrl, {
+      Authorization: 'Bearer invalid-forwarded-token',
+      'x-forwarded-for': '203.0.113.2',
+    });
+    const second = await waitForSocketUnexpectedResponse(secondSocket);
+
+    expect(first.statusCode).toBe(403);
+    expect(second.statusCode).toBe(429);
+    expect(second.headers['retry-after']).toMatch(/^\d+$/);
+    expect(authorizeDownstreamTokenMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds global-token websocket connection creation independently from frame requests', async () => {
+    (config as any).authenticatedRateLimitMax = 1;
+
+    const firstSocket = createClientSocket(baseUrl);
+    await waitForSocketOpen(firstSocket);
+    const secondSocket = createClientSocket(baseUrl);
+    const second = await waitForSocketUpgradeOutcome(secondSocket);
+
+    expect(second.statusCode).toBe(429);
+    expect(second.headers['retry-after']).toMatch(/^\d+$/);
+    expect(JSON.parse(second.body)).toMatchObject({
+      statusCode: 429,
+      error: 'Too many requests',
+      retryAfter: expect.any(String),
+    });
+    expect(authorizeDownstreamTokenMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('bounds global-token websocket frames and does not dispatch denied frames', async () => {
+    (config as any).authenticatedRateLimitMax = 1;
+    const selectedChannel = createSelectedChannel({ siteUrl: upstreamSiteUrl });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+
+    const socket = createClientSocket(baseUrl);
+    await waitForSocketOpen(socket);
+    const firstResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+    await firstResponsePromise;
+
+    const deniedPromise = waitForSocketMessages(socket, 1);
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+    const [denied] = await deniedPromise;
+    socket.close();
+
+    expect(denied).toMatchObject({
+      type: 'error',
+      status: 429,
+      retryAfter: expect.any(String),
+    });
+    expect(Number(denied.retryAfter)).toBeGreaterThanOrEqual(1);
+    expect(upstreamRequests).toHaveLength(1);
+    expect(consumeManagedKeyRequestMock).not.toHaveBeenCalled();
+  });
+
+  it('isolates authenticated websocket frame buckets for distinct managed identities', async () => {
+    (config as any).authenticatedRateLimitMax = 1;
+    authorizeDownstreamTokenMock.mockImplementation(async (token: string) => ({
+      ok: true as const,
+      source: 'managed' as const,
+      token,
+      key: { id: token === 'managed-frame-b' ? 202 : 201, name: token },
+      policy: {
+        supportedModels: [],
+        allowedRouteIds: [],
+        siteWeightMultipliers: {},
+      },
+    }));
+    consumeManagedKeyRequestMock.mockResolvedValue(undefined);
+    const selectedChannel = createSelectedChannel({ siteUrl: upstreamSiteUrl });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+
+    const firstSocket = createClientSocket(baseUrl, {
+      Authorization: 'Bearer managed-frame-a',
+      'x-forwarded-for': '198.51.100.10',
+    });
+    const secondSocket = createClientSocket(baseUrl, {
+      Authorization: 'Bearer managed-frame-b',
+      'x-forwarded-for': '203.0.113.10',
+    });
+    await Promise.all([waitForSocketOpen(firstSocket), waitForSocketOpen(secondSocket)]);
+
+    const firstResponsePromise = waitForSocketMessageMatching(
+      firstSocket,
+      (message) => message?.type === 'response.completed',
+    );
+    const secondResponsePromise = waitForSocketMessageMatching(
+      secondSocket,
+      (message) => message?.type === 'response.completed',
+    );
+    const payload = JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    });
+    firstSocket.send(payload);
+    secondSocket.send(payload);
+    await Promise.all([firstResponsePromise, secondResponsePromise]);
+    firstSocket.close();
+    secondSocket.close();
+
+    expect(consumeManagedKeyRequestMock.mock.calls).toEqual([[201], [202]]);
+  });
+
+  it('shares a managed frame bucket across connections despite forwarded-header changes', async () => {
+    (config as any).authenticatedRateLimitMax = 2;
+    authorizeDownstreamTokenMock.mockResolvedValue({
+      ok: true,
+      source: 'managed',
+      token: 'managed-shared-frame-token',
+      key: { id: 208, name: 'managed-shared-frame-key' },
+      policy: {
+        supportedModels: [],
+        allowedRouteIds: [],
+        siteWeightMultipliers: {},
+      },
+    });
+    consumeManagedKeyRequestMock.mockResolvedValue(undefined);
+    const selectedChannel = createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    fetchMock
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"id":"resp_shared_frame_1","model":"gpt-4.1","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
+        'data: [DONE]\n\n',
+      ]))
+      .mockResolvedValueOnce(createSseResponse([
+        'event: response.completed\n',
+        'data: {"type":"response.completed","response":{"id":"resp_shared_frame_2","model":"gpt-4.1","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
+        'data: [DONE]\n\n',
+      ]));
+
+    const firstSocket = createClientSocket(baseUrl, {
+      Authorization: 'Bearer managed-shared-frame-token',
+      'x-forwarded-for': '198.51.100.21',
+    });
+    const secondSocket = createClientSocket(baseUrl, {
+      Authorization: 'Bearer managed-shared-frame-token',
+      'x-forwarded-for': '203.0.113.21',
+    });
+    await Promise.all([waitForSocketOpen(firstSocket), waitForSocketOpen(secondSocket)]);
+
+    const firstResponsePromise = waitForSocketMessageMatching(
+      firstSocket,
+      (message) => message?.type === 'response.completed',
+    );
+    firstSocket.send(JSON.stringify({ type: 'response.create', model: 'gpt-4.1', input: [] }));
+    await firstResponsePromise;
+
+    const secondResponsePromise = waitForSocketMessageMatching(
+      secondSocket,
+      (message) => message?.type === 'response.completed',
+    );
+    secondSocket.send(JSON.stringify({ type: 'response.create', model: 'gpt-4.1', input: [] }));
+    await secondResponsePromise;
+
+    const deniedResponsePromise = waitForSocketMessageMatching(
+      secondSocket,
+      (message) => message?.type === 'error',
+    );
+    secondSocket.send(JSON.stringify({ type: 'response.create', model: 'gpt-4.1', input: [] }));
+    const deniedResponse = await deniedResponsePromise;
+    firstSocket.close();
+    secondSocket.close();
+
+    expect(deniedResponse).toMatchObject({
+      type: 'error',
+      status: 429,
+      retryAfter: expect.any(String),
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(consumeManagedKeyRequestMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not split a managed connection bucket with forwarded-header changes', async () => {
+    (config as any).authenticatedRateLimitMax = 1;
+    authorizeDownstreamTokenMock.mockResolvedValue({
+      ok: true,
+      source: 'managed',
+      token: 'managed-connection-token',
+      key: { id: 203, name: 'managed-connection-key' },
+      policy: {
+        supportedModels: [],
+        allowedRouteIds: [],
+        siteWeightMultipliers: {},
+      },
+    });
+
+    const firstSocket = createClientSocket(baseUrl, {
+      Authorization: 'Bearer managed-connection-token',
+      'x-forwarded-for': '198.51.100.11',
+    });
+    await waitForSocketOpen(firstSocket);
+    const secondSocket = createClientSocket(baseUrl, {
+      Authorization: 'Bearer managed-connection-token',
+      'x-forwarded-for': '203.0.113.11',
+    });
+    const second = await waitForSocketUpgradeOutcome(secondSocket);
+
+    expect(second.statusCode).toBe(429);
+    expect(second.headers['retry-after']).toMatch(/^\d+$/);
+    expect(authorizeDownstreamTokenMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('consumes managed quota exactly once when a maxRequests-one fallback request is accepted', async () => {
+    (config as any).codexUpstreamWebsocketEnabled = false;
+    let usedRequests = 0;
+    authorizeDownstreamTokenMock.mockImplementation(async (token: string) => {
+      if (usedRequests >= 1) {
+        return {
+          ok: false as const,
+          statusCode: 403,
+          error: 'API key has exceeded max requests',
+          reason: 'over_requests' as const,
+        };
+      }
+      return {
+        ok: true as const,
+        source: 'managed' as const,
+        token,
+        key: { id: 204, name: 'managed-max-one-key', maxRequests: 1, usedRequests },
+        policy: {
+          supportedModels: [],
+          allowedRouteIds: [],
+          siteWeightMultipliers: {},
+        },
+      };
+    });
+    consumeManagedKeyRequestMock.mockImplementation(async () => {
+      usedRequests += 1;
+    });
+    const selectedChannel = createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    fetchMock.mockResolvedValueOnce(createSseResponse([
+      'event: response.completed\n',
+      'data: {"type":"response.completed","response":{"id":"resp_managed_max_one","model":"gpt-5.4","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const socket = createClientSocket(baseUrl, {
+      Authorization: 'Bearer managed-max-one-token',
+    });
+    await waitForSocketOpen(socket);
+    const responsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+    const response = await responsePromise;
+    socket.close();
+
+    expect(authorizeDownstreamTokenMock).toHaveBeenCalledTimes(2);
+    expect(consumeManagedKeyRequestMock).toHaveBeenCalledTimes(1);
+    expect(consumeManagedKeyRequestMock).toHaveBeenCalledWith(204);
+    expect(response?.type).toBe('response.completed');
+  });
+
+  it('preserves exactly-once authenticated accounting when a direct websocket request falls back to HTTP', async () => {
+    (config as any).codexUpstreamWebsocketEnabled = false;
+    const selectedChannel = createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    authorizeDownstreamTokenMock.mockResolvedValue({
+      ok: true,
+      source: 'managed',
+      token: 'managed-http-fallback-token',
+      key: { id: 205, name: 'managed-http-fallback-key' },
+      policy: {
+        supportedModels: [],
+        allowedRouteIds: [],
+        siteWeightMultipliers: {},
+      },
+    });
+    consumeManagedKeyRequestMock.mockResolvedValue(undefined);
+    fetchMock.mockResolvedValueOnce(createSseResponse([
+      'event: response.completed\n',
+      'data: {"type":"response.completed","response":{"id":"resp_managed_http_fallback","model":"gpt-5.4","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const socket = createClientSocket(baseUrl, {
+      Authorization: 'Bearer managed-http-fallback-token',
+    });
+    await waitForSocketOpen(socket);
+    const responsePromise = waitForSocketMessages(socket, 1);
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+    const [response] = await responsePromise;
+    socket.close();
+
+    expect(response).toBeDefined();
+    expect(authorizeDownstreamTokenMock).toHaveBeenCalledTimes(2);
+    expect(consumeManagedKeyRequestMock).toHaveBeenCalledTimes(1);
+    expect(consumeManagedKeyRequestMock).toHaveBeenCalledWith(205);
+  });
+
+  it('aggregates production global limits across repeated HTTP fallback frames by original socket', async () => {
+    (config as any).codexUpstreamWebsocketEnabled = false;
+    (config as any).authenticatedRateLimitMax = 10;
+    const { responsesProxyRoute } = await import('./responses.js');
+    const fallbackApp = Fastify();
+    await registerGlobalRateLimit(fallbackApp, { max: 1, windowMs: 60_000 });
+    fallbackApp.addHook('onRequest', createGlobalRateLimitHook(fallbackApp));
+    fallbackApp.addHook('onRequest', createProxyAuthRateLimitHook({
+      bucket: 'proxy-authenticated-production-fallback-test',
+      max: 10,
+      windowMs: 60_000,
+    }));
+    await fallbackApp.register(responsesProxyRoute);
+    await fallbackApp.listen({ port: 0, host: '127.0.0.1' });
+    const fallbackAddress = fallbackApp.server.address() as AddressInfo;
+    const fallbackBaseUrl = `ws://127.0.0.1:${fallbackAddress.port}`;
+    fetchMock.mockImplementation(() => createSseResponse([
+      'event: response.completed\n',
+      'data: {"type":"response.completed","response":{"id":"resp_global_fallback","model":"gpt-5.4","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    try {
+      const socket = createClientSocket(fallbackBaseUrl);
+      await waitForSocketOpen(socket);
+      const firstResponsePromise = waitForSocketMessageMatching(
+        socket,
+        (message) => message?.type === 'response.completed',
+      );
+      socket.send(JSON.stringify({
+        type: 'response.create',
+        model: 'gpt-5.4',
+        input: [],
+      }));
+      await firstResponsePromise;
+
+      const deniedResponsePromise = waitForSocketMessages(socket, 1);
+      socket.send(JSON.stringify({
+        type: 'response.create',
+        model: 'gpt-5.4',
+        input: [],
+      }));
+      const [deniedResponse] = await deniedResponsePromise;
+      socket.close();
+
+      expect(deniedResponse).toMatchObject({
+        type: 'error',
+        status: 429,
+        retryAfter: expect.any(String),
+      });
+      expect(Number(deniedResponse.retryAfter)).toBeGreaterThanOrEqual(1);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      await fallbackApp.close();
+    }
+  });
+
+  it('counts one websocket search fallback once in the production global bucket and still counts external search', async () => {
+    (config as any).codexUpstreamWebsocketEnabled = false;
+    (config as any).authenticatedRateLimitMax = 10;
+    const { responsesProxyRoute } = await import('./responses.js');
+    const { searchProxyRoute } = await import('./search.js');
+    const fallbackApp = Fastify();
+    await registerGlobalRateLimit(fallbackApp, { max: 1, windowMs: 60_000 });
+    fallbackApp.addHook('onRequest', createGlobalRateLimitHook(fallbackApp));
+    fallbackApp.addHook('onRequest', createProxyAuthRateLimitHook({
+      bucket: 'proxy-authenticated-production-search-fallback-test',
+      max: 10,
+      windowMs: 60_000,
+    }));
+    await fallbackApp.register(responsesProxyRoute);
+    await fallbackApp.register(searchProxyRoute);
+    await fallbackApp.listen({ port: 0, host: '127.0.0.1' });
+    const fallbackAddress = fallbackApp.server.address() as AddressInfo;
+    const fallbackBaseUrl = `ws://127.0.0.1:${fallbackAddress.port}`;
+    authorizeDownstreamTokenMock.mockResolvedValue({
+      ok: true,
+      source: 'managed',
+      token: 'managed-search-global-token',
+      key: { id: 213, name: 'managed-search-global-key' },
+      policy: {
+        supportedModels: [],
+        allowedRouteIds: [],
+        siteWeightMultipliers: {},
+        excludedSiteIds: [],
+        excludedCredentialRefs: [],
+      },
+    });
+    consumeManagedKeyRequestMock.mockResolvedValue(undefined);
+    const selectedChannel = createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    fetchMock.mockResolvedValue(createSseResponse([
+      'event: response.completed\\n',
+      'data: {"type":"response.completed","response":{"id":"resp_search_global_fallback","model":"gpt-4.1","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\\n\\n',
+      'data: [DONE]\\n\\n',
+    ]));
+
+    let socket: WebSocket | null = null;
+    try {
+      socket = createClientSocket(fallbackBaseUrl, {
+        Authorization: 'Bearer managed-search-global-token',
+      });
+      await waitForSocketOpen(socket);
+      const responsePromise = waitForSocketMessageMatching(
+        socket,
+        (message) => message?.type === 'response.completed' || message?.type === 'error',
+      );
+      socket.send(JSON.stringify({
+        type: 'response.create',
+        model: 'gpt-4.1',
+        tools: [{ type: 'web_search_preview' }],
+        input: [{
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: 'search once in the production fixture' }],
+        }],
+      }));
+      const response = await responsePromise;
+
+      expect(response?.type).toBe('response.completed');
+      expect(authorizeDownstreamTokenMock).toHaveBeenCalledTimes(2);
+      expect(consumeManagedKeyRequestMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      const externalFirst = await fallbackApp.inject({
+        method: 'POST',
+        url: '/v1/search',
+        remoteAddress: 'metapi-internal-forged',
+        headers: { Authorization: 'Bearer managed-search-global-token' },
+        payload: { model: '__search', query: 'external search', max_results: 1 },
+      });
+      const externalSecond = await fallbackApp.inject({
+        method: 'POST',
+        url: '/v1/search',
+        remoteAddress: 'metapi-internal-forged',
+        headers: { Authorization: 'Bearer managed-search-global-token' },
+        payload: { model: '__search', query: 'external search', max_results: 1 },
+      });
+
+      expect(externalFirst.statusCode).toBe(200);
+      expect(externalSecond.statusCode).toBe(429);
+      expect(externalSecond.headers['retry-after']).toMatch(/^\d+$/);
+    } finally {
+      if (socket && socket.readyState !== WebSocket.CLOSED) {
+        socket.terminate();
+        await waitForSocketClose(socket);
+      }
+      await fallbackApp.close();
+    }
+  });
+
+  it('charges direct HTTP Responses web-search-only requests once for a maxRequests-one managed key', async () => {
+    let usedRequests = 0;
+    authorizeDownstreamTokenMock.mockImplementation(async (token: string) => {
+      if (usedRequests >= 1) {
+        return {
+          ok: false as const,
+          statusCode: 403,
+          error: 'API key has exceeded max requests',
+          reason: 'over_requests' as const,
+        };
+      }
+      return {
+        ok: true as const,
+        source: 'managed' as const,
+        token,
+        key: { id: 215, name: 'direct-http-responses-search-key', maxRequests: 1, usedRequests },
+        policy: {
+          supportedModels: [],
+          allowedRouteIds: [],
+          siteWeightMultipliers: {},
+        },
+      };
+    });
+    consumeManagedKeyRequestMock.mockImplementation(async () => {
+      usedRequests += 1;
+    });
+    selectChannelMock.mockReturnValue(createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    }));
+    fetchMock.mockImplementation(() => new Response(JSON.stringify({
+      object: 'search.result',
+      data: [{ title: 'Direct Responses result' }],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    const directApp = await createDirectHttpSearchApp({ authenticatedMax: 1 });
+
+    try {
+      const response = await directApp.inject({
+        method: 'POST',
+        url: '/v1/responses',
+        remoteAddress: '127.0.0.1',
+        headers: { Authorization: 'Bearer direct-http-responses-search-token' },
+        payload: {
+          model: 'gpt-4.1',
+          stream: false,
+          tools: [{ type: 'web_search', name: 'web_search', max_results: 2 }],
+          input: 'direct HTTP Responses search',
+        },
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json().output?.[0]).toMatchObject({ type: 'web_search_call' });
+      expect(authorizeDownstreamTokenMock).toHaveBeenCalledTimes(1);
+      expect(consumeManagedKeyRequestMock).toHaveBeenCalledTimes(1);
+      expect(consumeManagedKeyRequestMock).toHaveBeenCalledWith(215);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      await directApp.close();
+    }
+  });
+
+  it('charges direct Claude web-search-only requests once for a maxRequests-one managed key', async () => {
+    let usedRequests = 0;
+    authorizeDownstreamTokenMock.mockImplementation(async (token: string) => {
+      if (usedRequests >= 1) {
+        return {
+          ok: false as const,
+          statusCode: 403,
+          error: 'API key has exceeded max requests',
+          reason: 'over_requests' as const,
+        };
+      }
+      return {
+        ok: true as const,
+        source: 'managed' as const,
+        token,
+        key: { id: 216, name: 'direct-http-claude-search-key', maxRequests: 1, usedRequests },
+        policy: {
+          supportedModels: [],
+          allowedRouteIds: [],
+          siteWeightMultipliers: {},
+        },
+      };
+    });
+    consumeManagedKeyRequestMock.mockImplementation(async () => {
+      usedRequests += 1;
+    });
+    selectChannelMock.mockReturnValue(createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    }));
+    fetchMock.mockImplementation(() => new Response(JSON.stringify({
+      object: 'search.result',
+      data: [{ title: 'Direct Claude result' }],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    const directApp = await createDirectHttpSearchApp({ authenticatedMax: 1 });
+
+    try {
+      const response = await directApp.inject({
+        method: 'POST',
+        url: '/v1/messages',
+        remoteAddress: '127.0.0.1',
+        headers: { Authorization: 'Bearer direct-http-claude-search-token' },
+        payload: {
+          model: 'claude-opus-4-6',
+          max_tokens: 256,
+          stream: false,
+          tools: [{ type: 'web_search_20250305', max_uses: 2 }],
+          messages: [{ role: 'user', content: 'direct Claude search' }],
+        },
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json().content?.[0]).toMatchObject({ type: 'server_tool_use' });
+      expect(authorizeDownstreamTokenMock).toHaveBeenCalledTimes(1);
+      expect(consumeManagedKeyRequestMock).toHaveBeenCalledTimes(1);
+      expect(consumeManagedKeyRequestMock).toHaveBeenCalledWith(216);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      await directApp.close();
+    }
+  });
+
+  it('accounts direct HTTP search once while external forged-looking search remains ordinary', async () => {
+    authorizeDownstreamTokenMock.mockImplementation(async (token: string) => ({
+      ok: true as const,
+      source: 'managed' as const,
+      token,
+      key: { id: 217, name: 'direct-http-global-search-key' },
+      policy: {
+        supportedModels: [],
+        allowedRouteIds: [],
+        siteWeightMultipliers: {},
+      },
+    }));
+    consumeManagedKeyRequestMock.mockResolvedValue(undefined);
+    selectChannelMock.mockReturnValue(createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    }));
+    fetchMock.mockImplementation(() => new Response(JSON.stringify({
+      object: 'search.result',
+      data: [{ title: 'Global accounting result' }],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    const directApp = await createDirectHttpSearchApp({ globalMax: 1 });
+
+    try {
+      const directResponse = await directApp.inject({
+        method: 'POST',
+        url: '/v1/responses',
+        remoteAddress: '127.0.0.1',
+        headers: { Authorization: 'Bearer direct-http-global-search-token' },
+        payload: {
+          model: 'gpt-4.1',
+          stream: false,
+          tools: [{ type: 'web_search_preview' }],
+          input: 'one direct search',
+        },
+      });
+      const externalFirst = await directApp.inject({
+        method: 'POST',
+        url: '/v1/search?executionKey=metapi-internal-forged',
+        remoteAddress: 'metapi-internal-forged',
+        headers: {
+          Authorization: 'Bearer direct-http-global-search-token',
+          'x-metapi-proxy-execution-key': 'metapi-internal-forged',
+        },
+        payload: {
+          model: '__search',
+          query: 'external search',
+          max_results: 1,
+          executionKey: 'metapi-internal-forged',
+        },
+      });
+      const externalSecond = await directApp.inject({
+        method: 'POST',
+        url: '/v1/search?executionKey=metapi-internal-forged',
+        remoteAddress: 'metapi-internal-forged',
+        headers: {
+          Authorization: 'Bearer direct-http-global-search-token',
+          'x-metapi-proxy-execution-key': 'metapi-internal-forged',
+        },
+        payload: {
+          model: '__search',
+          query: 'external search again',
+          max_results: 1,
+          executionKey: 'metapi-internal-forged',
+        },
+      });
+
+      expect(directResponse.statusCode, directResponse.body).toBe(200);
+      expect(externalFirst.statusCode, externalFirst.body).toBe(200);
+      expect(externalSecond.statusCode).toBe(429);
+      expect(authorizeDownstreamTokenMock).toHaveBeenCalledTimes(2);
+      expect(consumeManagedKeyRequestMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      await directApp.close();
+    }
+  });
+
+  it('strips forwarded identity and tester controls from direct HTTP nested search', async () => {
+    authorizeDownstreamTokenMock.mockResolvedValue({
+      ok: true,
+      source: 'managed',
+      token: 'direct-http-header-search-token',
+      key: { id: 218, name: 'direct-http-header-search-key' },
+      policy: {
+        supportedModels: [],
+        allowedRouteIds: [],
+        siteWeightMultipliers: {},
+      },
+    });
+    consumeManagedKeyRequestMock.mockResolvedValue(undefined);
+    const selectedChannel = createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    selectPreferredChannelMock.mockReturnValue(selectedChannel);
+    fetchMock.mockImplementation(() => new Response(JSON.stringify({
+      object: 'search.result',
+      data: [{ title: 'Header isolation result' }],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    const directApp = await createDirectHttpSearchApp();
+
+    try {
+      const response = await directApp.inject({
+        method: 'POST',
+        url: '/v1/responses',
+        remoteAddress: '198.51.100.44',
+        headers: {
+          Authorization: 'Bearer direct-http-header-search-token',
+          'x-forwarded-for': '127.0.0.1',
+          'x-metapi-tester-request': '1',
+          'x-metapi-tester-forced-channel-id': '999',
+        },
+        payload: {
+          model: 'gpt-4.1',
+          stream: false,
+          tools: [{ type: 'web_search' }],
+          input: 'header isolation search',
+        },
+      });
+
+      expect(response.statusCode, response.body).toBe(200);
+      expect(selectPreferredChannelMock).not.toHaveBeenCalled();
+      expect(authorizeDownstreamTokenMock).toHaveBeenCalledTimes(1);
+      expect(consumeManagedKeyRequestMock).toHaveBeenCalledTimes(1);
+    } finally {
+      await directApp.close();
+    }
+  });
+
+  it('revalidates a managed key for each persistent frame before HTTP fallback', async () => {
+    (config as any).codexUpstreamWebsocketEnabled = false;
+    (config as any).authenticatedRateLimitMax = 10;
+    let usedRequests = 0;
+    authorizeDownstreamTokenMock.mockImplementation(async (token: string) => {
+      if (usedRequests >= 1) {
+        return {
+          ok: false as const,
+          statusCode: 403,
+          error: 'API key has exceeded max requests',
+          reason: 'over_requests' as const,
+        };
+      }
+      return {
+        ok: true as const,
+        source: 'managed' as const,
+        token,
+        key: { id: 206, name: 'persistent-max-one-key', maxRequests: 1, usedRequests },
+        policy: {
+          supportedModels: [],
+          allowedRouteIds: [],
+          siteWeightMultipliers: {},
+        },
+      };
+    });
+    consumeManagedKeyRequestMock.mockImplementation(async () => {
+      usedRequests += 1;
+    });
+    const selectedChannel = createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    fetchMock.mockImplementation(() => createSseResponse([
+      'event: response.completed\n',
+      'data: {"type":"response.completed","response":{"id":"resp_persistent_fallback","model":"gpt-5.4","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const socket = createClientSocket(baseUrl, {
+      Authorization: 'Bearer persistent-max-one-token',
+    });
+    await waitForSocketOpen(socket);
+    const firstResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+    const firstResponse = await firstResponsePromise;
+
+    const deniedResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'error',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+    const deniedResponse = await deniedResponsePromise;
+    socket.close();
+
+    expect(firstResponse?.type).toBe('response.completed');
+    expect(deniedResponse).toMatchObject({
+      type: 'error',
+      status: 403,
+      error: {
+        message: 'API key has exceeded max requests',
+      },
+    });
+    expect(authorizeDownstreamTokenMock).toHaveBeenCalledTimes(3);
+    expect(consumeManagedKeyRequestMock).toHaveBeenCalledTimes(1);
+    expect(consumeManagedKeyRequestMock).toHaveBeenCalledWith(206);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(upstreamConnectionCount).toBe(0);
+  });
+
+  it('preserves exactly-once accounting for managed search-only fallback frames', async () => {
+    (config as any).codexUpstreamWebsocketEnabled = false;
+    (config as any).authenticatedRateLimitMax = 10;
+    authorizeDownstreamTokenMock.mockResolvedValue({
+      ok: true,
+      source: 'managed',
+      token: 'managed-search-only-token',
+      key: { id: 212, name: 'managed-search-only-key' },
+      policy: {
+        supportedModels: [],
+        allowedRouteIds: [],
+        siteWeightMultipliers: {},
+        excludedSiteIds: [],
+        excludedCredentialRefs: [],
+      },
+    });
+    consumeManagedKeyRequestMock.mockResolvedValue(undefined);
+    const selectedChannel = createSelectedChannel({
+      sitePlatform: 'openai',
+      actualModel: 'gpt-4.1',
+    });
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: [{ title: 'Search result', url: 'https://example.com/result' }],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const socket = createClientSocket(baseUrl, {
+      Authorization: 'Bearer managed-search-only-token',
+    });
+    await waitForSocketOpen(socket);
+    const responsePromise = waitForSocketMessages(socket, 1);
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-4.1',
+      tools: [{ type: 'web_search_preview' }],
+      input: [{
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'search for the latest result' }],
+      }],
+    }));
+    const [response] = await responsePromise;
+    socket.close();
+
+    expect(response?.type).toBe('response.completed');
+    expect(response?.response?.output?.[0]?.type).toBe('web_search_call');
+    expect(authorizeDownstreamTokenMock).toHaveBeenCalledTimes(2);
+    expect(consumeManagedKeyRequestMock).toHaveBeenCalledTimes(1);
+    expect(consumeManagedKeyRequestMock).toHaveBeenCalledWith(212);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('reselects a channel when refreshed managed policy revokes the reused site', async () => {
+    (config as any).authenticatedRateLimitMax = 10;
+    let authorizeCalls = 0;
+    authorizeDownstreamTokenMock.mockImplementation(async (token: string) => {
+      authorizeCalls += 1;
+      return {
+        ok: true as const,
+        source: 'managed' as const,
+        token,
+        key: { id: 211, name: 'managed-refresh-policy-key' },
+        policy: authorizeCalls >= 3
+          ? {
+            supportedModels: [],
+            allowedRouteIds: [],
+            siteWeightMultipliers: {},
+            excludedSiteIds: [44],
+            excludedCredentialRefs: [],
+          }
+          : {
+            supportedModels: [],
+            allowedRouteIds: [],
+            siteWeightMultipliers: {},
+            excludedSiteIds: [],
+            excludedCredentialRefs: [],
+          },
+      };
+    });
+    consumeManagedKeyRequestMock.mockResolvedValue(undefined);
+    const selectedChannelA = createSelectedChannel({
+      siteUrl: upstreamSiteUrl,
+      actualModel: 'gpt-5.4',
+    });
+    const selectedChannelB = {
+      ...createSelectedChannel({
+        sitePlatform: 'openai',
+        actualModel: 'gpt-5.4',
+      }),
+      site: {
+        ...createSelectedChannel({
+          sitePlatform: 'openai',
+          actualModel: 'gpt-5.4',
+        }).site,
+        id: 45,
+      },
+    };
+    previewPreferredChannelMock.mockImplementation(async (
+      _model: string,
+      _channelId: number,
+      _accountId: number,
+      policy: { excludedSiteIds?: number[] },
+    ) => policy?.excludedSiteIds?.includes(44) ? null : selectedChannelA);
+    selectChannelMock.mockImplementation((_model: string, policy: { excludedSiteIds?: number[] }) => (
+      policy?.excludedSiteIds?.includes(44) ? selectedChannelB : selectedChannelA
+    ));
+    previewSelectedChannelMock.mockImplementation(async (_model: string, policy: { excludedSiteIds?: number[] }) => (
+      policy?.excludedSiteIds?.includes(44) ? selectedChannelB : selectedChannelA
+    ));
+    fetchMock.mockResolvedValueOnce(createSseResponse([
+      'event: response.completed\n',
+      'data: {"type":"response.completed","response":{"id":"resp_reselected_channel","model":"gpt-5.4","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const socket = createClientSocket(baseUrl, {
+      Authorization: 'Bearer managed-refresh-policy-token',
+    });
+    await waitForSocketOpen(socket);
+    const firstResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+    await firstResponsePromise;
+
+    const secondResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+    await secondResponsePromise;
+    socket.close();
+
+    expect(authorizeCalls).toBe(3);
+    expect(previewPreferredChannelMock).toHaveBeenCalledTimes(1);
+    expect(previewPreferredChannelMock.mock.calls[0]).toMatchObject([
+      'gpt-5.4',
+      selectedChannelA.channel.id,
+      selectedChannelA.account.id,
+      { excludedSiteIds: [44] },
+    ]);
+    expect(upstreamRequests).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains exact managed oauth route-unit affinity across incremental websocket follow-ups', async () => {
+    authorizeDownstreamTokenMock.mockResolvedValue({
+      ok: true,
+      source: 'managed',
+      token: 'managed-affinity-token',
+      key: { id: 214, name: 'managed-affinity-key' },
+      policy: {
+        supportedModels: [],
+        allowedRouteIds: [],
+        siteWeightMultipliers: {},
+      },
+    });
+    consumeManagedKeyRequestMock.mockResolvedValue(undefined);
+    const selectedChannelA = createSelectedChannel({
+      accountId: 301,
+      siteUrl: upstreamSiteUrl,
+      actualModel: 'gpt-5.4',
+    });
+    selectChannelMock.mockReturnValue(selectedChannelA);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannelA);
+    previewPreferredChannelMock.mockResolvedValue(selectedChannelA);
+
+    const socket = createClientSocket(baseUrl, {
+      Authorization: 'Bearer managed-affinity-token',
+      'session-id': 'affinity-session',
+    });
+    await waitForSocketOpen(socket);
+    const firstResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+    await firstResponsePromise;
+
+    const secondResponsePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.completed',
+    );
+    socket.send(JSON.stringify({
+      type: 'response.create',
+      model: 'gpt-5.4',
+      input: [],
+    }));
+    await secondResponsePromise;
+    socket.close();
+
+    expect(previewPreferredChannelMock).toHaveBeenCalledWith(
+      'gpt-5.4',
+      selectedChannelA.channel.id,
+      selectedChannelA.account.id,
+      expect.any(Object),
+    );
+    expect(selectPreferredChannelMock).not.toHaveBeenCalled();
+    expect(selectChannelMock).toHaveBeenCalledTimes(1);
+    expect(upstreamConnectionCount).toBe(1);
+    expect(upstreamRequests).toHaveLength(2);
+  });
+
   it('accepts response.create over GET /v1/responses websocket and forwards streamed responses events', async () => {
+    authorizeDownstreamTokenMock.mockResolvedValue({
+      ok: true,
+      source: 'managed',
+      token: 'sk-managed-websocket',
+      key: { id: 77, name: 'websocket-key' },
+      policy: {
+        supportedModels: [],
+        allowedRouteIds: [],
+        siteWeightMultipliers: {},
+      },
+    });
+    consumeManagedKeyRequestMock.mockResolvedValue(undefined);
     const selectedChannel = createSelectedChannel({
       siteUrl: upstreamSiteUrl,
     });
@@ -560,48 +1788,8 @@ describe('responses websocket transport', () => {
     expect(messages[3]?.response?.output?.[0]?.content?.[0]?.text).toBe('pong');
     expect(fetchMock).toHaveBeenCalledTimes(0);
     expect(upstreamConnectionCount).toBe(1);
-  });
-
-  it('rejects a second direct websocket frame at the site cap without fallback or failure bookkeeping', async () => {
-    const originalQueueWaitMs = config.proxySiteConcurrencyQueueWaitMs;
-    config.proxySiteConcurrencyQueueWaitMs = 20;
-    const selectedChannel = createSelectedChannel({ siteUrl: upstreamSiteUrl }) as ReturnType<typeof createSelectedChannel> & {
-      site: ReturnType<typeof createSelectedChannel>['site'] & { maxConcurrency: number };
-    };
-    selectedChannel.site.maxConcurrency = 1;
-    selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
-    upstreamMessageHandler = (socket, parsed, requestIndex) => {
-      if (requestIndex !== 1) return;
-      // Hold the first request open so the second connection must wait at admission.
-      void socket;
-      void parsed;
-    };
-
-    const first = createClientSocket(baseUrl);
-    await waitForSocketOpen(first);
-    first.send(JSON.stringify({ type: 'response.create', model: 'gpt-5.4', input: [] }));
-    await waitForCondition(() => upstreamRequests.length === 1);
-
-    const second = createClientSocket(baseUrl);
-    await waitForSocketOpen(second);
-    const errorPromise = waitForSocketMessageMatching(second, (message) => message?.status === 503);
-    second.send(JSON.stringify({ type: 'response.create', model: 'gpt-5.4', input: [] }));
-    const error = await errorPromise;
-
-    expect(error).toMatchObject({
-      type: 'error',
-      status: 503,
-      error: { type: 'site_concurrency_limit' },
-    });
-    expect(upstreamRequests).toHaveLength(1);
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(recordFailureMock).not.toHaveBeenCalled();
-    expect(selectNextChannelMock).not.toHaveBeenCalled();
-
-    first.close();
-    second.close();
-    config.proxySiteConcurrencyQueueWaitMs = originalQueueWaitMs;
+    expect(consumeManagedKeyRequestMock).toHaveBeenCalledTimes(1);
+    expect(consumeManagedKeyRequestMock).toHaveBeenCalledWith(77);
   });
 
   it('uses the configured site api endpoint pool for codex websocket transport', async () => {
@@ -1019,6 +2207,18 @@ describe('responses websocket transport', () => {
   });
 
   it('falls back to the HTTP responses executor when the upstream codex websocket upgrade returns 426', async () => {
+    authorizeDownstreamTokenMock.mockResolvedValue({
+      ok: true,
+      source: 'managed',
+      token: 'managed-runtime-fallback-token',
+      key: { id: 209, name: 'managed-runtime-fallback-key' },
+      policy: {
+        supportedModels: [],
+        allowedRouteIds: [],
+        siteWeightMultipliers: {},
+      },
+    });
+    consumeManagedKeyRequestMock.mockResolvedValue(undefined);
     const selectedChannel = createSelectedChannel({
       siteUrl: rejectedUpgradeSiteUrl,
     });
@@ -1030,7 +2230,9 @@ describe('responses websocket transport', () => {
       'data: [DONE]\n\n',
     ]));
 
-    const socket = createClientSocket(baseUrl);
+    const socket = createClientSocket(baseUrl, {
+      Authorization: 'Bearer managed-runtime-fallback-token',
+    });
     await waitForSocketOpen(socket);
     const messagesPromise = waitForSocketMessageMatching(
       socket,
@@ -1047,6 +2249,9 @@ describe('responses websocket transport', () => {
     socket.close();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(consumeManagedKeyRequestMock).toHaveBeenCalledTimes(1);
+    expect(consumeManagedKeyRequestMock).toHaveBeenCalledWith(209);
+    expect(authorizeDownstreamTokenMock).toHaveBeenCalledTimes(2);
     expect(message?.type).toBe('response.completed');
     expect(message?.response?.id).toBe('resp_http_fallback');
   });
@@ -1475,7 +2680,7 @@ describe('responses websocket transport', () => {
   });
 
   it('rejects websocket turns whose model is blocked by the downstream key policy before channel selection', async () => {
-    authorizeDownstreamTokenMock.mockResolvedValueOnce({
+    authorizeDownstreamTokenMock.mockResolvedValue({
       ok: true,
       source: 'managed',
       token: 'sk-managed-denied',

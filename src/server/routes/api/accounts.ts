@@ -58,6 +58,7 @@ import {
   parseBatchApiKeys,
 } from "../../services/apiKeyBatch.js";
 import { createManualAccount } from "../../services/manualAccountCreationService.js";
+import { normalizePlatformUserId } from "../../services/platformUserId.js";
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -536,6 +537,7 @@ export async function accountsRoutes(app: FastifyInstance) {
       }
 
       const guessedPlatformUserId = guessPlatformUserIdFromUsername(username);
+      const platformUserId = normalizePlatformUserId(loginResult.platformUserId) ?? guessedPlatformUserId;
 
       // Auto-fetch API token(s)
       let apiToken: string | null = null;
@@ -548,14 +550,14 @@ export async function accountsRoutes(app: FastifyInstance) {
         apiToken = await adapter.getApiToken(
           site.url,
           loginResult.accessToken,
-          guessedPlatformUserId,
+          platformUserId,
         );
       } catch {}
       try {
         apiTokens = await adapter.getApiTokens(
           site.url,
           loginResult.accessToken,
-          guessedPlatformUserId,
+          platformUserId,
         );
       } catch {}
 
@@ -582,8 +584,8 @@ export async function accountsRoutes(app: FastifyInstance) {
           updatedAt: new Date().toISOString(),
         },
       };
-      if (guessedPlatformUserId) {
-        extraConfigPatch.platformUserId = guessedPlatformUserId;
+      if (platformUserId) {
+        extraConfigPatch.platformUserId = platformUserId;
       }
       const extraConfig = mergeAccountExtraConfig(
         existing?.extraConfig,

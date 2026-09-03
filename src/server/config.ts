@@ -5,8 +5,6 @@ import { normalizePayloadRulesConfig } from './services/payloadRules.js';
 const DEFAULT_REQUEST_BODY_LIMIT = 20 * 1024 * 1024;
 const DEFAULT_CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const DEFAULT_CLAUDE_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
-const DEFAULT_GEMINI_CLI_CLIENT_ID = '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com';
-const DEFAULT_GEMINI_CLI_CLIENT_SECRET = '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';
 const NODE_MAX_TIMEOUT_MS = 2_147_483_647;
 export const TOKEN_ROUTER_FAILURE_COOLDOWN_MAX_SEC_CEILING = 30 * 24 * 60 * 60;
 
@@ -100,8 +98,10 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     codexClientId: parseOptionalSecret(env.CODEX_CLIENT_ID) || DEFAULT_CODEX_CLIENT_ID,
     claudeClientId: parseOptionalSecret(env.CLAUDE_CLIENT_ID) || DEFAULT_CLAUDE_CLIENT_ID,
     claudeClientSecret: parseOptionalSecret(env.CLAUDE_CLIENT_SECRET),
-    geminiCliClientId: parseOptionalSecret(env.GEMINI_CLI_CLIENT_ID) || DEFAULT_GEMINI_CLI_CLIENT_ID,
-    geminiCliClientSecret: parseOptionalSecret(env.GEMINI_CLI_CLIENT_SECRET) || DEFAULT_GEMINI_CLI_CLIENT_SECRET,
+    geminiCliClientId: parseOptionalSecret(env.GEMINI_CLI_CLIENT_ID),
+    geminiCliClientSecret: parseOptionalSecret(env.GEMINI_CLI_CLIENT_SECRET),
+    antigravityClientId: parseOptionalSecret(env.ANTIGRAVITY_CLIENT_ID),
+    antigravityClientSecret: parseOptionalSecret(env.ANTIGRAVITY_CLIENT_SECRET),
     systemProxyUrl: env.SYSTEM_PROXY_URL || '',
     accountCredentialSecret: env.ACCOUNT_CREDENTIAL_SECRET || env.AUTH_TOKEN || 'change-me-admin-token',
     checkinCron: env.CHECKIN_CRON || '0 8 * * *',
@@ -145,6 +145,9 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     dbUrl: (env.DB_URL || '').trim(),
     dbSsl: parseBoolean(env.DB_SSL, false),
     requestBodyLimit: DEFAULT_REQUEST_BODY_LIMIT,
+    requestRateLimitMax: Math.max(1, Math.trunc(parseNumber(env.REQUEST_RATE_LIMIT_MAX, 12_000))),
+    requestRateLimitWindowMs: Math.max(1_000, Math.trunc(parseNumber(env.REQUEST_RATE_LIMIT_WINDOW_MS, 60_000))),
+    authenticatedRateLimitMax: Math.max(1, Math.trunc(parseNumber(env.AUTHENTICATED_RATE_LIMIT_MAX, 1_200))),
     routingFallbackUnitCost: Math.max(1e-6, parseNumber(env.ROUTING_FALLBACK_UNIT_COST, 1)),
     proxyFirstByteTimeoutSec: Math.max(0, Math.trunc(parseNumber(env.PROXY_FIRST_BYTE_TIMEOUT_SEC, 0))),
     tokenRouterFailureCooldownMaxSec: normalizeTokenRouterFailureCooldownMaxSec(

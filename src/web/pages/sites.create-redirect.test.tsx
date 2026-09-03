@@ -319,6 +319,7 @@ describe('Sites create redirect', () => {
       expect(platformSelect?.props.options).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ value: 'new-api', description: expect.stringContaining('聚合面板') }),
+          expect.objectContaining({ value: 'axonhub', description: expect.stringContaining('Responses') }),
           expect.objectContaining({ value: 'openai', description: expect.stringContaining('OpenAI 兼容接口') }),
           expect.objectContaining({ value: 'codex', description: expect.stringContaining('OAuth') }),
           expect.objectContaining({ value: 'claude', description: expect.stringContaining('Claude') }),

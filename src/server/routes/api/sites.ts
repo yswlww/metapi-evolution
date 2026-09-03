@@ -19,6 +19,7 @@ import { getSiteInitializationPreset } from '../../../shared/siteInitializationP
 import { normalizeSiteApiEndpointBaseUrl } from '../../services/siteApiEndpointService.js';
 import { analyzePrimarySiteUrl } from '../../../shared/sitePrimaryUrl.js';
 import { normalizePlatformAlias } from '../../../shared/platformIdentity.js';
+import { getOrcaRouterTokenTransportError } from '../../services/orcarouterTransport.js';
 import { probeSiteModels } from '../../services/modelService.js';
 import { normalizeSiteMaxConcurrency } from '../../../shared/siteMaxConcurrency.js';
 import { proxyChannelCoordinator } from '../../services/proxyChannelCoordinator.js';
@@ -113,7 +114,10 @@ function normalizeSitePlatform(value: string | undefined): string | null {
   if (value === undefined) return null;
   const normalized = value.trim().toLowerCase();
   if (!normalized) return null;
-  return normalizePlatformAlias(normalized) === 'cliproxyapi' ? 'cliproxyapi' : normalized;
+  const canonicalPlatform = normalizePlatformAlias(normalized);
+  return canonicalPlatform === 'cliproxyapi' || canonicalPlatform === 'orcarouter'
+    ? canonicalPlatform
+    : normalized;
 }
 
 type SiteApiEndpointInputRow = {
@@ -232,6 +236,21 @@ function normalizeSiteApiEndpointsInput(input: unknown): {
   }
 
   return { valid: true, present: true, apiEndpoints };
+}
+
+function getOrcaRouterSiteTransportError(
+  platform: string,
+  primaryUrl: string,
+  apiEndpoints: SiteApiEndpointInputRow[] = [],
+): string | null {
+  const primaryError = getOrcaRouterTokenTransportError(platform, primaryUrl);
+  if (primaryError) return primaryError;
+
+  for (const endpoint of apiEndpoints) {
+    const endpointError = getOrcaRouterTokenTransportError(platform, endpoint.url);
+    if (endpointError) return endpointError;
+  }
+  return null;
 }
 
 async function loadSiteApiEndpointsBySiteIds(siteIds: number[]) {
@@ -573,6 +592,14 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (!detectedPlatform) {
       return reply.code(400).send({ error: 'Could not detect platform. Please specify manually.' });
     }
+    const transportError = getOrcaRouterSiteTransportError(
+      detectedPlatform,
+      url,
+      normalizedApiEndpoints.apiEndpoints,
+    );
+    if (transportError) {
+      return reply.code(400).send({ error: transportError });
+    }
     const conflictingSite = findExistingSiteBinding(existingSites, detectedPlatform, canonicalUrl);
     if (conflictingSite) {
       return sendSiteBindingConflict(reply, detectedPlatform, canonicalUrl);
@@ -711,6 +738,25 @@ export async function sitesRoutes(app: FastifyInstance) {
       : existingSite.platform;
     if (body.platform !== undefined && !nextPlatform) {
       return reply.code(400).send({ error: 'Invalid platform. Expected non-empty string.' });
+    }
+    const retainedApiEndpoints = (
+      !normalizedApiEndpoints.present && normalizePlatformAlias(nextPlatform) === 'orcarouter'
+    )
+      ? await db.select({
+        url: schema.siteApiEndpoints.url,
+        enabled: schema.siteApiEndpoints.enabled,
+        sortOrder: schema.siteApiEndpoints.sortOrder,
+      }).from(schema.siteApiEndpoints)
+        .where(eq(schema.siteApiEndpoints.siteId, id))
+        .all()
+      : [];
+    const transportError = getOrcaRouterSiteTransportError(
+      nextPlatform || '',
+      body.url !== undefined ? body.url : existingSite.url,
+      normalizedApiEndpoints.present ? normalizedApiEndpoints.apiEndpoints : retainedApiEndpoints,
+    );
+    if (transportError) {
+      return reply.code(400).send({ error: transportError });
     }
     const siteIdentityChanged = nextUrl !== existingSite.url || nextPlatform !== existingSite.platform;
     if (siteIdentityChanged) {

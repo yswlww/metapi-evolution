@@ -9,7 +9,7 @@ import {
   type AccountCredentialMode,
 } from './accountExtraConfig.js';
 import { parseSiteProxyUrlInput, withAccountProxyOverride } from './siteProxy.js';
-import { runWithSiteApiEndpointPool } from './siteApiEndpointService.js';
+import { runWithSiteApiEndpointPool, assertConfiguredOrcaRouterTransport } from './siteApiEndpointService.js';
 import { type AccountCreatePayload } from '../contracts/accountsRoutePayloads.js';
 import { convergeAccountMutation } from './accountMutationWorkflow.js';
 
@@ -176,6 +176,7 @@ export async function createManualAccount({
   }
 
   if (credentialMode === 'apikey') {
+    await assertConfiguredOrcaRouterTransport(site);
     if (body.skipModelFetch === true) {
       tokenType = 'apikey';
       accessToken = '';

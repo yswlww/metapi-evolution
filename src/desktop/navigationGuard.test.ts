@@ -44,7 +44,7 @@ describe('desktop navigation guard', () => {
   });
 
   it('keeps same-origin popup links inside the desktop app', () => {
-    expect(resolveDesktopNavigationAction('/monitor-proxy/ldoh/', appUrl)).toBe('allow');
+    expect(resolveDesktopNavigationAction('/dashboard/settings', appUrl)).toBe('allow');
     expect(resolveDesktopNavigationAction('about:blank', appUrl)).toBe('allow');
   });
 
@@ -99,7 +99,7 @@ describe('desktop navigation guard', () => {
       webContents: harness.webContents,
     });
 
-    harness.getNavigateHandler()({ preventDefault }, 'http://127.0.0.1:5173/monitor-proxy/ldoh/');
+    harness.getNavigateHandler()({ preventDefault }, appUrl);
 
     expect(preventDefault).not.toHaveBeenCalled();
     expect(openExternal).not.toHaveBeenCalled();

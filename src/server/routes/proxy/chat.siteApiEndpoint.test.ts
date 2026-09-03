@@ -523,4 +523,89 @@ describe('chat proxy site api endpoint rotation', () => {
     expect(storedEndpoints[0]?.cooldownUntil).toBeTruthy();
     expect(storedEndpoints[1]?.lastSelectedAt).toBeTruthy();
   });
+
+  it('blocks legacy insecure OrcaRouter sites before dispatching a bearer request', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'legacy-insecure-orcarouter',
+      url: 'http://legacy.orcarouter.example',
+      platform: 'orcarouter',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'orcarouter-user',
+      accessToken: '',
+      apiToken: 'orc-secret',
+      status: 'active',
+      checkinEnabled: false,
+      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+    }).returning().get();
+
+    selectChannelMock.mockReturnValue({
+      channel: { id: 91, routeId: 92 },
+      site,
+      account,
+      tokenName: 'default',
+      tokenValue: 'orc-secret',
+      actualModel: 'orcarouter/auto',
+    });
+    selectNextChannelMock.mockReturnValue(null);
+    fetchMock.mockResolvedValue(new Response('unexpected fetch', { status: 500 }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'orcarouter/auto',
+        messages: [{ role: 'user', content: 'hi' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()?.error?.message).toContain('credential-free HTTPS');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('dispatches HTTPS custom OrcaRouter requests with their API key', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'custom-secure-orcarouter',
+      url: 'https://custom.orcarouter.example/v1',
+      platform: 'orcarouter',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'orcarouter-user',
+      accessToken: '',
+      apiToken: 'orc-secure-key',
+      status: 'active',
+      checkinEnabled: false,
+      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+    }).returning().get();
+
+    selectChannelMock.mockReturnValue({
+      channel: { id: 93, routeId: 94 },
+      site,
+      account,
+      tokenName: 'default',
+      tokenValue: 'orc-secure-key',
+      actualModel: 'orcarouter/auto',
+    });
+    selectNextChannelMock.mockReturnValue(null);
+    fetchMock.mockResolvedValue(new Response('expected upstream failure', { status: 500 }));
+
+    await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'orcarouter/auto',
+        messages: [{ role: 'user', content: 'hi' }],
+      },
+    });
+
+    expect(fetchMock).toHaveBeenCalled();
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({ Authorization: 'Bearer orc-secure-key' });
+  });
 });

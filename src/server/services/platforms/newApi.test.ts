@@ -161,7 +161,7 @@ describe('NewApiAdapter', () => {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             success: true,
-            data: { token: SHIELD_LOGIN_TOKEN },
+            data: { token: SHIELD_LOGIN_TOKEN, id: 80309 },
           }));
         });
         return;
@@ -629,6 +629,7 @@ describe('NewApiAdapter', () => {
 
     expect(result.success).toBe(true);
     expect(result.accessToken).toBe(SHIELD_LOGIN_TOKEN);
+    expect(result.platformUserId).toBe(80309);
     expect(
       requests.some(
         (r) =>

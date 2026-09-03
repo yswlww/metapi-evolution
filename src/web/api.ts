@@ -1426,13 +1426,6 @@ export const api = {
   // Monitor embed
   getMonitorOverview: (options?: { refresh?: boolean }) =>
     request(`/api/monitor/overview${options?.refresh ? '?refresh=1' : ''}`),
-  getMonitorConfig: () => request("/api/monitor/config"),
-  updateMonitorConfig: (data: { ldohCookie?: string | null }) =>
-    request("/api/monitor/config", {
-      method: "PUT",
-      body: JSON.stringify(data),
-    }),
-  initMonitorSession: () => request("/api/monitor/session", { method: "POST" }),
 
   // Models marketplace
   getModelsMarketplace: (options?: {

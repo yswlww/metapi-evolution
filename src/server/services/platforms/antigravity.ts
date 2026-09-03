@@ -1,3 +1,4 @@
+import { detectPlatformByUrlHint } from '../../../shared/platformIdentity.js';
 import { BasePlatformAdapter, type BalanceInfo, type CheckinResult, type UserInfo } from './base.js';
 import {
   ANTIGRAVITY_CLIENT_METADATA,
@@ -35,8 +36,7 @@ export class AntigravityAdapter extends BasePlatformAdapter {
   readonly platformName = 'antigravity';
 
   async detect(url: string): Promise<boolean> {
-    const normalized = (url || '').toLowerCase();
-    return normalized.includes('antigravity');
+    return detectPlatformByUrlHint(url) === this.platformName;
   }
 
   override async login(_baseUrl: string, _username: string, _password: string) {

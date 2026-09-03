@@ -19,6 +19,8 @@ spec:
 
     - `AUTH_TOKEN`: Admin login token for the dashboard.
     - `PROXY_TOKEN`: Bearer token for downstream `/v1/*` proxy requests.
+    - `GEMINI_CLI_CLIENT_ID` and `GEMINI_CLI_CLIENT_SECRET`: Required only when using Gemini CLI OAuth.
+    - `ANTIGRAVITY_CLIENT_ID` and `ANTIGRAVITY_CLIENT_SECRET`: Required only when using Antigravity OAuth.
 
     ## Data Persistence
 
@@ -32,6 +34,22 @@ spec:
       type: STRING
       name: Proxy Token
       description: Bearer token used by downstream clients.
+    - key: GEMINI_CLI_CLIENT_ID
+      type: STRING
+      name: Gemini CLI OAuth Client ID
+      description: Required only when using Gemini CLI OAuth; leave blank otherwise.
+    - key: GEMINI_CLI_CLIENT_SECRET
+      type: STRING
+      name: Gemini CLI OAuth Client Secret
+      description: Required only when using Gemini CLI OAuth; leave blank otherwise.
+    - key: ANTIGRAVITY_CLIENT_ID
+      type: STRING
+      name: Antigravity OAuth Client ID
+      description: Required only when using Antigravity OAuth; leave blank otherwise.
+    - key: ANTIGRAVITY_CLIENT_SECRET
+      type: STRING
+      name: Antigravity OAuth Client Secret
+      description: Required only when using Antigravity OAuth; leave blank otherwise.
     - key: TZ
       type: STRING
       name: Time Zone
@@ -61,6 +79,18 @@ spec:
           PROXY_TOKEN:
             default: ${PROXY_TOKEN}
             expose: false
+          GEMINI_CLI_CLIENT_ID:
+            default: ${GEMINI_CLI_CLIENT_ID}
+            expose: false
+          GEMINI_CLI_CLIENT_SECRET:
+            default: ${GEMINI_CLI_CLIENT_SECRET}
+            expose: false
+          ANTIGRAVITY_CLIENT_ID:
+            default: ${ANTIGRAVITY_CLIENT_ID}
+            expose: false
+          ANTIGRAVITY_CLIENT_SECRET:
+            default: ${ANTIGRAVITY_CLIENT_SECRET}
+            expose: false
           ACCOUNT_CREDENTIAL_SECRET:
             default: ${AUTH_TOKEN}
             expose: false
@@ -86,6 +116,18 @@ localization:
       - key: PROXY_TOKEN
         name: 代理令牌
         description: 下游客户端调用 /v1/* 时使用的 Bearer Token。
+      - key: GEMINI_CLI_CLIENT_ID
+        name: Gemini CLI OAuth 客户端 ID
+        description: 仅在使用 Gemini CLI OAuth 时必填，否则留空。
+      - key: GEMINI_CLI_CLIENT_SECRET
+        name: Gemini CLI OAuth 客户端 Secret
+        description: 仅在使用 Gemini CLI OAuth 时必填，否则留空。
+      - key: ANTIGRAVITY_CLIENT_ID
+        name: Antigravity OAuth 客户端 ID
+        description: 仅在使用 Antigravity OAuth 时必填，否则留空。
+      - key: ANTIGRAVITY_CLIENT_SECRET
+        name: Antigravity OAuth 客户端 Secret
+        description: 仅在使用 Antigravity OAuth 时必填，否则留空。
       - key: TZ
         name: 时区
         description: 服务时区（影响定时任务和日志时间）。
@@ -101,6 +143,8 @@ localization:
 
       - `AUTH_TOKEN`：后台管理员登录令牌
       - `PROXY_TOKEN`：下游调用 `/v1/*` 使用的 Bearer Token
+      - `GEMINI_CLI_CLIENT_ID` 和 `GEMINI_CLI_CLIENT_SECRET`：仅在使用 Gemini CLI OAuth 时必填
+      - `ANTIGRAVITY_CLIENT_ID` 和 `ANTIGRAVITY_CLIENT_SECRET`：仅在使用 Antigravity OAuth 时必填
 
       ## 数据持久化
 

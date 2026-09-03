@@ -63,7 +63,6 @@ vi.mock('../../db/index.js', () => ({
     select: () => ({
       from: () => ({
         where: () => ({
-          get: async () => ({ maxConcurrency: 1 }),
           orderBy: () => ({
             all: async () => [],
           }),
@@ -84,7 +83,6 @@ vi.mock('../../db/index.js', () => ({
   hasProxyLogStreamTimingColumns: async () => false,
   schema: {
     proxyLogs: {},
-    sites: { id: {}, maxConcurrency: {} },
     siteApiEndpoints: {
       id: {},
       siteId: {},
@@ -173,45 +171,88 @@ describe('/v1/images/edits route', () => {
     expect(targetUrl).toBe('https://upstream.example.com/v1/images/edits');
   });
 
-  it('rejects image edit admission before fetch or channel failure bookkeeping', async () => {
-    const limitedSite = {
-      id: 44,
-      name: 'limited-image-site',
-      url: 'https://upstream.example.com',
-      platform: 'openai',
-      maxConcurrency: 1,
-    };
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: limitedSite,
-      account: { id: 33, username: 'demo-user' },
-      tokenName: 'default',
-      tokenValue: 'sk-demo',
-      actualModel: 'upstream-gpt-image',
-    });
-    const blockingLease = await proxyChannelCoordinator.acquireSiteLease({
-      siteId: limitedSite.id,
-      maxConcurrency: 1,
-    });
-    try {
-      const boundary = 'metapi-limited-image-boundary';
-      const response = await app.inject({
-        method: 'POST',
-        url: '/v1/images/edits',
-        headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
-        payload: buildMultipartBody(boundary),
-      });
+  it('forwards every enabled image-generation parameter unchanged except the selected upstream model', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      created: 1,
+      data: [{ url: 'https://cdn.example/generated.png' }],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
 
-      expect(response.statusCode).toBe(503);
-      expect(response.headers['retry-after']).toBe('2');
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(recordFailureMock).not.toHaveBeenCalled();
-      expect(reportProxyAllFailedMock).not.toHaveBeenCalled();
-      expect(reportTokenExpiredMock).not.toHaveBeenCalled();
-      expect(selectNextChannelMock).not.toHaveBeenCalled();
-    } finally {
-      blockingLease.release();
-    }
+    const requestedBody = {
+      model: 'requested-image-model',
+      prompt: 'draw a fox',
+      n: 3,
+      size: '1536x1024',
+      quality: 'high',
+      style: 'vivid',
+      response_format: 'url',
+      output_format: 'webp',
+      background: 'transparent',
+      output_compression: 71,
+      moderation: 'low',
+      user: 'user-42',
+      provider_extension: { keep: true },
+    };
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/images/generations',
+      headers: { authorization: 'Bearer sk-demo' },
+      payload: requestedBody,
+    });
+
+    expect(response.statusCode).toBe(200);
+    const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(requestInit.body))).toEqual({
+      ...requestedBody,
+      model: 'upstream-gpt-image',
+    });
+  });
+
+  it('preserves every image-generation parameter across a retry', async () => {
+    selectNextChannelMock.mockReturnValueOnce({
+      channel: { id: 12, routeId: 23 },
+      site: { id: 45, name: 'fallback-site', url: 'https://fallback.example.com', platform: 'openai' },
+      account: { id: 34, username: 'fallback-user' },
+      tokenName: 'fallback',
+      tokenValue: 'sk-fallback',
+      actualModel: 'fallback-gpt-image',
+    });
+    fetchMock
+      .mockResolvedValueOnce(new Response('not-json', { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ created: 2, data: [{ b64_json: 'Zm9v' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+    const requestedBody = {
+      model: 'requested-image-model',
+      prompt: 'retry this',
+      n: 2,
+      size: '1024x1024',
+      quality: 'medium',
+      style: 'natural',
+      response_format: 'b64_json',
+      output_format: 'jpeg',
+      background: 'opaque',
+      output_compression: 0,
+      moderation: 'auto',
+      user: 'retry-user',
+    };
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/images/generations',
+      headers: { authorization: 'Bearer sk-demo' },
+      payload: requestedBody,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, firstInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [, secondInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(JSON.parse(String(firstInit.body))).toEqual({ ...requestedBody, model: 'upstream-gpt-image' });
+    expect(JSON.parse(String(secondInit.body))).toEqual({ ...requestedBody, model: 'fallback-gpt-image' });
   });
 
   it('retries the next channel when image generation JSON is malformed', async () => {
@@ -303,5 +344,45 @@ describe('/v1/images/edits route', () => {
         type: 'invalid_request_error',
       },
     });
+  });
+  it('rejects image edit admission before fetch or channel failure bookkeeping', async () => {
+    const limitedSite = {
+      id: 44,
+      name: 'limited-image-site',
+      url: 'https://upstream.example.com',
+      platform: 'openai',
+      maxConcurrency: 1,
+    };
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: limitedSite,
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-demo',
+      actualModel: 'upstream-gpt-image',
+    });
+    const blockingLease = await proxyChannelCoordinator.acquireSiteLease({
+      siteId: limitedSite.id,
+      maxConcurrency: 1,
+    });
+    try {
+      const boundary = 'metapi-limited-image-boundary';
+      const response = await app.inject({
+        method: 'POST',
+        url: '/v1/images/edits',
+        headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+        payload: buildMultipartBody(boundary),
+      });
+
+      expect(response.statusCode).toBe(503);
+      expect(response.headers['retry-after']).toBe('2');
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(recordFailureMock).not.toHaveBeenCalled();
+      expect(reportProxyAllFailedMock).not.toHaveBeenCalled();
+      expect(reportTokenExpiredMock).not.toHaveBeenCalled();
+      expect(selectNextChannelMock).not.toHaveBeenCalled();
+    } finally {
+      blockingLease.release();
+    }
   });
 });

@@ -1,4 +1,5 @@
 import type { Response as UndiciResponse } from 'undici';
+import { getPlatformCapabilities } from '../../../../shared/platformCapabilities.js';
 import {
   buildMinimalJsonHeadersForCompatibility,
   isEndpointDowngradeError,
@@ -46,6 +47,7 @@ type CreateResponsesEndpointStrategyInput = {
 };
 
 export function createResponsesEndpointStrategy(input: CreateResponsesEndpointStrategyInput) {
+  const platformCapabilities = getPlatformCapabilities(input.sitePlatform);
   return {
     async tryRecover(ctx: EndpointAttemptContext): Promise<EndpointRecoverResult> {
       if (shouldRetryResponsesCompatibility({
@@ -148,6 +150,10 @@ export function createResponsesEndpointStrategy(input: CreateResponsesEndpointSt
       if (input.requiresNativeResponsesFileUrl) return false;
       return (
         ctx.response.status >= 500
+        || (
+          ctx.response.status === 410
+          && platformCapabilities.retryAlternativeEndpointOnGone
+        )
         || isEndpointDowngradeError(ctx.response.status, ctx.rawErrText)
         || shouldDowngradeResponsesChatToMessages(
           ctx.request.path,

@@ -18,6 +18,7 @@ describe('defaultConnectionSegment', () => {
     expect(resolveInitialConnectionSegment('claude')).toBe('apikey');
     expect(resolveInitialConnectionSegment('gemini')).toBe('apikey');
     expect(resolveInitialConnectionSegment('cliproxyapi')).toBe('apikey');
+    expect(resolveInitialConnectionSegment('orcarouter')).toBe('apikey');
   });
 
   it('falls back to the apikey segment for unknown platforms', () => {

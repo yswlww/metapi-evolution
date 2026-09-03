@@ -9,6 +9,7 @@ describe('payload rule platform options', () => {
       '',
       'codex',
       'sub2api',
+      'axonhub',
       'new-api',
       'one-api',
       'cliproxyapi',
@@ -21,6 +22,7 @@ describe('payload rule platform options', () => {
       'done-hub',
       'one-hub',
       'veloera',
+      'orcarouter',
     ]));
   });
 });

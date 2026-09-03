@@ -1,5 +1,7 @@
 import type { PlatformAdapter } from './base.js';
 import { AnyRouterAdapter } from './anyrouter.js';
+import { AxonHubAdapter } from './axonHub.js';
+import { OrcaRouterAdapter } from './orcarouter.js';
 import { NewApiAdapter } from './newApi.js';
 import { OneApiAdapter } from './oneApi.js';
 import { VeloeraAdapter } from './veloera.js';
@@ -18,6 +20,8 @@ import { detectPlatformByUrlHint, normalizePlatformAlias } from '../../../shared
 
 const adapters: PlatformAdapter[] = [
   // Specific forks before generic adapters for better auto-detection.
+  new AxonHubAdapter(),
+  new OrcaRouterAdapter(),
   new OpenAiAdapter(),
   new CodexAdapter(),
   new ClaudeAdapter(),
@@ -45,6 +49,7 @@ export function getAdapter(platform: string): PlatformAdapter | undefined {
 
 const titleFirstPlatforms = new Set<string>([
   'anyrouter',
+  'axonhub',
   'done-hub',
   'one-hub',
   'veloera',

@@ -5,12 +5,14 @@ import {
   DEFAULT_INPUTS,
   DEFAULT_MODE_STATE,
   DEFAULT_PARAMETER_ENABLED,
+  DEFAULT_IMAGE_PARAMETER_ENABLED,
   MODEL_TESTER_SESSION_VERSION,
   MESSAGE_STATUS,
   buildApiPayload,
   buildEmbeddingsRequestEnvelope,
   buildFileUploadRequestEnvelope,
   buildGeminiNativeConversationProxyEnvelope,
+  buildImagesGenerationsRequestEnvelope,
   buildRawProxyRequestEnvelope,
   buildSearchRequestEnvelope,
   attachForcedChannelToEnvelope,
@@ -64,6 +66,18 @@ describe('modelTesterSession', () => {
         max_tokens: true,
         seed: true,
       },
+      imageParameterEnabled: {
+        n: true,
+        size: false,
+        quality: true,
+        style: false,
+        response_format: true,
+        output_format: true,
+        background: false,
+        output_compression: true,
+        moderation: false,
+        user: true,
+      },
       messages: [
         { id: 'm1', role: 'user', content: 'hello', createAt: 1 },
         { id: 'm2', role: 'assistant', content: 'hi', createAt: 2, status: MESSAGE_STATUS.COMPLETE },
@@ -97,6 +111,16 @@ describe('modelTesterSession', () => {
       ],
       modeState: {
         ...DEFAULT_MODE_STATE,
+        imagesN: 4,
+        imagesSize: '1024x1536',
+        imagesQuality: 'high',
+        imagesStyle: 'natural',
+        imagesResponseFormat: 'b64_json',
+        imagesOutputFormat: 'webp',
+        imagesBackground: 'transparent',
+        imagesOutputCompression: 68,
+        imagesModeration: 'low',
+        imagesUser: 'user-1',
         searchQuery: 'hello',
         searchAllowedDomains: 'openai.com, google.com',
       },
@@ -919,19 +943,205 @@ describe('modelTesterSession', () => {
     ]);
   });
 
-  it('filters models by keyword and keeps best matches first', () => {
-    const filtered = filterModelTesterModelNames(
-      [
-        'BAAI/bge-large-en-v1.5',
-        'text-embedding-3-large',
-        'bge-m3',
-      ],
-      'bge',
+  it('builds image generations envelopes with only enabled fields and normalized numeric boundaries', () => {
+    const buildEnvelope = buildImagesGenerationsRequestEnvelope as unknown as (...args: any[]) => any;
+    const envelope = buildEnvelope(
+      { ...DEFAULT_INPUTS, model: '  gpt-image-1  ' },
+      {
+        ...DEFAULT_MODE_STATE,
+        imagesPrompt: '  a red fox  ',
+        imagesN: 99,
+        imagesSize: '1536x1024',
+        imagesQuality: 'high',
+        imagesStyle: 'vivid',
+        imagesResponseFormat: 'b64_json',
+        imagesOutputFormat: 'webp',
+        imagesBackground: 'transparent',
+        imagesOutputCompression: 101,
+        imagesModeration: 'custom-provider-policy',
+        imagesUser: '  user-42  ',
+      },
+      {
+        n: true,
+        size: true,
+        quality: false,
+        style: true,
+        response_format: true,
+        output_format: true,
+        background: true,
+        output_compression: true,
+        moderation: true,
+        user: true,
+      },
     );
 
-    expect(filtered).toEqual([
-      'bge-m3',
-      'BAAI/bge-large-en-v1.5',
+    expect(envelope.path).toBe('/v1/images/generations');
+    expect(envelope.jsonBody).toEqual({
+      model: 'gpt-image-1',
+      prompt: 'a red fox',
+      n: 10,
+      size: '1536x1024',
+      style: 'vivid',
+      response_format: 'b64_json',
+      output_format: 'webp',
+      background: 'transparent',
+      output_compression: 100,
+      moderation: 'custom-provider-policy',
+      user: 'user-42',
+    });
+  });
+
+  it('omits disabled image fields rather than sending UI defaults', () => {
+    const buildEnvelope = buildImagesGenerationsRequestEnvelope as unknown as (...args: any[]) => any;
+    const envelope = buildEnvelope(
+      { ...DEFAULT_INPUTS, model: 'gpt-image-1' },
+      {
+        ...DEFAULT_MODE_STATE,
+        imagesPrompt: 'sunset',
+        imagesN: 2,
+        imagesSize: 'auto',
+        imagesQuality: 'auto',
+        imagesStyle: 'natural',
+        imagesResponseFormat: 'url',
+        imagesOutputFormat: 'png',
+        imagesBackground: 'auto',
+        imagesOutputCompression: 0,
+        imagesModeration: 'auto',
+        imagesUser: 'user-1',
+      },
+      {
+        n: false,
+        size: false,
+        quality: false,
+        style: false,
+        response_format: false,
+        output_format: false,
+        background: false,
+        output_compression: false,
+        moderation: false,
+        user: false,
+      },
+    );
+
+    expect(envelope.jsonBody).toEqual({ model: 'gpt-image-1', prompt: 'sunset' });
+  });
+
+  it('persists image-generation values and enabled states while defaulting legacy sessions safely', () => {
+    const raw = JSON.stringify({
+      version: 5,
+      input: '',
+      inputs: { ...DEFAULT_INPUTS, model: 'gpt-image-1', mode: 'images.generate' },
+      parameterEnabled: DEFAULT_PARAMETER_ENABLED,
+      imageParameterEnabled: {
+        n: true,
+        size: true,
+        quality: false,
+        style: true,
+        response_format: false,
+        output_format: true,
+        background: true,
+        output_compression: true,
+        moderation: true,
+        user: false,
+      },
+      messages: [],
+      conversationFiles: [],
+      pendingPayload: null,
+      customRequestMode: false,
+      customRequestBody: '',
+      showDebugPanel: false,
+      activeDebugTab: DEBUG_TABS.PREVIEW,
+      modeState: {
+        ...DEFAULT_MODE_STATE,
+        imagesPrompt: 'a fox',
+        imagesN: 3,
+        imagesSize: '1024x1536',
+        imagesQuality: 'high',
+        imagesStyle: 'vivid',
+        imagesResponseFormat: 'b64_json',
+        imagesOutputFormat: 'jpeg',
+        imagesBackground: 'transparent',
+        imagesOutputCompression: 73,
+        imagesModeration: 'low',
+        imagesUser: 'person-1',
+      },
+    });
+    const restored = parseModelTesterSession(raw) as any;
+
+    expect(restored.modeState.imagesN).toBe(3);
+    expect(restored.modeState.imagesOutputFormat).toBe('jpeg');
+    expect(restored.imageParameterEnabled.output_compression).toBe(true);
+    expect(restored.imageParameterEnabled.response_format).toBe(false);
+
+    const legacy = parseModelTesterSession(JSON.stringify({
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: 'hello' }],
+    })) as any;
+    expect(legacy.modeState.imagesPrompt).toBe('');
+    expect(legacy.modeState.imagesN).toBeNull();
+    expect(legacy.imageParameterEnabled).toEqual({
+      n: false,
+      size: false,
+      quality: false,
+      style: false,
+      response_format: false,
+      output_format: false,
+      background: false,
+      output_compression: false,
+      moderation: false,
+      user: false,
+    });
+  });
+
+  it('migrates legacy nested image switches into one canonical state without retaining a second source', () => {
+    const restored = parseModelTesterSession(JSON.stringify({
+      input: '',
+      inputs: { ...DEFAULT_INPUTS, model: 'gpt-image-1', mode: 'images.generate' },
+      parameterEnabled: DEFAULT_PARAMETER_ENABLED,
+      imageParameterEnabled: { ...DEFAULT_IMAGE_PARAMETER_ENABLED, n: false },
+      messages: [],
+      conversationFiles: [],
+      pendingPayload: null,
+      customRequestMode: false,
+      customRequestBody: '',
+      showDebugPanel: false,
+      activeDebugTab: DEBUG_TABS.PREVIEW,
+      modeState: {
+        ...DEFAULT_MODE_STATE,
+        imagesPrompt: 'fox',
+        imagesN: 2,
+        imagesParameterEnabled: { ...DEFAULT_IMAGE_PARAMETER_ENABLED, n: true },
+      },
+    })) as any;
+
+    expect(restored.imageParameterEnabled.n).toBe(false);
+    expect(restored.modeState).not.toHaveProperty('imagesParameterEnabled');
+    expect(JSON.parse(serializeModelTesterSession(restored)).modeState).not.toHaveProperty('imagesParameterEnabled');
+
+    const staleModeState = {
+      ...DEFAULT_MODE_STATE,
+      imagesPrompt: 'fox',
+      imagesN: 2,
+      imagesParameterEnabled: { ...DEFAULT_IMAGE_PARAMETER_ENABLED, n: true },
+    } as any;
+    const envelope = buildImagesGenerationsRequestEnvelope(
+      { ...DEFAULT_INPUTS, model: 'gpt-image-1' },
+      staleModeState,
+    );
+    expect(envelope.jsonBody).toEqual({ model: 'gpt-image-1', prompt: 'fox' });
+  });
+
+  it('ranks filtered model names by match position, then name length, then original order', () => {
+    expect(filterModelTesterModelNames([
+      'openai/gpt-4o',
+      'gpt-4',
+      'my-gpt-mini',
+      'gpt-4.1-mini',
+    ], 'gpt')).toEqual([
+      'gpt-4',
+      'gpt-4.1-mini',
+      'my-gpt-mini',
+      'openai/gpt-4o',
     ]);
   });
 });

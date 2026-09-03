@@ -249,6 +249,7 @@ const DIRECT_API_PLATFORMS = new Set([
   'openai',
   'claude',
   'gemini',
+  'orcarouter',
   'cliproxyapi',
   'codex',
   'gemini-cli',

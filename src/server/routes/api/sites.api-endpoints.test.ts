@@ -152,6 +152,107 @@ describe('sites api endpoints', () => {
     ]);
   });
 
+  it.each([
+    'http://api.orcarouter.ai/v1',
+    'https://key:secret@api.orcarouter.ai/v1',
+  ])('rejects insecure OrcaRouter primary URLs on create: %s', async (url) => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'unsafe-orcarouter-create',
+        url,
+        platform: 'orcarouter',
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(await db.select().from(schema.sites).all()).toEqual([]);
+  });
+
+  it.each([
+    'http://api.orcarouter.ai/v1',
+    'https://key:secret@api.orcarouter.ai/v1',
+  ])('rejects insecure OrcaRouter primary URLs on update: %s', async (url) => {
+    const site = await db.insert(schema.sites).values({
+      name: 'secure-orcarouter-update',
+      url: 'https://api.orcarouter.ai',
+      platform: 'orcarouter',
+      status: 'active',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}`,
+      payload: { url },
+    });
+
+    expect(response.statusCode).toBe(400);
+    const stored = await db.select().from(schema.sites).where(eq(schema.sites.id, site.id)).get();
+    expect(stored?.url).toBe('https://api.orcarouter.ai');
+  });
+
+  it('rejects an insecure OrcaRouter alternate endpoint on create', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'unsafe-orcarouter-endpoint-create',
+        url: 'https://api.orcarouter.ai/v1',
+        platform: 'orcarouter',
+        apiEndpoints: [{ url: 'http://alternate.orcarouter.example/v1', enabled: true, sortOrder: 0 }],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(await db.select().from(schema.sites).all()).toEqual([]);
+  });
+
+  it('rejects an insecure OrcaRouter alternate endpoint on update', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'secure-orcarouter-endpoint-update',
+      url: 'https://api.orcarouter.ai',
+      platform: 'orcarouter',
+      status: 'active',
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}`,
+      payload: {
+        apiEndpoints: [{ url: 'https://key:secret@alternate.orcarouter.example/v1', enabled: true, sortOrder: 0 }],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(await db.select().from(schema.siteApiEndpoints).all()).toEqual([]);
+  });
+
+  it('rejects conversion to OrcaRouter when a retained alternate endpoint is insecure', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'convert-with-legacy-endpoint',
+      url: 'https://safe.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'http://legacy.orcarouter.example/v1',
+      enabled: true,
+      sortOrder: 0,
+    }).run();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}`,
+      payload: { platform: 'orcarouter' },
+    });
+
+    expect(response.statusCode).toBe(400);
+    const stored = await db.select().from(schema.sites).where(eq(schema.sites.id, site.id)).get();
+    expect(stored?.platform).toBe('new-api');
+  });
+
   it('rejects duplicate api endpoint urls under the same site after normalization', async () => {
     const response = await app.inject({
       method: 'POST',

@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 import { getBrand, normalizeBrandIconKey, type BrandInfo } from '../../components/BrandIcon.js';
 import { normalizeTokenRouteMode, type RouteDecisionCandidate, type RouteMode } from '../../../shared/tokenRouteContract.js';
+import { normalizePlatformAlias } from '../../../shared/platformIdentity.js';
 import type { RouteRow, RouteChannel, ChannelDecisionState, RouteSummaryRow } from './types.js';
 import {
   isExactTokenRouteModelPattern,
@@ -24,25 +25,18 @@ export const ENDPOINT_TYPE_ICON_MODEL_MAP: Record<string, string> = {
 
 export const PLATFORM_ENDPOINT_FALLBACK_MAP: Record<string, string[]> = {
   openai: ['openai'],
+  axonhub: ['openai'],
   'new-api': ['openai'],
   'one-api': ['openai'],
   'one-hub': ['openai'],
   'done-hub': ['openai'],
   sub2api: ['openai'],
   veloera: ['openai'],
+  orcarouter: ['openai'],
   cliproxyapi: ['openai'],
   claude: ['anthropic'],
   gemini: ['gemini'],
   anyrouter: ['openai', 'anthropic'],
-};
-
-export const PLATFORM_ALIASES: Record<string, string> = {
-  anthropic: 'claude',
-  google: 'gemini',
-  'new api': 'new-api',
-  newapi: 'new-api',
-  'one api': 'one-api',
-  oneapi: 'one-api',
 };
 
 export function isRegexModelPattern(modelPattern: string): boolean {
@@ -126,9 +120,7 @@ export function resolveEndpointTypeIconModel(endpointType: string): string | nul
 }
 
 export function normalizePlatformKey(platform: string | null | undefined): string {
-  const raw = String(platform || '').trim().toLowerCase();
-  if (!raw) return '';
-  return PLATFORM_ALIASES[raw] || raw;
+  return normalizePlatformAlias(platform);
 }
 
 export function inferEndpointTypesFromPlatform(platform: string | null | undefined): string[] {

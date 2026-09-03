@@ -10,9 +10,6 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getMonitorOverview: vi.fn(),
     refreshAccountHealth: vi.fn(),
-    getMonitorConfig: vi.fn(),
-    updateMonitorConfig: vi.fn(),
-    initMonitorSession: vi.fn(),
   },
 }));
 
@@ -90,9 +87,6 @@ describe('Monitors internal dashboard', () => {
     vi.clearAllMocks();
     apiMock.getMonitorOverview.mockResolvedValue(buildOverview());
     apiMock.refreshAccountHealth.mockResolvedValue({ success: true });
-    apiMock.getMonitorConfig.mockResolvedValue({ ldohCookieConfigured: false });
-    apiMock.updateMonitorConfig.mockResolvedValue({ success: true });
-    apiMock.initMonitorSession.mockResolvedValue({ success: true });
   });
 
   afterEach(() => {

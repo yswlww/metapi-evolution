@@ -1,3 +1,4 @@
+import { detectPlatformByUrlHint } from '../../../shared/platformIdentity.js';
 import { StandardApiProviderAdapterBase } from './standardApiProvider.js';
 
 const CLAUDE_DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
@@ -21,8 +22,7 @@ export class ClaudeAdapter extends StandardApiProviderAdapterBase {
   readonly platformName = 'claude';
 
   async detect(url: string): Promise<boolean> {
-    const normalized = (url || '').toLowerCase();
-    return normalized.includes('api.anthropic.com') || normalized.includes('anthropic.com/v1');
+    return detectPlatformByUrlHint(url) === this.platformName;
   }
 
   async getModels(baseUrl: string, apiToken: string): Promise<string[]> {
