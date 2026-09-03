@@ -4,8 +4,6 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { asc, eq } from 'drizzle-orm';
-import { config } from '../../config.js';
-import { proxyChannelCoordinator, resetProxyChannelCoordinatorState } from '../../services/proxyChannelCoordinator.js';
 import { resetUpstreamEndpointRuntimeState } from '../../services/upstreamEndpointRuntimeMemory.js';
 
 const fetchMock = vi.fn();
@@ -89,6 +87,9 @@ describe('chat proxy site api endpoint rotation', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let dataDir = '';
+  let config: typeof import('../../config.js')['config'];
+  let proxyChannelCoordinator: typeof import('../../services/proxyChannelCoordinator.js')['proxyChannelCoordinator'];
+  let resetProxyChannelCoordinatorState: typeof import('../../services/proxyChannelCoordinator.js')['resetProxyChannelCoordinatorState'];
 
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'metapi-chat-site-api-endpoint-'));
@@ -96,9 +97,14 @@ describe('chat proxy site api endpoint rotation', () => {
 
     await import('../../db/migrate.js');
     const dbModule = await import('../../db/index.js');
+    const configModule = await import('../../config.js');
+    const coordinatorModule = await import('../../services/proxyChannelCoordinator.js');
     const routesModule = await import('./chat.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    config = configModule.config;
+    proxyChannelCoordinator = coordinatorModule.proxyChannelCoordinator;
+    resetProxyChannelCoordinatorState = coordinatorModule.resetProxyChannelCoordinatorState;
 
     app = Fastify();
     app.addHook('onRequest', async (request) => {
