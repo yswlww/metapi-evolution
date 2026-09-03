@@ -284,6 +284,48 @@ describe('gemini native proxy routes', () => {
     isModelAllowedByPolicyOrAllowedRoutesMock.mockResolvedValue(true);
   });
 
+  it('keeps one Gemini site admission while rotating retryable site endpoints', async () => {
+    const lease = {
+      siteId: 44,
+      isActive: () => true,
+      isTransferred: () => false,
+      markTransferred: vi.fn(),
+      release: vi.fn(),
+      touch: vi.fn(),
+    };
+    runWithProxySiteApiEndpointPoolMock.mockImplementationOnce(async (_site, operation) => {
+      try {
+        await operation({
+          kind: 'endpoint', siteId: 44, endpointId: 1,
+          baseUrl: 'https://first.example.com', configuredEndpointCount: 2, endpoint: null,
+        }, lease);
+      } catch {}
+      return operation({
+        kind: 'endpoint', siteId: 44, endpointId: 2,
+        baseUrl: 'https://second.example.com', configuredEndpointCount: 2, endpoint: null,
+      }, lease);
+    });
+    fetchMock
+      .mockResolvedValueOnce(new Response('temporary upstream failure', { status: 502 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ candidates: [] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1beta/models/gemini-2.5-flash:generateContent',
+      headers: { authorization: 'Bearer sk-managed-gemini' },
+      payload: { contents: [{ role: 'user', parts: [{ text: 'hello' }] }] },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('first.example.com');
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('second.example.com');
+    expect(bindSiteLeaseToResponseMock).toHaveBeenCalledTimes(1);
+  });
+
   it('admits direct Gemini generate requests through the proxy site pool', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ candidates: [] }), {
       status: 200,

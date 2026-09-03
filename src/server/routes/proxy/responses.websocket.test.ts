@@ -5,6 +5,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../../config.js';
 import { resetCodexSessionResponseStore } from '../../proxy-core/runtime/codexSessionResponseStore.js';
+import { resetProxyChannelCoordinatorState } from '../../services/proxyChannelCoordinator.js';
 
 const fetchMock = vi.fn();
 const selectChannelMock = vi.fn();
@@ -268,6 +269,16 @@ function waitForSocketMessageMatching(
   });
 }
 
+async function waitForCondition(predicate: () => boolean, timeoutMs = 1_000) {
+  const startedAt = Date.now();
+  while (!predicate()) {
+    if (Date.now() - startedAt >= timeoutMs) {
+      throw new Error('Timed out waiting for condition');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -369,6 +380,7 @@ describe('responses websocket transport', () => {
 
   beforeEach(() => {
     resetCodexSessionResponseStore();
+    resetProxyChannelCoordinatorState();
     fetchMock.mockReset();
     selectChannelMock.mockReset();
     selectNextChannelMock.mockReset();
@@ -548,6 +560,48 @@ describe('responses websocket transport', () => {
     expect(messages[3]?.response?.output?.[0]?.content?.[0]?.text).toBe('pong');
     expect(fetchMock).toHaveBeenCalledTimes(0);
     expect(upstreamConnectionCount).toBe(1);
+  });
+
+  it('rejects a second direct websocket frame at the site cap without fallback or failure bookkeeping', async () => {
+    const originalQueueWaitMs = config.proxySiteConcurrencyQueueWaitMs;
+    config.proxySiteConcurrencyQueueWaitMs = 20;
+    const selectedChannel = createSelectedChannel({ siteUrl: upstreamSiteUrl }) as ReturnType<typeof createSelectedChannel> & {
+      site: ReturnType<typeof createSelectedChannel>['site'] & { maxConcurrency: number };
+    };
+    selectedChannel.site.maxConcurrency = 1;
+    selectChannelMock.mockReturnValue(selectedChannel);
+    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    upstreamMessageHandler = (socket, parsed, requestIndex) => {
+      if (requestIndex !== 1) return;
+      // Hold the first request open so the second connection must wait at admission.
+      void socket;
+      void parsed;
+    };
+
+    const first = createClientSocket(baseUrl);
+    await waitForSocketOpen(first);
+    first.send(JSON.stringify({ type: 'response.create', model: 'gpt-5.4', input: [] }));
+    await waitForCondition(() => upstreamRequests.length === 1);
+
+    const second = createClientSocket(baseUrl);
+    await waitForSocketOpen(second);
+    const errorPromise = waitForSocketMessageMatching(second, (message) => message?.status === 503);
+    second.send(JSON.stringify({ type: 'response.create', model: 'gpt-5.4', input: [] }));
+    const error = await errorPromise;
+
+    expect(error).toMatchObject({
+      type: 'error',
+      status: 503,
+      error: { type: 'site_concurrency_limit' },
+    });
+    expect(upstreamRequests).toHaveLength(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(recordFailureMock).not.toHaveBeenCalled();
+    expect(selectNextChannelMock).not.toHaveBeenCalled();
+
+    first.close();
+    second.close();
+    config.proxySiteConcurrencyQueueWaitMs = originalQueueWaitMs;
   });
 
   it('uses the configured site api endpoint pool for codex websocket transport', async () => {

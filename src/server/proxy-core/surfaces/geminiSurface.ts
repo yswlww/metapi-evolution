@@ -926,10 +926,16 @@ export async function geminiProxyRoute(app: FastifyInstance) {
                   }
                 }
                 const firstByteLatencyMs = getObservedResponseMeta(upstream)?.firstByteLatencyMs ?? null;
+                if (!upstream.ok) {
+                  const errorText = await readRuntimeResponseText(upstream as unknown as import('undici').Response);
+                  throw new SiteApiEndpointRequestError(errorText || `HTTP ${upstream.status}`, {
+                    status: upstream.status,
+                    rawErrText: errorText || null,
+                    firstByteLatencyMs,
+                  });
+                }
                 return {
-                  upstream: upstream.ok
-                    ? bindSiteLeaseToResponse(upstream as unknown as Response, lease, abort.signal)
-                    : upstream as unknown as Response,
+                  upstream: bindSiteLeaseToResponse(upstream as unknown as Response, lease, abort.signal),
                   firstByteLatencyMs,
                   recoverApplied,
                 };
@@ -1204,12 +1210,14 @@ export async function geminiProxyRoute(app: FastifyInstance) {
               });
               return;
             } finally {
+              abort.dispose();
               reader.releaseLock();
               reply.raw.end();
             }
           }
 
           const text = await readRuntimeResponseText(upstream as any);
+          abort.dispose();
           const aggregateState = geminiGenerateContentTransformer.stream.createAggregateState();
           let parsedUsage = EMPTY_PROXY_USAGE;
           try {
@@ -1517,13 +1525,16 @@ export async function geminiProxyRoute(app: FastifyInstance) {
                   });
                 },
               });
-              if (result.ok) {
-                return {
-                  ...result,
-                  upstream: bindSiteLeaseToResponse(result.upstream as unknown as Response, lease, abort.signal) as unknown as typeof result.upstream,
-                };
+              if (!result.ok) {
+                throw new SiteApiEndpointRequestError(result.errText, {
+                  status: result.status,
+                  rawErrText: result.rawErrText || result.errText,
+                });
               }
-              return result;
+              return {
+                ...result,
+                upstream: bindSiteLeaseToResponse(result.upstream as unknown as Response, lease, abort.signal) as unknown as typeof result.upstream,
+              };
             },
             { signal: abort.signal },
           );
@@ -1535,47 +1546,6 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           }
           throw err;
         }
-        abort.dispose();
-        if (!endpointResult.ok) {
-          lastStatus = endpointResult.status;
-          lastContentType = 'application/json';
-          lastText = JSON.stringify({
-            error: {
-              message: endpointResult.errText,
-              type: 'upstream_error',
-            },
-          });
-          await tokenRouter.recordFailure?.(selected.channel.id, {
-            status: endpointResult.status,
-            errorText: endpointResult.rawErrText || endpointResult.errText,
-          });
-          await logProxy(
-            selected,
-            requestedModel,
-            'failed',
-            lastStatus,
-            Date.now() - startTime,
-            endpointResult.errText,
-            retryCount,
-            downstreamPath,
-            null,
-            clientContext,
-            0,
-            0,
-            0,
-            isStreamAction,
-            null,
-          );
-          if (canRetryChannelSelection(retryCount, forcedChannelId)) {
-            retryCount += 1;
-            continue;
-          }
-          await finalizeDebugFailure(lastStatus, JSON.parse(lastText), null).catch(async () => {
-            await finalizeDebugFailure(lastStatus, parseSurfaceProxyDebugTextPayload(lastText), null);
-          });
-          return reply.code(lastStatus).type(lastContentType).send(lastText);
-        }
-
         upstreamPath = endpointResult.upstreamPath;
         const upstream = endpointResult.upstream;
         const firstByteLatencyMs = getObservedResponseMeta(upstream)?.firstByteLatencyMs ?? null;
@@ -1633,7 +1603,10 @@ export async function geminiProxyRoute(app: FastifyInstance) {
         }
         return reply.code(upstream.status).send(downstreamPayload);
       } catch (error) {
-        lastStatus = 502;
+        const endpointStatus = error instanceof SiteApiEndpointRequestError
+          ? error.status
+          : null;
+        lastStatus = endpointStatus ?? 502;
         lastContentType = 'application/json';
         lastText = JSON.stringify({
           error: {
@@ -1642,13 +1615,14 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           },
         });
         await tokenRouter.recordFailure?.(selected.channel.id, {
+          status: endpointStatus ?? undefined,
           errorText: error instanceof Error ? error.message : 'Gemini upstream request failed',
         });
         await logProxy(
           selected,
           requestedModel,
           'failed',
-          0,
+          lastStatus,
           Date.now() - startTime,
           error instanceof Error ? error.message : 'Gemini upstream request failed',
           retryCount,
