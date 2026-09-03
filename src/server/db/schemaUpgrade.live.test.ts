@@ -4,6 +4,7 @@ import { applyContractFixtureThenUpgrade, introspectLiveSchema } from './schemaI
 import { describe, expect, it } from 'vitest';
 
 const skipLiveSchema = process.env.DB_PARITY_SKIP_LIVE_SCHEMA === 'true';
+const LIVE_SCHEMA_UPGRADE_TIMEOUT_MS = 30_000;
 const sqliteUpgrade = !skipLiveSchema && process.env.DB_PARITY_SQLITE !== 'false' ? it : it.skip;
 const mysqlUpgrade = process.env.DB_PARITY_MYSQL_URL ? it : it.skip;
 const postgresUpgrade = process.env.DB_PARITY_POSTGRES_URL ? it : it.skip;
@@ -21,7 +22,7 @@ describe('schema upgrade parity', () => {
     });
     const live = await introspectLiveSchema({ dialect: 'mysql', connectionString: mysqlUrl });
     expect(live).toEqual(currentContract);
-  });
+  }, LIVE_SCHEMA_UPGRADE_TIMEOUT_MS);
 
   postgresUpgrade('upgrades postgres to the current contract', async () => {
     const postgresUrl = await applyContractFixtureThenUpgrade('postgres', baselineContract, currentContract, {
@@ -29,5 +30,5 @@ describe('schema upgrade parity', () => {
     });
     const live = await introspectLiveSchema({ dialect: 'postgres', connectionString: postgresUrl });
     expect(live).toEqual(currentContract);
-  });
+  }, LIVE_SCHEMA_UPGRADE_TIMEOUT_MS);
 });

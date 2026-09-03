@@ -1,3 +1,4 @@
+import { detectPlatformByUrlHint } from '../../../shared/platformIdentity.js';
 import { OneHubAdapter } from './oneHub.js';
 import type { BalanceInfo, CheckinResult, SiteAnnouncement } from './base.js';
 
@@ -5,8 +6,7 @@ export class DoneHubAdapter extends OneHubAdapter {
   readonly platformName: string = 'done-hub';
 
   async detect(url: string): Promise<boolean> {
-    const normalized = url.toLowerCase();
-    return normalized.includes('donehub') || normalized.includes('done-hub');
+    return detectPlatformByUrlHint(url) === this.platformName;
   }
 
   // DoneHub deployments generally do not expose /api/user/checkin.

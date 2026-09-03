@@ -76,6 +76,22 @@ describe('upstreamEndpointDerivation', () => {
     expect(order).toEqual(['responses', 'chat', 'messages']);
   });
 
+  it('routes AxonHub requests through Responses before legacy Chat Completions', async () => {
+    const order = await resolveUpstreamEndpointCandidates(
+      {
+        ...baseContext,
+        site: {
+          ...baseContext.site,
+          platform: 'axonhub',
+        },
+      },
+      'gpt-5.5',
+      'openai',
+    );
+
+    expect(order).toEqual(['responses', 'chat', 'messages']);
+  });
+
   it('keeps antigravity non-gemini compatibility requests on messages-first ordering', async () => {
     const order = await resolveUpstreamEndpointCandidates(
       {

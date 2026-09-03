@@ -65,6 +65,38 @@ describe('k3s deploy assets', () => {
     expect(secretTemplate).toContain('required "env.dbUrl is required when env.dbType is mysql/postgres"');
   });
 
+  it('forwards blank Google OAuth configuration through the managed runtime Secret', () => {
+    const values = readRepoFile('deploy/k3s/chart/values.yaml');
+    const secretTemplate = readRepoFile('deploy/k3s/chart/templates/secret.yaml');
+    const oauthValues = [
+      'geminiCliClientId',
+      'geminiCliClientSecret',
+      'antigravityClientId',
+      'antigravityClientSecret',
+    ] as const;
+    const oauthEnvironment = [
+      'GEMINI_CLI_CLIENT_ID',
+      'GEMINI_CLI_CLIENT_SECRET',
+      'ANTIGRAVITY_CLIENT_ID',
+      'ANTIGRAVITY_CLIENT_SECRET',
+    ] as const;
+
+    for (const valueName of oauthValues) {
+      expect(values, `${valueName} should default to blank`).toContain(`${valueName}: ""`);
+    }
+    for (const [index, environmentName] of oauthEnvironment.entries()) {
+      expect(secretTemplate).toContain(
+        `${environmentName}: {{ .Values.env.${oauthValues[index]} | quote }}`,
+      );
+    }
+
+    expect(secretTemplate).not.toContain('required "env.geminiCliClientId');
+    expect(secretTemplate).not.toContain('required "env.geminiCliClientSecret');
+    expect(secretTemplate).not.toContain('required "env.antigravityClientId');
+    expect(secretTemplate).not.toContain('required "env.antigravityClientSecret');
+    expect(secretTemplate.startsWith('{{- if not .Values.existingSecret }}\n')).toBe(true);
+  });
+
   it('keeps the helper manifest on a pull policy that can pick up fresh latest tags', () => {
     const helperManifest = readRepoFile('deploy/k3s/metapi-deploy-helper.yaml');
 

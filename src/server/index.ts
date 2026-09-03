@@ -6,6 +6,9 @@ import {
   config,
 } from './config.js';
 import { authMiddleware } from './middleware/auth.js';
+import { createRateLimitGuard } from './middleware/requestRateLimit.js';
+import { createGlobalRateLimitHook, registerGlobalRateLimit } from './middleware/globalRateLimit.js';
+import { registerRetiredMonitorRouteGuard } from './retiredMonitorRouteGuard.js';
 import { sitesRoutes } from './routes/api/sites.js';
 import { accountsRoutes } from './routes/api/accounts.js';
 import { checkinRoutes } from './routes/api/checkin.js';
@@ -201,12 +204,29 @@ await ensureOauthProviderSitesExist();
 
 const app = Fastify(buildFastifyOptions(config));
 
+await registerGlobalRateLimit(app, {
+  max: config.requestRateLimitMax,
+  windowMs: config.requestRateLimitWindowMs,
+});
+
+const limitAuthenticatedAdmin = createRateLimitGuard({
+  bucket: 'admin-authenticated',
+  max: config.authenticatedRateLimitMax,
+  windowMs: config.requestRateLimitWindowMs,
+  keyGenerator: () => 'admin',
+});
+
 await app.register(cors);
+app.addHook('onRequest', createGlobalRateLimitHook(app));
+
+// Deny retired monitor endpoints before auth and SPA fallback can handle them.
+registerRetiredMonitorRouteGuard(app);
 
 // Auth middleware for /api routes
 app.addHook('onRequest', async (request, reply) => {
   if (request.url.startsWith('/api/') && !isPublicApiRoute(request.url)) {
     await authMiddleware(request, reply);
+    if (!reply.sent) await limitAuthenticatedAdmin(request, reply);
   }
 });
 

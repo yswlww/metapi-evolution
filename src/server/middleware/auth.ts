@@ -1,7 +1,14 @@
 import { isIP } from 'node:net';
+import { randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { FastifyRequest, FastifyReply } from 'fastify';
+import { createRateLimitGuard } from './requestRateLimit.js';
 import { config } from '../config.js';
-import { authorizeDownstreamToken, consumeManagedKeyRequest } from '../services/downstreamApiKeyService.js';
+import {
+  authorizeDownstreamToken,
+  consumeManagedKeyRequest,
+  type DownstreamTokenAuthSuccess,
+} from '../services/downstreamApiKeyService.js';
 import { EMPTY_DOWNSTREAM_ROUTING_POLICY, type DownstreamRoutingPolicy } from '../services/downstreamPolicyTypes.js';
 
 export interface ProxyAuthContext {
@@ -18,6 +25,93 @@ export interface ProxyResourceOwner {
 }
 
 const proxyAuthContextByRequest = new WeakMap<FastifyRequest, ProxyAuthContext>();
+
+type InternalProxyAuthExecutionContext = {
+  executionKey: string;
+  originalRemoteAddress: string;
+  auth: ProxyAuthContext;
+  accountingAlreadyApplied: true;
+};
+
+const proxyAuthExecutionContext = new AsyncLocalStorage<InternalProxyAuthExecutionContext>();
+
+function isResponsesFallbackRequest(request: FastifyRequest): boolean {
+  const rawUrl = request.raw.url || request.url || '';
+  return rawUrl.split('?')[0] === '/v1/responses' || rawUrl.split('?')[0] === '/v1/search';
+}
+
+function getInternalProxyAuthExecutionContext(request: FastifyRequest): InternalProxyAuthExecutionContext | null {
+  if (!isResponsesFallbackRequest(request)) return null;
+
+  const asyncContext = proxyAuthExecutionContext.getStore();
+  if (!asyncContext?.accountingAlreadyApplied) return null;
+
+  const socketAddress = request.raw.socket.remoteAddress || '';
+  if (socketAddress !== asyncContext.executionKey) return null;
+  return asyncContext;
+}
+
+function toProxyAuthContext(authResult: DownstreamTokenAuthSuccess): ProxyAuthContext {
+  return {
+    token: authResult.token,
+    source: authResult.source,
+    keyId: authResult.key?.id ?? null,
+    keyName: authResult.key?.name || 'global',
+    policy: authResult.policy || EMPTY_DOWNSTREAM_ROUTING_POLICY,
+  };
+}
+
+function runWithProxyAuthContext<T>(
+  auth: ProxyAuthContext,
+  originalRemoteAddress: string,
+  fn: (executionKey: string) => Promise<T>,
+): Promise<T> {
+  const executionKey = `metapi-internal-${randomUUID()}`;
+  const context: InternalProxyAuthExecutionContext = {
+    executionKey,
+    originalRemoteAddress: originalRemoteAddress || 'unknown',
+    auth,
+    accountingAlreadyApplied: true,
+  };
+
+  return proxyAuthExecutionContext.run(context, async () => fn(executionKey));
+}
+
+export function runWithProxyAuthExecutionContext<T>(
+  authResult: DownstreamTokenAuthSuccess,
+  originalRemoteAddress: string,
+  fn: (executionKey: string) => Promise<T>,
+): Promise<T> {
+  return runWithProxyAuthContext(toProxyAuthContext(authResult), originalRemoteAddress, fn);
+}
+
+export function runWithProxyAuthRequestExecutionContext<T>(
+  request: FastifyRequest,
+  fn: (executionKey: string | null) => Promise<T>,
+): Promise<T> {
+  const activeContext = proxyAuthExecutionContext.getStore();
+  if (activeContext?.accountingAlreadyApplied) {
+    return fn(activeContext.executionKey);
+  }
+
+  const auth = getProxyAuthContext(request);
+  if (!auth) return fn(null);
+  return runWithProxyAuthContext(
+    auth,
+    request.raw.socket.remoteAddress || 'unknown',
+    fn,
+  );
+}
+
+export function getProxyAuthExecutionKey(): string | null {
+  return proxyAuthExecutionContext.getStore()?.executionKey || null;
+}
+
+export function resolveProxyAuthSocketAddress(request: FastifyRequest): string {
+  const internalContext = getInternalProxyAuthExecutionContext(request);
+  if (internalContext) return internalContext.originalRemoteAddress;
+  return request.raw.socket.remoteAddress || 'unknown';
+}
 
 type ParsedAllowlistEntry =
   | { kind: 'exact'; normalizedIp: string }
@@ -126,6 +220,12 @@ export async function authMiddleware(request: FastifyRequest, reply: FastifyRepl
 }
 
 export async function proxyAuthMiddleware(request: FastifyRequest, reply: FastifyReply) {
+  const internalContext = getInternalProxyAuthExecutionContext(request);
+  if (internalContext) {
+    proxyAuthContextByRequest.set(request, internalContext.auth);
+    return;
+  }
+
   const auth = typeof request.headers.authorization === 'string'
     ? request.headers.authorization
     : '';
@@ -157,21 +257,54 @@ export async function proxyAuthMiddleware(request: FastifyRequest, reply: Fastif
     return;
   }
 
-  if (authResult.source === 'managed' && authResult.key) {
-    await consumeManagedKeyRequest(authResult.key.id);
-  }
-
-  proxyAuthContextByRequest.set(request, {
-    token: authResult.token,
-    source: authResult.source,
-    keyId: authResult.key?.id ?? null,
-    keyName: authResult.key?.name || 'global',
-    policy: authResult.policy || EMPTY_DOWNSTREAM_ROUTING_POLICY,
-  });
+  proxyAuthContextByRequest.set(request, toProxyAuthContext(authResult));
 }
 
 export function getProxyAuthContext(request: FastifyRequest): ProxyAuthContext | null {
   return proxyAuthContextByRequest.get(request) || null;
+}
+
+export function getProxyRateLimitIdentityFromContext(auth: Pick<ProxyAuthContext, 'source' | 'keyId'>): string {
+  if (auth.source === 'managed' && auth.keyId !== null) return `managed:${auth.keyId}`;
+  return 'global';
+}
+
+export function getProxyRateLimitIdentity(request: FastifyRequest): string | null {
+  const auth = getProxyAuthContext(request);
+  if (!auth) return null;
+  return getProxyRateLimitIdentityFromContext(auth);
+}
+
+export type ProxyAuthRateLimitOptions = {
+  bucket: string;
+  max: number;
+  windowMs: number;
+};
+
+export function createProxyAuthRateLimitHook(options: ProxyAuthRateLimitOptions) {
+  const limitAuthenticatedProxy = createRateLimitGuard({
+    ...options,
+    keyGenerator: (request) => getProxyRateLimitIdentity(request) || 'missing',
+  });
+
+  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    const internalContext = getInternalProxyAuthExecutionContext(request);
+    if (internalContext) {
+      proxyAuthContextByRequest.set(request, internalContext.auth);
+      return;
+    }
+
+    await proxyAuthMiddleware(request, reply);
+    if (reply.sent) return;
+
+    await limitAuthenticatedProxy(request, reply);
+    if (reply.sent) return;
+
+    const auth = getProxyAuthContext(request);
+    if (auth?.source === 'managed' && auth.keyId !== null) {
+      await consumeManagedKeyRequest(auth.keyId);
+    }
+  };
 }
 
 export function getProxyResourceOwner(request: FastifyRequest): ProxyResourceOwner | null {
