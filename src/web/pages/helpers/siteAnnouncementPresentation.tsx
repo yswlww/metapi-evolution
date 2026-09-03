@@ -70,16 +70,6 @@ function sanitizeUrl(raw: string | null | undefined, allowDataImage = false): st
   return null;
 }
 
-function extractVisibleTextFallback(html: string): string {
-  return normalizeLineEndings(html)
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
 function renderInlineMarkdown(text: string): string {
   const tokens: string[] = [];
   const pushToken = (html: string) => {
@@ -309,7 +299,7 @@ function sanitizeNode(node: Node): string {
 
 function sanitizeAnnouncementHtml(html: string): string {
   if (typeof DOMParser !== 'function' || typeof Node === 'undefined') {
-    return renderPlainText(extractVisibleTextFallback(html));
+    return renderPlainText(html);
   }
 
   const parser = new DOMParser();
@@ -362,13 +352,17 @@ export function renderSiteAnnouncementHtml(content: string): string {
   const raw = String(content || '').trim();
   if (!raw) return '<p>-</p>';
 
-  if (isLikelyHtml(raw)) {
-    return sanitizeAnnouncementHtml(raw);
+  if (typeof DOMParser !== 'function' || typeof Node === 'undefined') {
+    return renderPlainText(raw);
   }
 
   if (isLikelyMarkdown(raw)) {
     const rendered = String(marked.parse(raw, { gfm: true, breaks: true }));
     return sanitizeAnnouncementHtml(rendered || renderMarkdown(raw));
+  }
+
+  if (isLikelyHtml(raw)) {
+    return sanitizeAnnouncementHtml(raw);
   }
 
   return renderPlainText(raw);

@@ -76,10 +76,17 @@ describe('POST /api/routes/decision/batch refreshPricingCatalog', () => {
     withSiteProxyRequestInitMock.mockImplementation(async (_url: string, init: Record<string, unknown>) => init);
     fetchMock.mockImplementation(async (url: string | URL) => {
       const normalizedUrl = String(url);
+      const hostname = (() => {
+        try {
+          return new URL(normalizedUrl).hostname;
+        } catch {
+          return '';
+        }
+      })();
       let payload: ReturnType<typeof buildPricingPayload> | null = null;
-      if (normalizedUrl.includes('pricing-a.example.com')) {
+      if (hostname === 'pricing-a.example.com') {
         payload = buildPricingPayload('gpt-4o-mini', pricingPhase === 'old' ? 0.1 : 10);
-      } else if (normalizedUrl.includes('pricing-b.example.com')) {
+      } else if (hostname === 'pricing-b.example.com') {
         payload = buildPricingPayload('gpt-4o-mini', pricingPhase === 'old' ? 10 : 0.1);
       }
 
@@ -240,5 +247,14 @@ describe('POST /api/routes/decision/batch refreshPricingCatalog', () => {
     expect(candidateA?.reason || '').toContain('成本=目录');
     expect(candidateB?.reason || '').toContain('成本=目录');
     expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('uses the unknown-host fixture branch when a fixture hostname appears in the path', async () => {
+    const unrelated = 'https://attacker.test/path/pricing-a.example.com';
+
+    const response = await fetchMock(unrelated);
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ data: [] });
   });
 });

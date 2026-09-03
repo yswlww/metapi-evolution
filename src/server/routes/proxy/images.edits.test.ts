@@ -169,6 +169,90 @@ describe('/v1/images/edits route', () => {
     expect(targetUrl).toBe('https://upstream.example.com/v1/images/edits');
   });
 
+  it('forwards every enabled image-generation parameter unchanged except the selected upstream model', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      created: 1,
+      data: [{ url: 'https://cdn.example/generated.png' }],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const requestedBody = {
+      model: 'requested-image-model',
+      prompt: 'draw a fox',
+      n: 3,
+      size: '1536x1024',
+      quality: 'high',
+      style: 'vivid',
+      response_format: 'url',
+      output_format: 'webp',
+      background: 'transparent',
+      output_compression: 71,
+      moderation: 'low',
+      user: 'user-42',
+      provider_extension: { keep: true },
+    };
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/images/generations',
+      headers: { authorization: 'Bearer sk-demo' },
+      payload: requestedBody,
+    });
+
+    expect(response.statusCode).toBe(200);
+    const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(requestInit.body))).toEqual({
+      ...requestedBody,
+      model: 'upstream-gpt-image',
+    });
+  });
+
+  it('preserves every image-generation parameter across a retry', async () => {
+    selectNextChannelMock.mockReturnValueOnce({
+      channel: { id: 12, routeId: 23 },
+      site: { id: 45, name: 'fallback-site', url: 'https://fallback.example.com', platform: 'openai' },
+      account: { id: 34, username: 'fallback-user' },
+      tokenName: 'fallback',
+      tokenValue: 'sk-fallback',
+      actualModel: 'fallback-gpt-image',
+    });
+    fetchMock
+      .mockResolvedValueOnce(new Response('not-json', { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ created: 2, data: [{ b64_json: 'Zm9v' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+    const requestedBody = {
+      model: 'requested-image-model',
+      prompt: 'retry this',
+      n: 2,
+      size: '1024x1024',
+      quality: 'medium',
+      style: 'natural',
+      response_format: 'b64_json',
+      output_format: 'jpeg',
+      background: 'opaque',
+      output_compression: 0,
+      moderation: 'auto',
+      user: 'retry-user',
+    };
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/images/generations',
+      headers: { authorization: 'Bearer sk-demo' },
+      payload: requestedBody,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, firstInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [, secondInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(JSON.parse(String(firstInit.body))).toEqual({ ...requestedBody, model: 'upstream-gpt-image' });
+    expect(JSON.parse(String(secondInit.body))).toEqual({ ...requestedBody, model: 'fallback-gpt-image' });
+  });
+
   it('retries the next channel when image generation JSON is malformed', async () => {
     selectNextChannelMock.mockReturnValueOnce({
       channel: { id: 12, routeId: 23 },

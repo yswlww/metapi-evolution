@@ -6,6 +6,11 @@ import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { createCodexWebsocketRuntime, CodexWebsocketRuntimeError } from '../../proxy-core/runtime/codexWebsocketRuntime.js';
 import { buildCodexSessionResponseStoreKey } from '../../proxy-core/runtime/codexSessionResponseStore.js';
 import {
+  runWithProxyAuthExecutionContext,
+  getProxyRateLimitIdentityFromContext,
+} from '../../middleware/auth.js';
+import { consumeRateLimit } from '../../middleware/requestRateLimit.js';
+import {
   authorizeDownstreamToken,
   consumeManagedKeyRequest,
   isModelAllowedByPolicyOrAllowedRoutes,
@@ -283,10 +288,12 @@ function writeResponsesWebsocketError(
   status: number,
   message: string,
   errorPayload?: unknown,
+  retryAfterSec?: number,
 ) {
   socket.send(JSON.stringify({
     type: 'error',
     status,
+    ...(retryAfterSec === undefined ? {} : { retryAfter: String(retryAfterSec) }),
     error: isRecord(errorPayload) && isRecord(errorPayload.error)
       ? errorPayload.error
       : {
@@ -413,6 +420,7 @@ async function forwardResponsesRequestViaHttp(input: {
   payload: Record<string, unknown>;
   preserveIncrementalMode: boolean;
   authToken: string;
+  authContext: ResponsesWebsocketAuthContext;
 }): Promise<unknown[] | null> {
   const injectHeaders: Record<string, string | string[]> = {
     ...buildInjectHeaders(input.request),
@@ -427,12 +435,17 @@ async function forwardResponsesRequestViaHttp(input: {
     injectHeaders.authorization = `Bearer ${input.authToken}`;
   }
 
-  const response = await input.app.inject({
-    method: 'POST',
-    url: '/v1/responses',
-    headers: injectHeaders,
-    payload: input.payload,
-  });
+  const response = await runWithProxyAuthExecutionContext(
+    input.authContext,
+    input.request.socket.remoteAddress || 'unknown',
+    (executionKey) => input.app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      remoteAddress: executionKey,
+      headers: injectHeaders,
+      payload: input.payload,
+    }),
+  );
 
   if (response.statusCode < 200 || response.statusCode >= 300) {
     let payload: unknown = null;
@@ -441,11 +454,15 @@ async function forwardResponsesRequestViaHttp(input: {
     } catch {
       payload = null;
     }
+    const retryAfterSec = response.statusCode === 429
+      ? extractFallbackRetryAfter(response, payload)
+      : undefined;
     writeResponsesWebsocketError(
       input.socket,
       response.statusCode,
       response.statusMessage || 'Upstream error',
       payload,
+      retryAfterSec,
     );
     return null;
   }
@@ -507,6 +524,27 @@ function buildInjectHeaders(request: IncomingMessage): Record<string, string | s
   return headers;
 }
 
+function parsePositiveRetryAfter(value: unknown): number | undefined {
+  const candidate = typeof value === 'number' ? String(value) : headerValueToTrimmedString(value);
+  if (!candidate) return undefined;
+  const numeric = Number(candidate);
+  if (!Number.isFinite(numeric) || numeric <= 0) return undefined;
+  return Math.max(1, Math.ceil(numeric));
+}
+
+function extractFallbackRetryAfter(response: {
+  headers: Record<string, unknown>;
+}, payload: unknown): number | undefined {
+  const headerRetryAfter = parsePositiveRetryAfter(response.headers['retry-after']);
+  if (headerRetryAfter !== undefined) return headerRetryAfter;
+  if (!isRecord(payload)) return undefined;
+
+  const payloadRetryAfter = parsePositiveRetryAfter(payload.retryAfter ?? payload.retry_after);
+  if (payloadRetryAfter !== undefined) return payloadRetryAfter;
+  if (!isRecord(payload.error)) return undefined;
+  return parsePositiveRetryAfter(payload.error.retryAfter ?? payload.error.retry_after);
+}
+
 function extractWebsocketAuthToken(request: IncomingMessage, url: URL): string {
   const auth = headerValueToTrimmedString(request.headers.authorization);
   if (auth) return auth.replace(/^Bearer\s+/i, '').trim();
@@ -517,19 +555,31 @@ function extractWebsocketAuthToken(request: IncomingMessage, url: URL): string {
   return asTrimmedString(url.searchParams.get('key'));
 }
 
-function writeUpgradeHttpError(socket: Duplex, status: number, message: string): void {
+function writeUpgradeHttpError(socket: Duplex, status: number, message: string, retryAfterSec?: number): void {
   const statusText = status === 401
     ? 'Unauthorized'
     : status === 403
       ? 'Forbidden'
-      : status === 400
-        ? 'Bad Request'
-        : 'Error';
-  const body = JSON.stringify({ error: message });
+      : status === 429
+        ? 'Too Many Requests'
+        : status === 400
+          ? 'Bad Request'
+          : 'Error';
+  const body = JSON.stringify(retryAfterSec === undefined
+    ? { error: message }
+    : {
+      statusCode: status,
+      error: message,
+      retryAfter: String(retryAfterSec),
+    });
+  const retryAfterHeader = retryAfterSec === undefined
+    ? ''
+    : `Retry-After: ${retryAfterSec}\r\n`;
   socket.end(
     `HTTP/1.1 ${status} ${statusText}\r\n`
     + 'Content-Type: application/json\r\n'
     + `Content-Length: ${Buffer.byteLength(body)}\r\n`
+    + retryAfterHeader
     + 'Connection: close\r\n'
     + '\r\n'
     + body,
@@ -587,14 +637,44 @@ async function handleResponsesWebsocketConnection(
       .catch(() => undefined)
       .then(async () => {
         try {
+          const frameRateLimit = consumeRateLimit({
+            bucket: 'proxy-authenticated',
+            identity: getProxyRateLimitIdentityFromContext({
+              source: authContext.source,
+              keyId: authContext.key?.id ?? null,
+            }),
+            max: config.authenticatedRateLimitMax,
+            windowMs: config.requestRateLimitWindowMs,
+          });
+          if (!frameRateLimit.allowed) {
+            writeResponsesWebsocketError(
+              socket,
+              429,
+              '请求过于频繁，请稍后再试',
+              undefined,
+              frameRateLimit.retryAfterSec,
+            );
+            return;
+          }
+
           const parsed = parseJsonObject(raw);
           if (!parsed) {
             writeResponsesWebsocketError(socket, 400, 'Invalid websocket JSON payload');
             return;
           }
 
+          let frameAuthContext = authContext;
+          if (authContext.source === 'managed') {
+            const refreshedAuth = await authorizeDownstreamToken(authContext.token);
+            if (!refreshedAuth.ok) {
+              writeResponsesWebsocketError(socket, refreshedAuth.statusCode, refreshedAuth.error);
+              return;
+            }
+            frameAuthContext = refreshedAuth;
+          }
+
           const requestModel = asTrimmedString(parsed.model) || asTrimmedString(lastRequest?.model);
-          if (requestModel && !await isModelAllowedByPolicyOrAllowedRoutes(requestModel, authContext.policy)) {
+          if (requestModel && !await isModelAllowedByPolicyOrAllowedRoutes(requestModel, frameAuthContext.policy)) {
             writeResponsesWebsocketError(socket, 403, 'model is not allowed for this downstream key');
             return;
           }
@@ -616,8 +696,20 @@ async function handleResponsesWebsocketConnection(
           }
           parsed.service_tier = serviceTierPolicy.body.service_tier;
           if (serviceTierPolicy.body.service_tier === undefined) delete parsed.service_tier;
+          if (
+            selectedChannel
+            && frameAuthContext.source === 'managed'
+            && requestModel
+          ) {
+            selectedChannel = await tokenRouter.previewPreferredChannel(
+              requestModel,
+              selectedChannel.channel.id,
+              selectedChannel.account.id,
+              frameAuthContext.policy,
+            );
+          }
           const supportsIncrementalInput = selectedChannelSupportsIncrementalInput(selectedChannel, requestModel)
-            || await supportsResponsesWebsocketIncrementalInput(parsed, lastRequest, authContext);
+            || await supportsResponsesWebsocketIncrementalInput(parsed, lastRequest, frameAuthContext);
           const shouldHandleLocalPrewarm = shouldHandleResponsesWebsocketPrewarmLocally(
             parsed,
             lastRequest,
@@ -634,8 +726,8 @@ async function handleResponsesWebsocketConnection(
             return;
           }
 
-          if (authContext.source === 'managed' && authContext.key?.id) {
-            await consumeManagedKeyRequest(authContext.key.id);
+          if (frameAuthContext.source === 'managed' && frameAuthContext.key?.id) {
+            await consumeManagedKeyRequest(frameAuthContext.key.id);
           }
 
           if (shouldHandleLocalPrewarm) {
@@ -649,7 +741,7 @@ async function handleResponsesWebsocketConnection(
 
           if (!shouldReuseSelectedChannel(selectedChannel, requestModel)) {
             selectedChannel = requestModel
-              ? await tokenRouter.selectChannel(requestModel, authContext.policy)
+              ? await tokenRouter.selectChannel(requestModel, frameAuthContext.policy)
               : null;
           }
 
@@ -756,7 +848,8 @@ async function handleResponsesWebsocketConnection(
                   request,
                   payload: normalized.request,
                   preserveIncrementalMode: supportsIncrementalInput,
-                  authToken: authContext.token,
+                  authToken: frameAuthContext.token,
+                  authContext: frameAuthContext,
                 });
                 if (forwarded) {
                   lastResponseOutput = forwarded;
@@ -790,7 +883,8 @@ async function handleResponsesWebsocketConnection(
             request,
             payload: normalized.request,
             preserveIncrementalMode: supportsIncrementalInput,
-            authToken: authContext.token,
+            authToken: frameAuthContext.token,
+            authContext: frameAuthContext,
           });
           if (forwarded) {
             lastResponseOutput = forwarded;
@@ -817,6 +911,23 @@ export function ensureResponsesWebsocketTransport(app: FastifyInstance) {
     void (async () => {
       const url = new URL(request.url || '/', 'http://localhost');
       if (url.pathname !== '/v1/responses') return;
+
+      const preAuthRateLimit = consumeRateLimit({
+        bucket: 'responses-websocket-pre-auth',
+        identity: request.socket.remoteAddress || 'unknown',
+        max: config.requestRateLimitMax,
+        windowMs: config.requestRateLimitWindowMs,
+      });
+      if (!preAuthRateLimit.allowed) {
+        writeUpgradeHttpError(
+          socket,
+          429,
+          'Too many requests',
+          preAuthRateLimit.retryAfterSec,
+        );
+        return;
+      }
+
       const token = extractWebsocketAuthToken(request, url);
       if (!token) {
         writeUpgradeHttpError(socket, 401, 'Missing Authorization, x-api-key, x-goog-api-key, or key query parameter');
@@ -827,6 +938,26 @@ export function ensureResponsesWebsocketTransport(app: FastifyInstance) {
         writeUpgradeHttpError(socket, authResult.statusCode, authResult.error);
         return;
       }
+
+      const connectionRateLimit = consumeRateLimit({
+        bucket: 'proxy-authenticated-connection',
+        identity: getProxyRateLimitIdentityFromContext({
+          source: authResult.source,
+          keyId: authResult.key?.id ?? null,
+        }),
+        max: config.authenticatedRateLimitMax,
+        windowMs: config.requestRateLimitWindowMs,
+      });
+      if (!connectionRateLimit.allowed) {
+        writeUpgradeHttpError(
+          socket,
+          429,
+          'Too many requests',
+          connectionRateLimit.retryAfterSec,
+        );
+        return;
+      }
+
       websocketServer.handleUpgrade(request, socket, head, (client) => {
         void handleResponsesWebsocketConnection(app, client, request, authResult);
       });

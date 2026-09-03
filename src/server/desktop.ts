@@ -7,5 +7,7 @@ export function isPublicApiRoute(url: string): boolean {
 }
 
 export async function registerDesktopRoutes(app: FastifyInstance) {
-  app.get(DESKTOP_HEALTH_ROUTE, async () => ({ ok: true }));
+  app.get(DESKTOP_HEALTH_ROUTE, {
+    config: { rateLimit: false },
+  }, async () => ({ ok: true }));
 }

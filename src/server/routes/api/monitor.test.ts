@@ -1,9 +1,8 @@
 import Fastify, { type FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync, mkdtempSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { eq } from 'drizzle-orm';
 
 type DbModule = typeof import('../../db/index.js');
 
@@ -323,49 +322,23 @@ describe('monitor routes', () => {
     ]);
   });
 
-  it('rejects malformed monitor config payloads at the route boundary', async () => {
-    const response = await app.inject({
-      method: 'PUT',
-      url: '/api/monitor/config',
-      payload: {
-        ldohCookie: 123,
-      },
-    });
-
-    expect(response.statusCode).toBe(400);
-    expect(response.json()).toMatchObject({
-      success: false,
-      message: 'Invalid ldohCookie. Expected string or null.',
-    });
-  });
-
-  it('accepts null monitor cookie payloads and clears the stored cookie', async () => {
-    const saveResponse = await app.inject({
-      method: 'PUT',
-      url: '/api/monitor/config',
-      payload: {
-        ldohCookie: 'ld_auth_session=abcdefghijklmnopqrstuvwxyz',
-      },
-    });
-    expect(saveResponse.statusCode).toBe(200);
-
-    const clearResponse = await app.inject({
-      method: 'PUT',
-      url: '/api/monitor/config',
-      payload: {
-        ldohCookie: null,
-      },
-    });
-
-    expect(clearResponse.statusCode).toBe(200);
-    expect(clearResponse.json()).toMatchObject({
-      success: true,
-      ldohCookieConfigured: false,
-    });
-
-    const saved = await db.select().from(schema.settings)
-      .where(eq(schema.settings.key, 'monitor_ldoh_cookie'))
-      .get();
-    expect(saved?.value).toBe('""');
+  it.each([
+    ['GET', '/api/monitor/config'],
+    ['PUT', '/api/monitor/config'],
+    ['POST', '/api/monitor/session'],
+    ['GET', '/monitor-proxy/ldoh'],
+    ['GET', '/monitor-proxy/ldoh/'],
+    ['GET', '/monitor-proxy/ldoh/api/status'],
+  ] as const)('does not register retired LDOH route %s %s', async (method, url) => {
+    const fetchSpy = url.startsWith('/monitor-proxy/ldoh')
+      ? vi.spyOn(globalThis, 'fetch')
+      : undefined;
+    try {
+      const response = await app.inject({ method, url });
+      expect(response.statusCode).toBe(404);
+      if (fetchSpy) expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy?.mockRestore();
+    }
   });
 });

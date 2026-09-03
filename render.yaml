@@ -11,6 +11,14 @@ services:
         sync: false
       - key: PROXY_TOKEN
         sync: false
+      - key: GEMINI_CLI_CLIENT_ID
+        sync: false
+      - key: GEMINI_CLI_CLIENT_SECRET
+        sync: false
+      - key: ANTIGRAVITY_CLIENT_ID
+        sync: false
+      - key: ANTIGRAVITY_CLIENT_SECRET
+        sync: false
       - key: TZ
         value: Asia/Shanghai
       - key: PORT
