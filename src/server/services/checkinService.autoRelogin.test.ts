@@ -11,12 +11,34 @@ const refreshBalanceMock = vi.fn();
 const decryptPasswordMock = vi.fn();
 
 const selectAllMock = vi.fn();
+const selectGetMock = vi.fn();
 const insertValuesMock = vi.fn();
 const updateSetMock = vi.fn();
+
+type RewardBalanceFreshnessChecker = (
+  balance: unknown,
+  lastBalanceRefresh: unknown,
+  checkinStartedAt: number,
+) => boolean;
+
+async function getRewardBalanceFreshnessChecker(): Promise<RewardBalanceFreshnessChecker | undefined> {
+  const service = await import('./checkinService.js') as typeof import('./checkinService.js') & {
+    isCheckinRewardBalanceFresh?: RewardBalanceFreshnessChecker;
+  };
+  return service.isCheckinRewardBalanceFresh;
+}
+
+async function getRewardBalanceFreshnessWindow(): Promise<number | undefined> {
+  const service = await import('./checkinService.js') as typeof import('./checkinService.js') & {
+    CHECKIN_REWARD_BALANCE_FRESHNESS_MS?: number;
+  };
+  return service.CHECKIN_REWARD_BALANCE_FRESHNESS_MS;
+}
 
 vi.mock('../db/index.js', () => {
   const selectChain = {
     all: () => selectAllMock(),
+    get: () => selectGetMock(),
     where: () => selectChain,
     innerJoin: () => selectChain,
     from: () => selectChain,
@@ -31,7 +53,7 @@ vi.mock('../db/index.js', () => {
   };
 
   const updateWhereChain = {
-    run: () => ({}),
+    run: () => ({ changes: 1 }),
   };
 
   const updateSetChain = {
@@ -79,6 +101,34 @@ vi.mock('./accountCredentialService.js', () => ({
 }));
 
 describe('checkinService auto relogin', () => {
+  it('allows balance-delta reward inference at exactly the 10-minute freshness boundary', async () => {
+    const isFresh = await getRewardBalanceFreshnessChecker();
+    const freshnessWindow = await getRewardBalanceFreshnessWindow();
+    const checkinStartedAt = 1_000_000_000;
+
+    expect(isFresh).toBeTypeOf('function');
+    expect(freshnessWindow).toBe(10 * 60 * 1000);
+    expect(isFresh?.(10, new Date(checkinStartedAt - freshnessWindow!).toISOString(), checkinStartedAt)).toBe(true);
+    expect(isFresh?.(10, new Date(checkinStartedAt - freshnessWindow! - 1).toISOString(), checkinStartedAt)).toBe(false);
+  });
+
+  it('evaluates explicit-offset balance refresh timestamps as absolute time', async () => {
+    const isFresh = await getRewardBalanceFreshnessChecker();
+    const checkinStartedAt = Date.parse('2026-08-28T10:10:00.000Z');
+
+    expect(isFresh?.(10, '2026-08-28T12:00:00.000+02:00', checkinStartedAt)).toBe(true);
+  });
+
+  it('rejects missing, invalid, and future balance refresh timestamps for reward inference', async () => {
+    const isFresh = await getRewardBalanceFreshnessChecker();
+    const checkinStartedAt = 1_000_000_000;
+
+    expect(isFresh?.(10, undefined, checkinStartedAt)).toBe(false);
+    expect(isFresh?.(10, 'not-a-date', checkinStartedAt)).toBe(false);
+    expect(isFresh?.(10, new Date(checkinStartedAt + 1).toISOString(), checkinStartedAt)).toBe(false);
+    expect(isFresh?.(Number.NaN, new Date(checkinStartedAt).toISOString(), checkinStartedAt)).toBe(false);
+  });
+
   beforeEach(() => {
     adapterMock.checkin.mockReset();
     adapterMock.login.mockReset();
@@ -87,11 +137,12 @@ describe('checkinService auto relogin', () => {
     refreshBalanceMock.mockReset();
     decryptPasswordMock.mockReset();
     selectAllMock.mockReset();
+    selectGetMock.mockReset();
     insertValuesMock.mockReset();
     updateSetMock.mockReset();
   });
 
-  it('retries checkin once after auto relogin when access token is missing', async () => {
+  it('retries checkin with the authoritative login ID and preserves merged auto-relogin config', async () => {
     selectAllMock.mockReturnValue([
       {
         accounts: {
@@ -99,7 +150,13 @@ describe('checkinService auto relogin', () => {
           username: 'linuxdo_7659',
           accessToken: 'expired-token',
           status: 'active',
+          updatedAt: '2026-08-28T00:00:00.000Z',
           extraConfig: JSON.stringify({
+            credentialMode: 'session',
+            proxyUrl: 'http://proxy.example:8080',
+            oauth: { provider: 'legacy-provider' },
+            sub2apiAuth: { refreshToken: 'keep-me' },
+            unrelated: 'preserve-me',
             autoRelogin: { username: 'linuxdo_7659', passwordCipher: 'cipher' },
           }),
         },
@@ -111,12 +168,13 @@ describe('checkinService auto relogin', () => {
         },
       },
     ]);
+    selectGetMock.mockImplementation(() => selectAllMock()[0]?.accounts ?? null);
 
     adapterMock.checkin
       .mockResolvedValueOnce({ success: false, message: '无权进行此操作，未登录且未提供 access token' })
       .mockResolvedValueOnce({ success: true, message: 'checked in' });
     decryptPasswordMock.mockReturnValue('plain-password');
-    adapterMock.login.mockResolvedValue({ success: true, accessToken: 'fresh-token' });
+    adapterMock.login.mockResolvedValue({ success: true, accessToken: 'fresh-token', platformUserId: 80310 });
 
     const { checkinAccount } = await import('./checkinService.js');
     const result = await checkinAccount(1);
@@ -127,7 +185,21 @@ describe('checkinService auto relogin', () => {
     expect(adapterMock.checkin.mock.calls[0][1]).toBe('expired-token');
     expect(adapterMock.checkin.mock.calls[1][1]).toBe('fresh-token');
     expect(adapterMock.checkin.mock.calls[0][2]).toBe(7659);
-    expect(updateSetMock).toHaveBeenCalledWith(expect.objectContaining({ accessToken: 'fresh-token' }));
+    expect(adapterMock.checkin.mock.calls[1][2]).toBe(80310);
+    const reloginUpdate = updateSetMock.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .find((updates) => updates.accessToken === 'fresh-token');
+    expect(reloginUpdate).toEqual(expect.objectContaining({ accessToken: 'fresh-token' }));
+    const mergedConfig = JSON.parse(String(reloginUpdate?.extraConfig));
+    expect(mergedConfig).toEqual(expect.objectContaining({
+      platformUserId: 80310,
+      credentialMode: 'session',
+      proxyUrl: 'http://proxy.example:8080',
+      oauth: { provider: 'legacy-provider' },
+      sub2apiAuth: { refreshToken: 'keep-me' },
+      unrelated: 'preserve-me',
+      autoRelogin: { username: 'linuxdo_7659', passwordCipher: 'cipher' },
+    }));
   });
 
   it('passes guessed platform user id when config does not include it', async () => {
@@ -156,6 +228,41 @@ describe('checkinService auto relogin', () => {
 
     expect(adapterMock.checkin).toHaveBeenCalledTimes(1);
     expect(adapterMock.checkin.mock.calls[0][2]).toBe(11494);
+  });
+
+  it('keeps the prior safe fallback ID when login returns no authoritative ID', async () => {
+    selectAllMock.mockReturnValue([
+      {
+        accounts: {
+          id: 3,
+          username: 'linuxdo_7659',
+          accessToken: 'expired-token',
+          status: 'active',
+          updatedAt: '2026-08-28T00:00:00.000Z',
+          extraConfig: JSON.stringify({
+            autoRelogin: { username: 'linuxdo_7659', passwordCipher: 'cipher' },
+          }),
+        },
+        sites: {
+          id: 5,
+          name: 'demo',
+          url: 'https://example.com',
+          platform: 'new-api',
+        },
+      },
+    ]);
+    selectGetMock.mockImplementation(() => selectAllMock()[0]?.accounts ?? null);
+
+    adapterMock.checkin
+      .mockResolvedValueOnce({ success: false, message: 'access token expired' })
+      .mockResolvedValueOnce({ success: true, message: 'checked in' });
+    decryptPasswordMock.mockReturnValue('plain-password');
+    adapterMock.login.mockResolvedValue({ success: true, accessToken: 'fresh-token' });
+
+    const { checkinAccount } = await import('./checkinService.js');
+    await checkinAccount(3);
+
+    expect(adapterMock.checkin.mock.calls[1][2]).toBe(7659);
   });
 
   it('keeps successful checkin as success when message is 签到成功', async () => {
@@ -196,6 +303,7 @@ describe('checkinService auto relogin', () => {
           accessToken: 'token',
           status: 'active',
           balance: 10,
+          lastBalanceRefresh: new Date().toISOString(),
           extraConfig: null,
         },
         sites: {
@@ -215,6 +323,72 @@ describe('checkinService auto relogin', () => {
 
     const firstInsertPayload = insertValuesMock.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(Number(firstInsertPayload?.reward)).toBeCloseTo(2.5, 6);
+    expect(refreshBalanceMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not infer a reward from a stale balance after a successful checkin', async () => {
+    selectAllMock.mockReturnValue([
+      {
+        accounts: {
+          id: 19,
+          username: 'stale-user',
+          accessToken: 'token',
+          status: 'active',
+          balance: 10,
+          lastBalanceRefresh: new Date(Date.now() - 10 * 60 * 1000 - 1).toISOString(),
+          extraConfig: null,
+        },
+        sites: {
+          id: 19,
+          name: 'demo',
+          url: 'https://example.com',
+          platform: 'new-api',
+        },
+      },
+    ]);
+
+    adapterMock.checkin.mockResolvedValue({ success: true, message: 'checkin success' });
+    refreshBalanceMock.mockResolvedValue({ balance: 12.5, used: 0, quota: 12.5 });
+
+    const { checkinAccount } = await import('./checkinService.js');
+    const result = await checkinAccount(19);
+
+    expect(result.success).toBe(true);
+    expect(refreshBalanceMock).toHaveBeenCalledTimes(1);
+    expect(refreshBalanceMock).toHaveBeenCalledWith(19);
+    const firstInsertPayload = insertValuesMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(firstInsertPayload?.reward).toBeUndefined();
+  });
+
+  it('preserves a direct provider reward even when the cached balance is stale', async () => {
+    selectAllMock.mockReturnValue([
+      {
+        accounts: {
+          id: 20,
+          username: 'direct-reward-user',
+          accessToken: 'token',
+          status: 'active',
+          balance: 10,
+          lastBalanceRefresh: new Date(Date.now() - 10 * 60 * 1000 - 1).toISOString(),
+          extraConfig: null,
+        },
+        sites: {
+          id: 20,
+          name: 'demo',
+          url: 'https://example.com',
+          platform: 'new-api',
+        },
+      },
+    ]);
+
+    adapterMock.checkin.mockResolvedValue({ success: true, message: 'checkin success', reward: '3.25' });
+    refreshBalanceMock.mockResolvedValue({ balance: 12.5, used: 0, quota: 12.5 });
+
+    const { checkinAccount } = await import('./checkinService.js');
+    await checkinAccount(20);
+
+    const firstInsertPayload = insertValuesMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(firstInsertPayload?.reward).toBe('3.25');
   });
 
   it('treats already checked in responses as successful checkins', async () => {
