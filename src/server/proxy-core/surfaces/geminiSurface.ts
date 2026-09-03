@@ -41,7 +41,10 @@ import { detectDownstreamClientContext, type DownstreamClientContext } from '../
 import { insertProxyLog } from '../../services/proxyLogStore.js';
 import { summarizeConversationFileInputsInOpenAiBody } from '../capabilities/conversationFileCapabilities.js';
 import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
-import { runWithProxySiteApiEndpointPool } from '../../services/siteApiEndpointService.js';
+import {
+  runWithProxySiteApiEndpointPool,
+  SiteApiEndpointRequestError,
+} from '../../services/siteApiEndpointService.js';
 import { bindSiteLeaseToResponse } from '../../services/siteConcurrencyResponse.js';
 import {
   isSiteConcurrencyLimitError,
@@ -423,14 +426,35 @@ export async function geminiProxyRoute(app: FastifyInstance) {
 
         const targetUrl = geminiGenerateContentTransformer.resolveModelsUrl(selected.site.url, apiVersion, selected.tokenValue);
         const upstreamPath = `/${apiVersion}/models`;
-        const upstream = await runWithProxySiteApiEndpointPool(
-          selected.site,
-          async (target) => {
-            const targetModelsUrl = geminiGenerateContentTransformer.resolveModelsUrl(target.baseUrl, apiVersion, selected.tokenValue);
-            return fetch(targetModelsUrl, { method: 'GET' });
-          },
-        );
-        const text = await readRuntimeResponseText(upstream);
+        const abort = createProxyRequestAbortSignal(request, reply);
+        let upstream: Response;
+        let text: string;
+        try {
+          ({ upstream, text } = await runWithProxySiteApiEndpointPool(
+            selected.site,
+            async (target) => {
+              const targetModelsUrl = geminiGenerateContentTransformer.resolveModelsUrl(target.baseUrl, apiVersion, selected.tokenValue);
+              const response = await fetch(targetModelsUrl, { method: 'GET', signal: abort.signal });
+              const responseText = await readRuntimeResponseText(response);
+              if (!response.ok) {
+                throw new SiteApiEndpointRequestError(responseText || `HTTP ${response.status}`, {
+                  status: response.status,
+                  rawErrText: responseText || null,
+                });
+              }
+              return { upstream: response as unknown as Response, text: responseText };
+            },
+            { signal: abort.signal },
+          ));
+        } catch (error) {
+          if (isSiteConcurrencyLimitError(error)) {
+            replySiteConcurrencyLimit(reply, error);
+            return;
+          }
+          throw error;
+        } finally {
+          abort.dispose();
+        }
         await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
           attemptIndex: retryCount,
           endpoint: 'gemini-models',
@@ -474,7 +498,12 @@ export async function geminiProxyRoute(app: FastifyInstance) {
           return reply.code(upstream.status).type(upstream.headers.get('content-type') || 'application/json').send(text);
         }
       } catch (error) {
+        if (isSiteConcurrencyLimitError(error)) {
+          replySiteConcurrencyLimit(reply, error);
+          return;
+        }
         await tokenRouter.recordFailure?.(selected.channel.id, {
+          status: error instanceof SiteApiEndpointRequestError && error.status ? error.status : 500,
           errorText: error instanceof Error ? error.message : 'Gemini upstream request failed',
         });
         lastStatus = 502;

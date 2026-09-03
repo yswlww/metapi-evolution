@@ -122,6 +122,15 @@ vi.mock('../../db/index.js', () => ({
 
 vi.mock('../../services/siteApiEndpointService.js', () => ({
   runWithProxySiteApiEndpointPool: (...args: unknown[]) => runWithProxySiteApiEndpointPoolMock(...args),
+  SiteApiEndpointRequestError: class SiteApiEndpointRequestError extends Error {
+    status: number | null;
+    rawErrText: string | null;
+    constructor(message: string, options?: { status?: number | null; rawErrText?: string | null }) {
+      super(message);
+      this.status = options?.status ?? null;
+      this.rawErrText = options?.rawErrText ?? null;
+    }
+  },
 }));
 
 vi.mock('../../services/siteConcurrencyResponse.js', () => ({
