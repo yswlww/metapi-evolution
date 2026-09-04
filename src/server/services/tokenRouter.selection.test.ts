@@ -138,6 +138,50 @@ describe('TokenRouter selection scoring', () => {
     }).returning().get();
   }
 
+  it('filters constrained candidates before route strategy selection', async () => {
+    const route = await createRoute('image-model');
+    const blockedSite = await createSite('blocked-image-site');
+    const eligibleSite = await createSite('eligible-image-site');
+    const blockedAccount = await createAccount(blockedSite.id, 'blocked-image-user');
+    const eligibleAccount = await createAccount(eligibleSite.id, 'eligible-image-user');
+    const blockedToken = await createToken(blockedAccount.id, 'blocked-image-token');
+    const eligibleToken = await createToken(eligibleAccount.id, 'eligible-image-token');
+
+    const blockedChannel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: blockedAccount.id,
+      tokenId: blockedToken.id,
+      priority: 0,
+      weight: 100,
+      enabled: true,
+    }).returning().get();
+    const eligibleChannel = await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: eligibleAccount.id,
+      tokenId: eligibleToken.id,
+      priority: 1,
+      weight: 1,
+      enabled: true,
+    }).returning().get();
+
+    const constraint = ({ site }: { site: { id: number } }) => (
+      site.id === blockedSite.id ? 'provider does not support image edit' : null
+    );
+    const router = new TokenRouter();
+
+    await expect(router.selectChannel('image-model', undefined, constraint)).resolves.toMatchObject({
+      channel: { id: eligibleChannel.id },
+      site: { id: eligibleSite.id },
+    });
+    await expect(router.selectPreferredChannel(
+      'image-model',
+      blockedChannel.id,
+      undefined,
+      [],
+      constraint,
+    )).resolves.toBeNull();
+  });
+
   it('reuses a preferred channel only while it remains healthy', async () => {
     config.routingWeights = {
       baseWeightFactor: 1,

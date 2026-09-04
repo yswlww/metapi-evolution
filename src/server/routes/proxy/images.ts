@@ -53,6 +53,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
     const firstByteTimeoutMs = Math.max(0, Math.trunc((config.proxyFirstByteTimeoutSec || 0) * 1000));
     const excludeChannelIds: number[] = [];
     let retryCount = 0;
+    let imageEligibilityReason: string | null = null;
 
     while (retryCount <= getProxyMaxChannelRetries()) {
       const selected = await selectProxyChannelForAttempt({
@@ -61,10 +62,12 @@ export async function imagesProxyRoute(app: FastifyInstance) {
         excludeChannelIds,
         retryCount,
         forcedChannelId,
+        imageOperation: 'generate',
+        onImageEligibilityRejected: (reason) => { imageEligibilityReason = reason; },
       });
 
       if (!selected) {
-        const noChannelMessage = buildForcedChannelUnavailableMessage(forcedChannelId);
+        const noChannelMessage = buildForcedChannelUnavailableMessage(forcedChannelId, imageEligibilityReason);
         await reportProxyAllFailed({
           model: requestedModel,
           reason: forcedChannelId ? noChannelMessage : 'No available channels after retries',
@@ -266,6 +269,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
     const firstByteTimeoutMs = Math.max(0, Math.trunc((config.proxyFirstByteTimeoutSec || 0) * 1000));
     const excludeChannelIds: number[] = [];
     let retryCount = 0;
+    let imageEligibilityReason: string | null = null;
 
     while (retryCount <= getProxyMaxChannelRetries()) {
       const selected = await selectProxyChannelForAttempt({
@@ -274,10 +278,12 @@ export async function imagesProxyRoute(app: FastifyInstance) {
         excludeChannelIds,
         retryCount,
         forcedChannelId,
+        imageOperation: 'edit',
+        onImageEligibilityRejected: (reason) => { imageEligibilityReason = reason; },
       });
 
       if (!selected) {
-        const noChannelMessage = buildForcedChannelUnavailableMessage(forcedChannelId);
+        const noChannelMessage = buildForcedChannelUnavailableMessage(forcedChannelId, imageEligibilityReason);
         await reportProxyAllFailed({
           model: requestedModel,
           reason: forcedChannelId ? noChannelMessage : 'No available channels after retries',

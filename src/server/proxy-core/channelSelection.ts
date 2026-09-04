@@ -2,7 +2,9 @@ import * as routeRefreshWorkflow from '../services/routeRefreshWorkflow.js';
 import { proxyChannelCoordinator } from '../services/proxyChannelCoordinator.js';
 import { canRetryProxyChannel } from '../services/proxyChannelRetry.js';
 import type { DownstreamRoutingPolicy } from '../services/downstreamPolicyTypes.js';
-import { tokenRouter } from '../services/tokenRouter.js';
+import { tokenRouter, type TokenRouterSelectionConstraint } from '../services/tokenRouter.js';
+import { evaluateImageProviderEligibility } from '../services/imageProviderEligibility.js';
+import type { ImageOperation } from '../services/imageProviders/types.js';
 
 type SelectedChannel = Awaited<ReturnType<typeof tokenRouter.selectChannel>>;
 
@@ -68,12 +70,13 @@ export function getTesterForcedChannelId(input?: TesterRequestInput): number | n
   return null;
 }
 
-export function buildForcedChannelUnavailableMessage(forcedChannelId?: number | null): string {
+export function buildForcedChannelUnavailableMessage(forcedChannelId?: number | null, detail?: string | null): string {
   const normalizedForcedChannelId = normalizeForcedChannelId(forcedChannelId);
   if (normalizedForcedChannelId === null) {
     return 'No available channels for this model';
   }
-  return `指定通道 #${normalizedForcedChannelId} 当前不可用，固定通道模式不会自动切换其他通道`;
+  const suffix = detail?.trim() ? `：${detail.trim()}` : '';
+  return `指定通道 #${normalizedForcedChannelId} 当前不可用，固定通道模式不会自动切换其他通道${suffix}`;
 }
 
 export function canRetryChannelSelection(retryCount: number, forcedChannelId?: number | null): boolean {
@@ -88,16 +91,50 @@ export async function selectProxyChannelForAttempt(input: {
   retryCount: number;
   stickySessionKey?: string | null;
   forcedChannelId?: number | null;
+  imageOperation?: ImageOperation;
+  onImageEligibilityRejected?: (reason: string) => void;
 }): Promise<SelectedChannel> {
   const normalizedForcedChannelId = normalizeForcedChannelId(input.forcedChannelId);
-  if (normalizedForcedChannelId !== null) {
-    if (input.retryCount > 0) return null;
-    return await tokenRouter.selectPreferredChannel(
+  const selectionConstraint: TokenRouterSelectionConstraint | undefined = input.imageOperation
+    ? ({ site, modelName }) => {
+      const eligibility = evaluateImageProviderEligibility({
+        site,
+        operation: input.imageOperation!,
+        modelName,
+      });
+      if (eligibility.eligible) return null;
+      input.onImageEligibilityRejected?.(eligibility.reason);
+      return eligibility.reason;
+    }
+    : undefined;
+  const selectChannel = () => selectionConstraint
+    ? tokenRouter.selectChannel(input.requestedModel, input.downstreamPolicy, selectionConstraint)
+    : tokenRouter.selectChannel(input.requestedModel, input.downstreamPolicy);
+  const selectNextChannel = () => selectionConstraint
+    ? tokenRouter.selectNextChannel(
       input.requestedModel,
-      normalizedForcedChannelId,
+      input.excludeChannelIds,
+      input.downstreamPolicy,
+      selectionConstraint,
+    )
+    : tokenRouter.selectNextChannel(input.requestedModel, input.excludeChannelIds, input.downstreamPolicy);
+  const selectPreferredChannel = (channelId: number) => selectionConstraint
+    ? tokenRouter.selectPreferredChannel(
+      input.requestedModel,
+      channelId,
+      input.downstreamPolicy,
+      input.excludeChannelIds,
+      selectionConstraint,
+    )
+    : tokenRouter.selectPreferredChannel(
+      input.requestedModel,
+      channelId,
       input.downstreamPolicy,
       input.excludeChannelIds,
     );
+  if (normalizedForcedChannelId !== null) {
+    if (input.retryCount > 0) return null;
+    return await selectPreferredChannel(normalizedForcedChannelId);
   }
 
   let selected: SelectedChannel = null;
@@ -118,20 +155,10 @@ export async function selectProxyChannelForAttempt(input: {
   if (input.retryCount === 0 && input.stickySessionKey) {
     const preferredChannelId = proxyChannelCoordinator.getStickyChannelId(input.stickySessionKey);
     if (preferredChannelId && !input.excludeChannelIds.includes(preferredChannelId)) {
-      selected = await tokenRouter.selectPreferredChannel(
-        input.requestedModel,
-        preferredChannelId,
-        input.downstreamPolicy,
-        input.excludeChannelIds,
-      );
+      selected = await selectPreferredChannel(preferredChannelId);
       if (!selected) {
         const refreshSucceeded = await refreshRoutesForFirstAttempt();
-        selected = await tokenRouter.selectPreferredChannel(
-          input.requestedModel,
-          preferredChannelId,
-          input.downstreamPolicy,
-          input.excludeChannelIds,
-        );
+        selected = await selectPreferredChannel(preferredChannelId);
         if (!selected && refreshSucceeded) {
           proxyChannelCoordinator.clearStickyChannel(input.stickySessionKey, preferredChannelId);
         }
@@ -141,17 +168,13 @@ export async function selectProxyChannelForAttempt(input: {
 
   if (!selected) {
     selected = input.retryCount === 0
-      ? await tokenRouter.selectChannel(input.requestedModel, input.downstreamPolicy)
-      : await tokenRouter.selectNextChannel(
-        input.requestedModel,
-        input.excludeChannelIds,
-        input.downstreamPolicy,
-      );
+      ? await selectChannel()
+      : await selectNextChannel();
   }
 
   if (!selected && input.retryCount === 0 && !refreshedRoutes) {
     await refreshRoutesForFirstAttempt();
-    selected = await tokenRouter.selectChannel(input.requestedModel, input.downstreamPolicy);
+    selected = await selectChannel();
   }
 
   return selected;
