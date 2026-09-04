@@ -628,6 +628,14 @@ const PROTOCOL_OPTIONS: Array<{ value: PlaygroundProtocol; label: string }> = [
   { value: 'gemini', label: 'Gemini Native (/gemini/v1beta/models/*)' },
 ];
 
+const IMAGE_GENERATION_PROTOCOL_OPTIONS: Array<{ value: PlaygroundProtocol; label: string }> = [
+  { value: 'openai', label: 'OpenAI Images (/v1/images/generations)' },
+];
+
+const IMAGE_EDIT_PROTOCOL_OPTIONS: Array<{ value: PlaygroundProtocol; label: string }> = [
+  { value: 'openai', label: 'OpenAI Images (/v1/images/edits)' },
+];
+
 const inputBaseStyle: React.CSSProperties = {
   width: '100%',
   padding: '10px 14px',
@@ -2534,12 +2542,16 @@ export default function ModelTester() {
               协议 / 输出格式
             </div>
             <ModernSelect
-              value={inputs.protocol}
+              value={inputs.mode === 'images.generate' || inputs.mode === 'images.edit' ? 'openai' : inputs.protocol}
               onChange={(next) => {
                 if (!next) return;
                 updateProtocol(next as PlaygroundProtocol);
               }}
-              options={PROTOCOL_OPTIONS}
+              options={inputs.mode === 'images.generate'
+                ? IMAGE_GENERATION_PROTOCOL_OPTIONS
+                : inputs.mode === 'images.edit'
+                  ? IMAGE_EDIT_PROTOCOL_OPTIONS
+                  : PROTOCOL_OPTIONS}
               placeholder="请选择协议"
             />
             <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>
