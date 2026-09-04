@@ -30,7 +30,8 @@ describe('image provider registry', () => {
     expect(resolveImageProviderAdapter('zhipu')?.id).toBe('zhipu');
     expect(resolveImageProviderAdapter('volcengine')?.id).toBe('volcengine');
     expect(resolveImageProviderAdapter('minimax')?.id).toBe('minimax');
-    expect(resolveImageProviderAdapter('dashscope')).toBeNull();
+    expect(resolveImageProviderAdapter('dashscope')?.id).toBe('dashscope');
+    expect(resolveImageProviderAdapter('gemini-imagen')?.id).toBe('gemini-imagen');
     expect(resolveImageProviderAdapter('not-a-provider')).toBeNull();
   });
 

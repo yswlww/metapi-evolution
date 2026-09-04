@@ -2,6 +2,8 @@ import { openAiCompatibleImageProvider } from './openAiCompatible.js';
 import { zhipuImageProvider } from './zhipu.js';
 import { volcengineImageProvider } from './volcengine.js';
 import { minimaxImageProvider } from './minimax.js';
+import { dashscopeImageProvider } from './dashscope.js';
+import { geminiImagenImageProvider } from './geminiImagen.js';
 import type { ImageProviderAdapter, ImageProviderId } from './types.js';
 
 export const IMAGE_PROVIDER_IDS = [
@@ -19,6 +21,8 @@ const imageProviderAdapters = new Map<ImageProviderId, ImageProviderAdapter>([
   [zhipuImageProvider.id, zhipuImageProvider],
   [volcengineImageProvider.id, volcengineImageProvider],
   [minimaxImageProvider.id, minimaxImageProvider],
+  [dashscopeImageProvider.id, dashscopeImageProvider],
+  [geminiImagenImageProvider.id, geminiImagenImageProvider],
 ]);
 
 export function normalizeImageProviderId(value: unknown): ImageProviderId | null {
