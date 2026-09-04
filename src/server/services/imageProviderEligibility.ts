@@ -47,11 +47,14 @@ export function evaluateImageProviderEligibility(
     };
   }
 
-  if (!adapter.supportsModel(input.modelName)) {
+  const supportsOperation = adapter.supportsOperation
+    ? adapter.supportsOperation(input.operation, input.modelName)
+    : adapter.supportsModel(input.modelName);
+  if (!supportsOperation) {
     return {
       eligible: false,
       providerId,
-      reason: `图片供应商 ${providerId} 不支持模型 ${input.modelName}`,
+      reason: `图片供应商 ${providerId} 不支持以 ${input.operation} 操作使用模型 ${input.modelName}`,
     };
   }
 

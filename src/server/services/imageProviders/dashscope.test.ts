@@ -9,6 +9,10 @@ describe('dashscopeImageProvider', () => {
     expect(dashscopeImageProvider.supportsModel('qwen-image-2.0-pro-2026-06-22')).toBe(true);
     expect(dashscopeImageProvider.supportsModel('qwen-image-edit-plus-2025-12-15')).toBe(true);
     expect(dashscopeImageProvider.supportsModel('qwen-turbo')).toBe(false);
+    expect(dashscopeImageProvider.supportsOperation?.('generate', 'qwen-image-max')).toBe(true);
+    expect(dashscopeImageProvider.supportsOperation?.('edit', 'qwen-image-max')).toBe(false);
+    expect(dashscopeImageProvider.supportsOperation?.('edit', 'qwen-image-edit')).toBe(true);
+    expect(dashscopeImageProvider.supportsOperation?.('generate', 'qwen-image-edit')).toBe(false);
   });
 
   it('builds synchronous multimodal text-to-image requests', async () => {

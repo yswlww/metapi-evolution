@@ -99,7 +99,7 @@ const IMAGE_PROVIDER_LABELS: Record<string, string> = {
   volcengine: 'Volcengine / Doubao',
   minimax: 'MiniMax Image',
   dashscope: 'Alibaba Cloud DashScope',
-  'gemini-imagen': 'Gemini Imagen (service retired)',
+  'gemini-imagen': 'Gemini Image / Nano Banana',
 };
 
 function getPlaygroundImageOperation(mode: PlaygroundMode): 'generate' | 'edit' | null {

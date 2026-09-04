@@ -119,6 +119,12 @@ export const dashscopeImageProvider: ImageProviderAdapter = {
       ...DASHSCOPE_EDIT_MODEL_PATTERNS,
     ]);
   },
+  supportsOperation(operation, modelName) {
+    return supportsModelIn(
+      modelName,
+      operation === 'generate' ? DASHSCOPE_GENERATE_MODEL_PATTERNS : DASHSCOPE_EDIT_MODEL_PATTERNS,
+    );
+  },
   async prepareRequest(input) {
     const modelSupportsOperation = input.operation === 'generate'
       ? supportsModelIn(input.modelName, DASHSCOPE_GENERATE_MODEL_PATTERNS)

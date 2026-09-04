@@ -1993,7 +1993,7 @@ export default function Sites() {
                     { value: 'volcengine', label: '火山引擎 / 豆包图片 API' },
                     { value: 'minimax', label: 'MiniMax 图片 API' },
                     { value: 'dashscope', label: '阿里云 DashScope 图片 API' },
-                    { value: 'gemini-imagen', label: 'Gemini Imagen' },
+                    { value: 'gemini-imagen', label: 'Gemini Image / Nano Banana' },
                   ]}
                 />
                 <small>仅影响标准图片生成与编辑路由；普通中转站请保留 OpenAI 兼容。</small>

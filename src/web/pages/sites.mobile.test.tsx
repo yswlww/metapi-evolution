@@ -69,7 +69,7 @@ describe('Sites mobile layout', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/web/pages/Sites.tsx'), 'utf8');
     expect(source).toContain('data-testid="site-image-provider-select"');
     expect(source).toContain("{ value: 'openai-compatible', label: 'OpenAI 兼容（默认）' }");
-    expect(source).toContain("{ value: 'gemini-imagen', label: 'Gemini Imagen' }");
+    expect(source).toContain("{ value: 'gemini-imagen', label: 'Gemini Image / Nano Banana' }");
     expect(source).toContain('普通中转站请保留 OpenAI 兼容');
   });
 

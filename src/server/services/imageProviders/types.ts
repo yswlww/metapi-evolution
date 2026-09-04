@@ -45,6 +45,7 @@ export type ImageProviderAdapter = {
   id: ImageProviderId;
   capabilities: ImageProviderCapabilities;
   supportsModel(modelName: string): boolean;
+  supportsOperation?(operation: ImageOperation, modelName: string): boolean;
   prepareRequest(input: PrepareImageRequestInput): Promise<PreparedImageRequest>;
   normalizeResponse(input: NormalizeImageResponseInput): NormalizedImageResponse;
 };

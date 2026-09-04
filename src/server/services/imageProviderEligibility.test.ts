@@ -28,6 +28,6 @@ describe('evaluateImageProviderEligibility', () => {
       site: { id: 4, name: 'zhipu-site', imageProvider: 'zhipu' },
       operation: 'generate',
       modelName: 'glm-4.5',
-    })).toMatchObject({ eligible: false, providerId: 'zhipu', reason: expect.stringContaining('不支持模型') });
+    })).toMatchObject({ eligible: false, providerId: 'zhipu', reason: expect.stringContaining('不支持以 generate 操作使用模型') });
   });
 });
