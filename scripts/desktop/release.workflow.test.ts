@@ -43,4 +43,11 @@ describe('release workflow', () => {
     expect(workflow).toContain('node_modules/electron/dist');
     expect(workflow).not.toContain('npx electron/install.js');
   });
+  it('uses a stable Windows runner for native desktop packaging', () => {
+    const workflow = readFileSync(resolve(process.cwd(), '.github/workflows/release.yml'), 'utf8');
+
+    expect(workflow).toContain('runner: windows-2022');
+    expect(workflow).not.toContain('runner: windows-latest');
+  });
+
 });

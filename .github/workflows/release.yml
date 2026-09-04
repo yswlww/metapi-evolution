@@ -58,7 +58,7 @@ jobs:
             runner: ubuntu-latest
             artifactLabel: linux-x64
           - platform: windows
-            runner: windows-latest
+            runner: windows-2022
             artifactLabel: windows-x64
           - platform: mac-arm64
             runner: macos-15
