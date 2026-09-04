@@ -151,4 +151,51 @@ describe('ModelTester fixed channel behavior', () => {
       root?.unmount();
     }
   });
+  it('requests operation-aware image candidates and shows the selected provider', async () => {
+    const imageSession = serializeModelTesterSession({
+      input: '',
+      inputs: { ...DEFAULT_INPUTS, mode: 'images.generate', model: 'gpt-4o-mini' },
+      parameterEnabled: DEFAULT_PARAMETER_ENABLED,
+      messages: [],
+      conversationFiles: [],
+      pendingPayload: null,
+      pendingJobId: null,
+      forcedChannelId: 77,
+      customRequestMode: false,
+      customRequestBody: '',
+      showDebugPanel: false,
+      activeDebugTab: DEBUG_TABS.PREVIEW,
+      modeState: DEFAULT_MODE_STATE,
+    });
+    (globalThis.localStorage.getItem as ReturnType<typeof vi.fn>).mockReturnValue(imageSession);
+    apiMock.getRouteDecision.mockResolvedValue({
+      decision: {
+        candidates: [{
+          channelId: 77,
+          accountId: 12,
+          username: 'tester',
+          siteName: 'image-site',
+          imageProvider: 'dashscope',
+          tokenName: 'default',
+          priority: 0,
+          eligible: true,
+          reason: '可用',
+        }],
+      },
+    });
+
+    let root!: ReactTestRenderer;
+    try {
+      await act(async () => { root = create(<ModelTester />); });
+      await vi.waitFor(async () => {
+        await flushMicrotasks();
+        expect(apiMock.getRouteDecision).toHaveBeenCalledWith('gpt-4o-mini', { imageOperation: 'generate' });
+        expect(collectText(root.root)).toContain('Alibaba Cloud DashScope');
+        expect(collectText(root.root)).toContain('公开接口保持 OpenAI Images 格式');
+      });
+    } finally {
+      root?.unmount();
+    }
+  });
+
 });

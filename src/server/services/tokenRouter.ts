@@ -1313,6 +1313,7 @@ type ExplainSelectionOptions = {
   bypassSourceModelCheck?: boolean;
   useChannelSourceModelForCost?: boolean;
   downstreamPolicy?: DownstreamRoutingPolicy;
+  selectionConstraint?: TokenRouterSelectionConstraint;
 };
 
 type PricingReferenceRefreshOptions = {
@@ -1944,10 +1945,15 @@ export class TokenRouter {
     requestedModel: string,
     excludeChannelIds: number[] = [],
     downstreamPolicy: DownstreamRoutingPolicy = DEFAULT_DOWNSTREAM_POLICY,
+    selectionConstraint?: TokenRouterSelectionConstraint,
   ): Promise<RouteDecisionExplanation> {
     await ensureSiteRuntimeHealthStateLoaded();
     const match = await this.findRoute(requestedModel, downstreamPolicy);
-    return this.explainSelectionFromMatch(match, requestedModel, { excludeChannelIds, downstreamPolicy });
+    return this.explainSelectionFromMatch(match, requestedModel, {
+      excludeChannelIds,
+      downstreamPolicy,
+      selectionConstraint,
+    });
   }
 
   async explainSelectionForRoute(
@@ -2054,6 +2060,13 @@ export class TokenRouter {
         excludeChannelIds,
         nowIso,
         downstreamPolicy,
+        selectionConstraint: options.selectionConstraint,
+        resolvedModel: resolveActualModelForSelectedChannel(
+          requestedModel,
+          match.route,
+          mappedModel,
+          row.channel.sourceModel,
+        ),
       });
 
       const recentlyFailed = routeStrategy !== 'round_robin'
@@ -2065,6 +2078,7 @@ export class TokenRouter {
         accountId: row.account.id,
         username: row.account.username || `account-${row.account.id}`,
         siteName: row.site.name || 'unknown',
+        imageProvider: row.site.imageProvider || 'openai-compatible',
         tokenName: row.token?.name || 'default',
         priority: row.channel.priority ?? 0,
         weight: row.channel.weight ?? 10,

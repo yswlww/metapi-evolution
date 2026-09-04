@@ -5,6 +5,7 @@ export type RouteDecisionCandidate = {
     accountId: number;
     username: string;
     siteName: string;
+    imageProvider?: string | null;
     tokenName: string;
     priority: number;
     weight: number;

@@ -988,8 +988,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({}),
     }),
-  getRouteDecision: (model: string) =>
-    request(`/api/routes/decision?model=${encodeURIComponent(model)}`),
+  getRouteDecision: (model: string, options?: { imageOperation?: "generate" | "edit" }) => {
+    const query = new URLSearchParams({ model });
+    if (options?.imageOperation) query.set("imageOperation", options.imageOperation);
+    return request(`/api/routes/decision?${query.toString()}`);
+  },
   getRouteDecisionsBatch: (
     models: string[],
     options?: { refreshPricingCatalog?: boolean; persistSnapshots?: boolean },

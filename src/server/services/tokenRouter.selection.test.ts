@@ -138,6 +138,29 @@ describe('TokenRouter selection scoring', () => {
     }).returning().get();
   }
 
+  it('applies the same constraint to route decision diagnostics', async () => {
+    const route = await createRoute('image-diagnostic-model');
+    const blockedSite = await createSite('diagnostic-blocked');
+    const eligibleSite = await createSite('diagnostic-eligible');
+    const blockedAccount = await createAccount(blockedSite.id, 'diagnostic-blocked-user');
+    const eligibleAccount = await createAccount(eligibleSite.id, 'diagnostic-eligible-user');
+    const blockedToken = await createToken(blockedAccount.id, 'diagnostic-blocked-token');
+    const eligibleToken = await createToken(eligibleAccount.id, 'diagnostic-eligible-token');
+    await db.insert(schema.routeChannels).values([
+      { routeId: route.id, accountId: blockedAccount.id, tokenId: blockedToken.id, priority: 0, enabled: true },
+      { routeId: route.id, accountId: eligibleAccount.id, tokenId: eligibleToken.id, priority: 1, enabled: true },
+    ]).run();
+    const router = new TokenRouter();
+    const decision = await router.explainSelection(
+      'image-diagnostic-model', [], undefined,
+      ({ site }) => site.id === blockedSite.id ? '图片供应商不支持该操作' : null,
+    );
+    expect(decision.candidates.find((candidate) => candidate.siteName.startsWith('diagnostic-blocked')))
+      .toMatchObject({ eligible: false, reason: expect.stringContaining('图片供应商不支持该操作') });
+    expect(decision.candidates.find((candidate) => candidate.siteName.startsWith('diagnostic-eligible')))
+      .toMatchObject({ eligible: true, imageProvider: 'openai-compatible' });
+  });
+
   it('filters constrained candidates before route strategy selection', async () => {
     const route = await createRoute('image-model');
     const blockedSite = await createSite('blocked-image-site');

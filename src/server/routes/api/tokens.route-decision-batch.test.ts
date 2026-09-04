@@ -82,6 +82,60 @@ describe('POST /api/routes/decision/batch', () => {
     delete process.env.DATA_DIR;
   });
 
+  it('filters image decision candidates by provider operation capability', async () => {
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'image-01',
+      enabled: true,
+    }).returning().get();
+    const minimaxSite = await db.insert(schema.sites).values({
+      name: 'minimax-image-site',
+      url: 'https://api.minimaxi.com',
+      platform: 'openai',
+      imageProvider: 'minimax',
+    }).returning().get();
+    const compatibleSite = await db.insert(schema.sites).values({
+      name: 'compatible-image-site',
+      url: 'https://images.example.com',
+      platform: 'openai',
+      imageProvider: null,
+    }).returning().get();
+    const minimaxAccount = await db.insert(schema.accounts).values({
+      siteId: minimaxSite.id,
+      username: 'minimax-image-user',
+      accessToken: 'minimax-access',
+      apiToken: 'minimax-api-key',
+      status: 'active',
+    }).returning().get();
+    const compatibleAccount = await db.insert(schema.accounts).values({
+      siteId: compatibleSite.id,
+      username: 'compatible-image-user',
+      accessToken: 'compatible-access',
+      apiToken: 'compatible-api-key',
+      status: 'active',
+    }).returning().get();
+    await db.insert(schema.routeChannels).values([
+      { routeId: route.id, accountId: minimaxAccount.id, tokenId: null, sourceModel: 'image-01', priority: 0, enabled: true },
+      { routeId: route.id, accountId: compatibleAccount.id, tokenId: null, sourceModel: 'image-01', priority: 1, enabled: true },
+    ]).run();
+    invalidateTokenRouterCache();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/routes/decision?model=image-01&imageOperation=edit',
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      imageOperation: string | null;
+      decision: { candidates: Array<{ siteName: string; imageProvider?: string | null; eligible: boolean; reason: string }> };
+    };
+    expect(body.imageOperation).toBe('edit');
+    expect(body.decision.candidates.find((candidate) => candidate.siteName === 'minimax-image-site'))
+      .toMatchObject({ imageProvider: 'minimax', eligible: false, reason: expect.stringContaining('不支持图片编辑') });
+    expect(body.decision.candidates.find((candidate) => candidate.siteName === 'compatible-image-site'))
+      .toMatchObject({ imageProvider: 'openai-compatible', eligible: true });
+  });
+
   it('returns decisions for multiple requested models in one call', async () => {
     seedRoutableChannel();
 

@@ -1,5 +1,6 @@
 import { normalizeImageProviderId, resolveImageProviderAdapter } from './imageProviders/registry.js';
 import type { ImageOperation, ImageProviderId } from './imageProviders/types.js';
+import type { TokenRouterSelectionConstraint } from './tokenRouter.js';
 
 export type ImageProviderEligibilityInput = {
   site: {
@@ -55,4 +56,13 @@ export function evaluateImageProviderEligibility(
   }
 
   return { eligible: true, providerId };
+}
+
+export function createImageProviderSelectionConstraint(
+  operation: ImageOperation,
+): TokenRouterSelectionConstraint {
+  return ({ site, modelName }) => {
+    const result = evaluateImageProviderEligibility({ site, operation, modelName });
+    return result.eligible ? null : result.reason;
+  };
 }

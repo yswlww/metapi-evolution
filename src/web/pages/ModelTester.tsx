@@ -93,6 +93,21 @@ type ForcedChannelOption = {
   description?: string;
 };
 
+const IMAGE_PROVIDER_LABELS: Record<string, string> = {
+  'openai-compatible': 'OpenAI Compatible',
+  zhipu: 'Zhipu CogView',
+  volcengine: 'Volcengine / Doubao',
+  minimax: 'MiniMax Image',
+  dashscope: 'Alibaba Cloud DashScope',
+  'gemini-imagen': 'Gemini Imagen (service retired)',
+};
+
+function getPlaygroundImageOperation(mode: PlaygroundMode): 'generate' | 'edit' | null {
+  if (mode === 'images.generate') return 'generate';
+  if (mode === 'images.edit') return 'edit';
+  return null;
+}
+
 const POLL_INTERVAL_MS = 1200;
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -908,7 +923,11 @@ export default function ModelTester() {
     setLoadingForcedChannels(true);
     setForcedChannelHint('');
 
-    void api.getRouteDecision(inputs.model)
+    const imageOperation = getPlaygroundImageOperation(inputs.mode);
+    const routeDecisionRequest = imageOperation
+      ? api.getRouteDecision(inputs.model, { imageOperation })
+      : api.getRouteDecision(inputs.model);
+    void routeDecisionRequest
       .then((result) => {
         if (cancelled) return;
         const candidates = Array.isArray((result as any)?.decision?.candidates)
@@ -919,13 +938,18 @@ export default function ModelTester() {
           .map((candidate) => ({
             value: String(candidate.channelId),
             label: `${candidate.username || `account-${candidate.accountId || 'unknown'}`} @ ${candidate.siteName || 'unknown'} / ${candidate.tokenName || 'default'} (P${candidate.priority ?? 0})`,
-            description: typeof candidate.reason === 'string' && candidate.reason.trim().length > 0
-              ? candidate.reason
-              : undefined,
+            description: imageOperation
+              ? `${IMAGE_PROVIDER_LABELS[String(candidate.imageProvider || 'openai-compatible')] || String(candidate.imageProvider || 'openai-compatible')} · ${candidate.reason || '可用'}`
+              : (typeof candidate.reason === 'string' && candidate.reason.trim().length > 0
+                ? candidate.reason
+                : undefined),
           }));
         setForcedChannelOptions(nextOptions);
         if (nextOptions.length === 0) {
-          setForcedChannelHint('当前模型暂无可固定通道。');
+          const firstReason = candidates.find((candidate) => typeof candidate.reason === 'string' && candidate.reason.trim())?.reason;
+          setForcedChannelHint(imageOperation && firstReason
+            ? `当前图片操作暂无兼容通道：${firstReason}`
+            : '当前模型暂无可固定通道。');
         }
         if (typeof forcedChannelId === 'number' && !nextOptions.some((option) => option.value === String(forcedChannelId))) {
           setForcedChannelId(null);
@@ -2555,7 +2579,9 @@ export default function ModelTester() {
               placeholder="请选择协议"
             />
             <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>
-              对话模式下可模拟 OpenAI / Responses / Claude / Gemini Native。
+              {inputs.mode.startsWith('images')
+                ? '公开接口保持 OpenAI Images 格式；实际供应商由所选通道的站点配置决定。'
+                : '对话模式下可模拟 OpenAI / Responses / Claude / Gemini Native。'}
             </div>
           </div>
 
