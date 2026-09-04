@@ -49,5 +49,4 @@ describe('release workflow', () => {
     expect(workflow).toContain('runner: windows-2022');
     expect(workflow).not.toContain('runner: windows-latest');
   });
-
 });
