@@ -122,7 +122,13 @@ jobs:
             electron-cache-${{ runner.os }}-
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Install Electron runtime
+        run: node node_modules/electron/install.js
+
+      - name: Verify Electron runtime
+        run: node -e "const fs = require('node:fs'); if (!fs.existsSync('node_modules/electron/dist')) throw new Error('Electron runtime was not installed')"
 
       - name: Install Linux packaging dependencies
         if: runner.os == 'Linux'

@@ -28,4 +28,19 @@ describe('release workflow', () => {
     expect(workflow).toContain("if: runner.os == 'Linux'");
     expect(workflow).toContain('sudo apt-get install --no-install-recommends -y rpm');
   });
+
+
+  it('installs Electron binaries explicitly after skipping host install scripts', () => {
+    const workflow = readFileSync(resolve(process.cwd(), '.github/workflows/release.yml'), 'utf8');
+
+    expect(workflow).toContain('run: npm ci --ignore-scripts');
+    expect(workflow).toContain('run: node node_modules/electron/install.js');
+  });
+
+  it('uses the Electron package installer instead of relying on npm lifecycle hooks', () => {
+    const workflow = readFileSync(resolve(process.cwd(), '.github/workflows/release.yml'), 'utf8');
+
+    expect(workflow).toContain('node_modules/electron/dist');
+    expect(workflow).not.toContain('npx electron/install.js');
+  });
 });
