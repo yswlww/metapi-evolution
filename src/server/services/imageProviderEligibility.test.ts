@@ -20,8 +20,14 @@ describe('evaluateImageProviderEligibility', () => {
 
     expect(evaluateImageProviderEligibility({
       site: { id: 3, name: 'zhipu-site', imageProvider: 'zhipu' },
-      operation: 'generate',
+      operation: 'edit',
       modelName: 'cogview-4',
-    })).toMatchObject({ eligible: false, providerId: 'zhipu', reason: expect.stringContaining('尚未注册') });
+    })).toMatchObject({ eligible: false, providerId: 'zhipu', reason: expect.stringContaining('不支持图片编辑') });
+
+    expect(evaluateImageProviderEligibility({
+      site: { id: 4, name: 'zhipu-site', imageProvider: 'zhipu' },
+      operation: 'generate',
+      modelName: 'glm-4.5',
+    })).toMatchObject({ eligible: false, providerId: 'zhipu', reason: expect.stringContaining('不支持模型') });
   });
 });

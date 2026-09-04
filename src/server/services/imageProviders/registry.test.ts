@@ -26,8 +26,11 @@ describe('image provider registry', () => {
     expect(normalizeImageProviderId(42)).toBeNull();
   });
 
-  it('does not claim an adapter exists before the provider is registered', () => {
-    expect(resolveImageProviderAdapter('zhipu')).toBeNull();
+  it('resolves the registered native providers and rejects unknown IDs', () => {
+    expect(resolveImageProviderAdapter('zhipu')?.id).toBe('zhipu');
+    expect(resolveImageProviderAdapter('volcengine')?.id).toBe('volcengine');
+    expect(resolveImageProviderAdapter('minimax')?.id).toBe('minimax');
+    expect(resolveImageProviderAdapter('dashscope')).toBeNull();
     expect(resolveImageProviderAdapter('not-a-provider')).toBeNull();
   });
 
