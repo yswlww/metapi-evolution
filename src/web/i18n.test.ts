@@ -84,6 +84,22 @@ describe('translateText', () => {
     expect(translateText('共 12 个模型', 'en')).toBe('Total 12 models');
   });
 
+  it('keeps vendor names when translating site initialization preset labels', () => {
+    const labels = [
+      ['阿里云 CodingPlan / OpenAI', 'Alibaba Cloud Coding Plan / OpenAI'],
+      ['阿里云 CodingPlan / Claude', 'Alibaba Cloud Coding Plan / Claude'],
+      ['智谱 Coding Plan / OpenAI', 'Zhipu Coding Plan / OpenAI'],
+      ['智谱 Coding Plan / Claude', 'Zhipu Coding Plan / Claude'],
+      ['百度 CodingPlan / OpenAI', 'Baidu Coding Plan / OpenAI'],
+      ['百度 CodingPlan / Claude', 'Baidu Coding Plan / Claude'],
+      ['豆包 Coding Plan / OpenAI', 'Doubao Coding Plan / OpenAI'],
+    ] as const;
+
+    for (const [source, expected] of labels) {
+      expect(translateText(source, 'en')).toBe(expected);
+    }
+  });
+
   it('never returns Chinese characters in strict en mode', () => {
     const samples = [
       '站点已禁用',

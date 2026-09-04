@@ -443,7 +443,7 @@ export default function Sites() {
       ];
     const presetOptions = initializationPresetOptions.map((preset) => ({
       value: `preset:${preset.id}`,
-      label: preset.label,
+      label: tr(preset.label),
       description: [
         preset.defaultUrl ? '自动填充官方地址' : '',
         preset.recommendedSkipModelFetch ? 'API Key 优先初始化' : '',
