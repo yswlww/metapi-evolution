@@ -53,6 +53,47 @@ describe('sites proxy settings', () => {
     delete process.env.DATA_DIR;
   });
 
+  it('persists, updates, clears, and validates image provider configuration', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/sites',
+      payload: {
+        name: 'native-image-site',
+        url: 'https://native-image.example.com',
+        platform: 'openai',
+        imageProvider: 'minimax',
+      },
+    });
+
+    expect(created.statusCode).toBe(200);
+    expect(created.json()).toMatchObject({ imageProvider: 'minimax' });
+    const siteId = (created.json() as { id: number }).id;
+
+    const updated = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${siteId}`,
+      payload: { imageProvider: 'volcengine' },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({ imageProvider: 'volcengine' });
+
+    const cleared = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${siteId}`,
+      payload: { imageProvider: '' },
+    });
+    expect(cleared.statusCode).toBe(200);
+    expect(cleared.json()).toMatchObject({ imageProvider: null });
+
+    const invalid = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${siteId}`,
+      payload: { imageProvider: 'invented-provider' },
+    });
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.json()).toMatchObject({ error: expect.stringContaining('Invalid imageProvider') });
+  });
+
   it('notifies the coordinator with persisted concurrency only after successful creates and updates', async () => {
     const created = await app.inject({
       method: 'POST',

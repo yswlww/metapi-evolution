@@ -25,6 +25,7 @@ export type SiteForm = {
   customHeadersOverrideRequestHeaders: boolean;
   globalWeight: string;
   maxConcurrency: string;
+  imageProvider: string;
 };
 
 export type SiteEditorState =
@@ -48,6 +49,7 @@ export type SiteSavePayload = {
   customHeadersOverrideRequestHeaders: boolean;
   globalWeight: number;
   maxConcurrency: number | null;
+  imageProvider?: string | null;
   postRefreshProbeEnabled?: boolean;
   postRefreshProbeModel?: string;
   postRefreshProbeScope?: 'single' | 'all';
@@ -88,6 +90,7 @@ export function emptySiteForm(): SiteForm {
     customHeadersOverrideRequestHeaders: false,
     globalWeight: '1',
     maxConcurrency: '0',
+    imageProvider: 'openai-compatible',
   };
 }
 
@@ -139,7 +142,7 @@ function parseApiEndpointsForEditor(raw: unknown): SiteApiEndpointField[] {
   return ensureSiteApiEndpointRows(rows);
 }
 
-export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | 'customHeaders' | 'customHeadersOverrideRequestHeaders' | 'globalWeight' | 'maxConcurrency' | 'externalCheckinUrl' | 'proxyUrl' | 'useSystemProxy'>> & {
+export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | 'customHeaders' | 'customHeadersOverrideRequestHeaders' | 'globalWeight' | 'maxConcurrency' | 'imageProvider' | 'externalCheckinUrl' | 'proxyUrl' | 'useSystemProxy'>> & {
   externalCheckinUrl?: string | null;
   proxyUrl?: string | null;
   useSystemProxy?: boolean | null;
@@ -153,6 +156,7 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | '
   customHeaders?: string | null;
   globalWeight?: number | string | null;
   maxConcurrency?: number | string | null;
+  imageProvider?: string | null;
 }): SiteForm {
   const globalWeightRaw = Number(site.globalWeight);
   const globalWeight = Number.isFinite(globalWeightRaw) && globalWeightRaw > 0 ? String(globalWeightRaw) : '1';
@@ -172,6 +176,9 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | '
     customHeadersOverrideRequestHeaders: !!site.customHeadersOverrideRequestHeaders,
     globalWeight,
     maxConcurrency,
+    imageProvider: typeof site.imageProvider === 'string' && site.imageProvider.trim()
+      ? site.imageProvider.trim()
+      : 'openai-compatible',
   };
 }
 

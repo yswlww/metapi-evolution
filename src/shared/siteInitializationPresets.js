@@ -240,6 +240,7 @@ const SITE_INITIALIZATION_PRESETS = Object.freeze([
     providerLabel: 'MiniMax',
     description: '适合 MiniMax 官方 OpenAI 兼容入口，建议直接添加 API Key 后补入常用 M2 编程模型。',
     platform: 'openai',
+    imageProvider: 'minimax',
     defaultUrl: 'https://api.minimaxi.com/v1',
     initialSegment: 'apikey',
     recommendedSkipModelFetch: true,

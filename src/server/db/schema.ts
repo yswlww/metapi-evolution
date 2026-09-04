@@ -6,6 +6,7 @@ export const sites = sqliteTable('sites', {
   name: text('name').notNull(),
   url: text('url').notNull(),
   maxConcurrency: integer('max_concurrency'),
+  imageProvider: text('image_provider'),
   externalCheckinUrl: text('external_checkin_url'),
   platform: text('platform').notNull(), // 'new-api' | 'one-api' | 'veloera' | 'one-hub' | 'done-hub' | 'sub2api' | 'axonhub' | 'orcarouter' | 'openai' | 'claude' | 'gemini' | 'codex' | 'gemini-cli' | 'antigravity'
   proxyUrl: text('proxy_url'),

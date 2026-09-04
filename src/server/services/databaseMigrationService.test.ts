@@ -284,6 +284,7 @@ describe('databaseMigrationService', () => {
             name: 'bounded-site',
             url: 'https://bounded.example.com',
             maxConcurrency: 7,
+            imageProvider: 'minimax',
             externalCheckinUrl: 'https://bounded.example.com/checkin',
             platform: 'new-api',
             proxyUrl: 'http://127.0.0.1:8080',
@@ -307,6 +308,7 @@ describe('databaseMigrationService', () => {
             name: 'unlimited-site',
             url: 'https://unlimited.example.com',
             maxConcurrency: null,
+            imageProvider: null,
             externalCheckinUrl: null,
             platform: 'openai',
             proxyUrl: null,
@@ -386,6 +388,7 @@ describe('databaseMigrationService', () => {
           'name',
           'url',
           'max_concurrency',
+          'image_provider',
           'external_checkin_url',
           'platform',
           'proxy_url',
@@ -408,13 +411,13 @@ describe('databaseMigrationService', () => {
         expect(siteInsertCalls[0]?.[0]).toContain(`(${expectedColumns.map(quote).join(', ')})`);
         expect(siteInsertCalls[0]?.[1]).toEqual(dialect === 'sqlite'
           ? [
-            101, 'bounded-site', 'https://bounded.example.com', 7,
+            101, 'bounded-site', 'https://bounded.example.com', 7, 'minimax',
             'https://bounded.example.com/checkin', 'new-api', 'http://127.0.0.1:8080', 1,
             '{"x-site":"bounded"}', 1, 1, 'gpt-bounded', 'all', 700, 'disabled', 1, 4, 1.5,
             'bounded-key', '2026-08-29T00:00:00.000Z', '2026-08-29T01:00:00.000Z',
           ]
           : [
-            101, 'bounded-site', 'https://bounded.example.com', 7,
+            101, 'bounded-site', 'https://bounded.example.com', 7, 'minimax',
             'https://bounded.example.com/checkin', 'new-api', 'http://127.0.0.1:8080', true,
             '{"x-site":"bounded"}', true, true, 'gpt-bounded', 'all', 700, 'disabled', true, 4, 1.5,
             'bounded-key', '2026-08-29T00:00:00.000Z', '2026-08-29T01:00:00.000Z',

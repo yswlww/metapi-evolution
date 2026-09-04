@@ -65,6 +65,14 @@ describe('Sites mobile layout', () => {
     expect(source).toContain('mobile-card');
   });
 
+  it('exposes image provider configuration without changing public image routes', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/web/pages/Sites.tsx'), 'utf8');
+    expect(source).toContain('data-testid="site-image-provider-select"');
+    expect(source).toContain("{ value: 'openai-compatible', label: 'OpenAI 兼容（默认）' }");
+    expect(source).toContain("{ value: 'gemini-imagen', label: 'Gemini Imagen' }");
+    expect(source).toContain('普通中转站请保留 OpenAI 兼容');
+  });
+
   it('includes a constrained site concurrency input and help text', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/web/pages/Sites.tsx'), 'utf8');
     expect(source).toContain('<span>站点最大并发</span>');

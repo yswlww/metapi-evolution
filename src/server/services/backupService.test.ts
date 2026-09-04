@@ -56,6 +56,7 @@ describe('backupService', () => {
       name: 'max-concurrency-site',
       url: 'https://max-concurrency.example.com',
       maxConcurrency: 7,
+      imageProvider: 'minimax',
       platform: 'new-api',
       createdAt: now,
       updatedAt: now,
@@ -63,17 +64,21 @@ describe('backupService', () => {
 
     const exported = await backupService.exportBackup('all') as any;
     expect(exported.accounts.sites[0].maxConcurrency).toBe(7);
+    expect(exported.accounts.sites[0].imageProvider).toBe('minimax');
 
     const imported = await backupService.importBackup(exported as Record<string, unknown>);
     expect(imported.allImported).toBe(true);
     const restored = await db.select().from(schema.sites).where(eq(schema.sites.id, site.id)).get();
     expect(restored?.maxConcurrency).toBe(7);
+    expect(restored?.imageProvider).toBe('minimax');
 
     const legacyBackup = structuredClone(exported);
     delete legacyBackup.accounts.sites[0].maxConcurrency;
+    delete legacyBackup.accounts.sites[0].imageProvider;
     await backupService.importBackup(legacyBackup as Record<string, unknown>);
     const legacyRestored = await db.select().from(schema.sites).where(eq(schema.sites.id, site.id)).get();
     expect(legacyRestored?.maxConcurrency).toBeNull();
+    expect(legacyRestored?.imageProvider).toBeNull();
 
     await db.update(schema.sites).set({ name: 'must-survive-invalid-import' })
       .where(eq(schema.sites.id, site.id))
@@ -82,6 +87,10 @@ describe('backupService', () => {
     invalidBackup.accounts.sites[0].maxConcurrency = -1;
     await expect(backupService.importBackup(invalidBackup as Record<string, unknown>))
       .rejects.toThrow('Invalid maxConcurrency. Expected an integer from 0 to 10000.');
+    const invalidProviderBackup = structuredClone(exported);
+    invalidProviderBackup.accounts.sites[0].imageProvider = 'invented-provider';
+    await expect(backupService.importBackup(invalidProviderBackup as Record<string, unknown>))
+      .rejects.toThrow('Invalid imageProvider. Expected one of:');
     const retained = await db.select().from(schema.sites).where(eq(schema.sites.id, site.id)).get();
     expect(retained).toMatchObject({
       name: 'must-survive-invalid-import',

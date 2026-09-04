@@ -2131,6 +2131,12 @@
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
+        },
+        "image_provider": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
