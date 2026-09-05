@@ -323,12 +323,13 @@ function buildStatements(
   for (const row of snapshot.accounts.sites) {
     statements.push({
       table: 'sites',
-      columns: ['id', 'name', 'url', 'max_concurrency', 'external_checkin_url', 'platform', 'proxy_url', 'use_system_proxy', 'custom_headers', 'custom_headers_override_request_headers', 'post_refresh_probe_enabled', 'post_refresh_probe_model', 'post_refresh_probe_scope', 'post_refresh_probe_latency_threshold_ms', 'status', 'is_pinned', 'sort_order', 'global_weight', 'api_key', 'created_at', 'updated_at'],
+      columns: ['id', 'name', 'url', 'max_concurrency', 'image_provider', 'external_checkin_url', 'platform', 'proxy_url', 'use_system_proxy', 'custom_headers', 'custom_headers_override_request_headers', 'post_refresh_probe_enabled', 'post_refresh_probe_model', 'post_refresh_probe_scope', 'post_refresh_probe_latency_threshold_ms', 'status', 'is_pinned', 'sort_order', 'global_weight', 'api_key', 'created_at', 'updated_at'],
       values: [
         asNumber(row.id, 0),
         asNullableString(row.name),
         asNullableString(row.url),
         asNumber(row.maxConcurrency, null),
+        asNullableString(row.imageProvider),
         asNullableString(row.externalCheckinUrl),
         asNullableString(row.platform),
         asNullableString(row.proxyUrl),

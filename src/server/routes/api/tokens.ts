@@ -14,6 +14,8 @@ import {
   type RouteRoutingStrategy,
 } from '../../services/routeRoutingStrategy.js';
 import { invalidateTokenRouterCache, matchesModelPattern, tokenRouter } from '../../services/tokenRouter.js';
+import { createImageProviderSelectionConstraint } from '../../services/imageProviderEligibility.js';
+import type { ImageOperation } from '../../services/imageProviders/types.js';
 import { appendBackgroundTaskLog, startBackgroundTask } from '../../services/backgroundTaskService.js';
 import {
   clearRouteDecisionSnapshots,
@@ -861,14 +863,19 @@ export async function tokensRoutes(app: FastifyInstance) {
     }));
   });
 
-  app.get<{ Querystring: { model?: string } }>('/api/routes/decision', async (request, reply) => {
+  app.get<{ Querystring: { model?: string; imageOperation?: ImageOperation } }>('/api/routes/decision', async (request, reply) => {
     const model = (request.query.model || '').trim();
     if (!model) {
       return reply.code(400).send({ success: false, message: 'model 不能为空' });
     }
 
-    const decision = await tokenRouter.explainSelection(model);
-    return { success: true, decision };
+    const imageOperation = request.query.imageOperation === 'generate' || request.query.imageOperation === 'edit'
+      ? request.query.imageOperation
+      : null;
+    const decision = imageOperation
+      ? await tokenRouter.explainSelection(model, [], undefined, createImageProviderSelectionConstraint(imageOperation))
+      : await tokenRouter.explainSelection(model);
+    return { success: true, decision, imageOperation };
   });
 
   app.post<{ Body: BatchRouteDecisionModels }>('/api/routes/decision/batch', async (request, reply) => {

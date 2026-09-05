@@ -15,6 +15,11 @@ describe('schema contract generation', () => {
       notNull: false,
       primaryKey: false,
     });
+    expect(contract.tables.sites.columns.image_provider).toMatchObject({
+      logicalType: 'text',
+      notNull: false,
+      primaryKey: false,
+    });
     expect(contract.tables.account_tokens.columns.token_group).toBeDefined();
     expect(contract.tables.account_tokens.columns.value_status).toMatchObject({
       logicalType: 'text',

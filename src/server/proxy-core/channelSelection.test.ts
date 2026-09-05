@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildForcedChannelUnavailableMessage,
   getTesterForcedChannelId,
   normalizeForcedChannelId,
   TESTER_FORCED_CHANNEL_HEADER,
@@ -52,5 +53,16 @@ describe('getTesterForcedChannelId', () => {
       },
       clientIp: '::ffff:127.0.0.1',
     })).toBe(78);
+  });
+});
+
+describe('buildForcedChannelUnavailableMessage', () => {
+  it('adds image capability details only for a valid forced channel', () => {
+    expect(buildForcedChannelUnavailableMessage(42, '图片供应商 minimax 不支持图片编辑'))
+      .toContain('指定通道 #42');
+    expect(buildForcedChannelUnavailableMessage(42, '图片供应商 minimax 不支持图片编辑'))
+      .toContain('图片供应商 minimax 不支持图片编辑');
+    expect(buildForcedChannelUnavailableMessage(null, 'ignored detail'))
+      .toBe('No available channels for this model');
   });
 });

@@ -38,6 +38,7 @@ describe('ensureSiteSchemaCompatibility', () => {
       expectedSql: [
         'ALTER TABLE sites ADD COLUMN proxy_url text;',
         'ALTER TABLE sites ADD COLUMN max_concurrency integer;',
+        'ALTER TABLE sites ADD COLUMN image_provider text;',
         'ALTER TABLE sites ADD COLUMN use_system_proxy integer DEFAULT 0;',
         'UPDATE sites SET use_system_proxy = 0 WHERE use_system_proxy IS NULL;',
         'ALTER TABLE sites ADD COLUMN custom_headers text;',
@@ -60,6 +61,7 @@ describe('ensureSiteSchemaCompatibility', () => {
       expectedSql: [
         'ALTER TABLE "sites" ADD COLUMN "proxy_url" TEXT',
         'ALTER TABLE "sites" ADD COLUMN "max_concurrency" INTEGER',
+        'ALTER TABLE "sites" ADD COLUMN "image_provider" TEXT',
         'ALTER TABLE "sites" ADD COLUMN "use_system_proxy" BOOLEAN DEFAULT FALSE',
         'UPDATE "sites" SET "use_system_proxy" = FALSE WHERE "use_system_proxy" IS NULL',
         'ALTER TABLE "sites" ADD COLUMN "custom_headers" TEXT',
@@ -82,6 +84,7 @@ describe('ensureSiteSchemaCompatibility', () => {
       expectedSql: [
         'ALTER TABLE `sites` ADD COLUMN `proxy_url` TEXT NULL',
         'ALTER TABLE `sites` ADD COLUMN `max_concurrency` INT NULL',
+        'ALTER TABLE `sites` ADD COLUMN `image_provider` TEXT NULL',
         'ALTER TABLE `sites` ADD COLUMN `use_system_proxy` BOOLEAN DEFAULT FALSE',
         'UPDATE `sites` SET `use_system_proxy` = FALSE WHERE `use_system_proxy` IS NULL',
         'ALTER TABLE `sites` ADD COLUMN `custom_headers` TEXT NULL',

@@ -1,4 +1,5 @@
 import CenteredModal from './CenteredModal.js';
+import { tr } from '../i18n.js';
 import { getSiteInitializationPreset } from '../../shared/siteInitializationPresets.js';
 
 type NextStepChoice = 'session' | 'apikey' | 'later';
@@ -84,7 +85,7 @@ export default function SiteCreatedModal({
 
       {preset ? (
         <div className="alert alert-info" style={{ margin: 0 }}>
-          <div className="alert-title">{preset.label}</div>
+          <div className="alert-title">{tr(preset.label)}</div>
           <div className="site-created-helper-text">
             {helperText}
           </div>

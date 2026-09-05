@@ -194,6 +194,47 @@ describe('ModelTester image generation integration', () => {
     expect(collectText(root?.root.findByType('pre'))).toContain(WEBP_BASE64);
   });
 
+  it('shows only the image-generation endpoint when image generation mode is selected', async () => {
+    await act(async () => { root = create(<ModelTester />); });
+    await flush();
+
+    const modeSelect = root?.root.findAllByType(ModernSelect)
+      .find((select) => select.props.value === 'conversation');
+    await act(async () => {
+      modeSelect?.props.onChange('images.generate');
+    });
+    await flush();
+
+    const protocolSelect = root?.root.findAllByType(ModernSelect)
+      .find((select) => select.props.value === 'openai');
+    expect(protocolSelect?.props.options).toEqual([
+      expect.objectContaining({
+        value: 'openai',
+        label: 'OpenAI Images (/v1/images/generations)',
+      }),
+    ]);
+  });
+  it('shows only the image-edit endpoint when image edit mode is selected', async () => {
+    await act(async () => { root = create(<ModelTester />); });
+    await flush();
+
+    const modeSelect = root?.root.findAllByType(ModernSelect)
+      .find((select) => select.props.value === 'conversation');
+    await act(async () => {
+      modeSelect?.props.onChange('images.edit');
+    });
+    await flush();
+
+    const protocolSelect = root?.root.findAllByType(ModernSelect)
+      .find((select) => select.props.options?.some((option: { label?: string }) => option.label === 'OpenAI Images (/v1/images/edits)'));
+    expect(protocolSelect?.props.value).toBe('openai');
+    expect(protocolSelect?.props.options).toEqual([
+      expect.objectContaining({
+        value: 'openai',
+        label: 'OpenAI Images (/v1/images/edits)',
+      }),
+    ]);
+  });
   it('allows a valid custom image-generation body without a marketplace model selection', async () => {
     apiMock.getModelsMarketplace.mockResolvedValue({ models: [] });
 
@@ -229,6 +270,41 @@ describe('ModelTester image generation integration', () => {
     }));
   });
 
+  it('forces the image endpoint even when the saved protocol was a chat protocol', async () => {
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn((key: string) => key === MODEL_TESTER_STORAGE_KEY
+        ? serializeModelTesterSession({
+          input: '',
+          inputs: { ...DEFAULT_INPUTS, mode: 'images.generate', protocol: 'claude', model: 'gpt-image-1' },
+          parameterEnabled: DEFAULT_PARAMETER_ENABLED,
+          imageParameterEnabled: DEFAULT_IMAGE_PARAMETER_ENABLED,
+          messages: [],
+          conversationFiles: [],
+          pendingPayload: null,
+          customRequestMode: false,
+          customRequestBody: '',
+          showDebugPanel: false,
+          activeDebugTab: DEBUG_TABS.PREVIEW,
+          modeState: { ...DEFAULT_MODE_STATE, imagesPrompt: 'draw a fox' },
+        })
+        : null),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    });
+
+    await act(async () => { root = create(<ModelTester />); });
+    await flush();
+
+    const protocolSelect = root?.root.findAllByType(ModernSelect)
+      .find((select) => select.props.options?.some((option: { label?: string }) => option.label === 'OpenAI Images (/v1/images/generations)'));
+    expect(protocolSelect?.props.value).toBe('openai');
+    expect(protocolSelect?.props.options).toEqual([
+      expect.objectContaining({
+        value: 'openai',
+        label: 'OpenAI Images (/v1/images/generations)',
+      }),
+    ]);
+  });
   it('uses the requested generation output format snapshot after the selector changes', async () => {
     let resolveProxyResult: ((result: unknown) => void) | undefined;
     apiMock.proxyTest.mockImplementationOnce(() => new Promise((resolve) => {

@@ -65,6 +65,13 @@ interface SelectedChannel {
   actualModel: string;
 }
 
+export type TokenRouterSelectionConstraint = (input: {
+  channel: typeof schema.routeChannels.$inferSelect;
+  account: typeof schema.accounts.$inferSelect;
+  site: typeof schema.sites.$inferSelect;
+  modelName: string;
+}) => string | null;
+
 type FailureAwareChannel = {
   failCount?: number | null;
   lastFailAt?: string | null;
@@ -1306,6 +1313,7 @@ type ExplainSelectionOptions = {
   bypassSourceModelCheck?: boolean;
   useChannelSourceModelForCost?: boolean;
   downstreamPolicy?: DownstreamRoutingPolicy;
+  selectionConstraint?: TokenRouterSelectionConstraint;
 };
 
 type PricingReferenceRefreshOptions = {
@@ -1316,10 +1324,12 @@ type PricingReferenceRefreshOptions = {
 
 type CandidateEligibilityOptions = {
   requestedModel: string;
+  resolvedModel?: string;
   bypassSourceModelCheck?: boolean;
   excludeChannelIds?: number[];
   nowIso?: string;
   downstreamPolicy?: DownstreamRoutingPolicy;
+  selectionConstraint?: TokenRouterSelectionConstraint;
 };
 
 type CostSignal = {
@@ -1841,13 +1851,17 @@ export class TokenRouter {
    * Find matching route and select a channel for the given model.
    * Returns null if no route/channel available.
    */
-  async selectChannel(requestedModel: string, downstreamPolicy: DownstreamRoutingPolicy = DEFAULT_DOWNSTREAM_POLICY): Promise<SelectedChannel | null> {
+  async selectChannel(
+    requestedModel: string,
+    downstreamPolicy: DownstreamRoutingPolicy = DEFAULT_DOWNSTREAM_POLICY,
+    selectionConstraint?: TokenRouterSelectionConstraint,
+  ): Promise<SelectedChannel | null> {
     if (!isModelAllowedByDownstreamPolicy(requestedModel, downstreamPolicy)) return null;
     await ensureSiteRuntimeHealthStateLoaded();
 
     const match = await this.findRoute(requestedModel, downstreamPolicy);
     if (!match) return null;
-    return await this.selectFromMatch(match, requestedModel, downstreamPolicy);
+    return await this.selectFromMatch(match, requestedModel, downstreamPolicy, [], true, selectionConstraint);
   }
 
   async previewSelectedChannel(
@@ -1869,13 +1883,14 @@ export class TokenRouter {
     requestedModel: string,
     excludeChannelIds: number[],
     downstreamPolicy: DownstreamRoutingPolicy = DEFAULT_DOWNSTREAM_POLICY,
+    selectionConstraint?: TokenRouterSelectionConstraint,
   ): Promise<SelectedChannel | null> {
     if (!isModelAllowedByDownstreamPolicy(requestedModel, downstreamPolicy)) return null;
     await ensureSiteRuntimeHealthStateLoaded();
 
     const match = await this.findRoute(requestedModel, downstreamPolicy);
     if (!match) return null;
-    return await this.selectFromMatch(match, requestedModel, downstreamPolicy, excludeChannelIds);
+    return await this.selectFromMatch(match, requestedModel, downstreamPolicy, excludeChannelIds, true, selectionConstraint);
   }
 
   async selectPreferredChannel(
@@ -1883,6 +1898,7 @@ export class TokenRouter {
     preferredChannelId: number,
     downstreamPolicy: DownstreamRoutingPolicy = DEFAULT_DOWNSTREAM_POLICY,
     excludeChannelIds: number[] = [],
+    selectionConstraint?: TokenRouterSelectionConstraint,
   ): Promise<SelectedChannel | null> {
     if (!isModelAllowedByDownstreamPolicy(requestedModel, downstreamPolicy)) return null;
     const normalizedPreferredChannelId = Math.trunc(preferredChannelId || 0);
@@ -1897,6 +1913,8 @@ export class TokenRouter {
       normalizedPreferredChannelId,
       downstreamPolicy,
       excludeChannelIds,
+      true,
+      selectionConstraint,
     );
   }
 
@@ -1927,10 +1945,15 @@ export class TokenRouter {
     requestedModel: string,
     excludeChannelIds: number[] = [],
     downstreamPolicy: DownstreamRoutingPolicy = DEFAULT_DOWNSTREAM_POLICY,
+    selectionConstraint?: TokenRouterSelectionConstraint,
   ): Promise<RouteDecisionExplanation> {
     await ensureSiteRuntimeHealthStateLoaded();
     const match = await this.findRoute(requestedModel, downstreamPolicy);
-    return this.explainSelectionFromMatch(match, requestedModel, { excludeChannelIds, downstreamPolicy });
+    return this.explainSelectionFromMatch(match, requestedModel, {
+      excludeChannelIds,
+      downstreamPolicy,
+      selectionConstraint,
+    });
   }
 
   async explainSelectionForRoute(
@@ -2037,6 +2060,13 @@ export class TokenRouter {
         excludeChannelIds,
         nowIso,
         downstreamPolicy,
+        selectionConstraint: options.selectionConstraint,
+        resolvedModel: resolveActualModelForSelectedChannel(
+          requestedModel,
+          match.route,
+          mappedModel,
+          row.channel.sourceModel,
+        ),
       });
 
       const recentlyFailed = routeStrategy !== 'round_robin'
@@ -2048,6 +2078,7 @@ export class TokenRouter {
         accountId: row.account.id,
         username: row.account.username || `account-${row.account.id}`,
         siteName: row.site.name || 'unknown',
+        imageProvider: row.site.imageProvider || 'openai-compatible',
         tokenName: row.token?.name || 'default',
         priority: row.channel.priority ?? 0,
         weight: row.channel.weight ?? 10,
@@ -2869,6 +2900,7 @@ export class TokenRouter {
     downstreamPolicy: DownstreamRoutingPolicy,
     excludeChannelIds: number[] = [],
     recordSelection = true,
+    selectionConstraint?: TokenRouterSelectionConstraint,
   ): Promise<SelectedChannel | null> {
     const mappedModel = resolveMappedModel(requestedModel, match.route.modelMapping);
     const requestedByDisplayName = isRouteDisplayNameMatch(requestedModel, match.route.displayName);
@@ -2887,6 +2919,13 @@ export class TokenRouter {
         excludeChannelIds,
         nowIso,
         downstreamPolicy,
+        selectionConstraint,
+        resolvedModel: resolveActualModelForSelectedChannel(
+          requestedModel,
+          match.route,
+          mappedModel,
+          candidate.channel.sourceModel,
+        ),
       }).length === 0
     ));
 
@@ -3081,6 +3120,7 @@ export class TokenRouter {
     downstreamPolicy: DownstreamRoutingPolicy,
     excludeChannelIds: number[] = [],
     recordSelection = true,
+    selectionConstraint?: TokenRouterSelectionConstraint,
   ): Promise<SelectedChannel | null> {
     const mappedModel = resolveMappedModel(requestedModel, match.route.modelMapping);
     const requestedByDisplayName = isRouteDisplayNameMatch(requestedModel, match.route.displayName);
@@ -3099,6 +3139,13 @@ export class TokenRouter {
         excludeChannelIds,
         nowIso,
         downstreamPolicy,
+        selectionConstraint,
+        resolvedModel: resolveActualModelForSelectedChannel(
+          requestedModel,
+          match.route,
+          mappedModel,
+          candidate.channel.sourceModel,
+        ),
       }).length === 0
     ));
 
@@ -3233,6 +3280,15 @@ export class TokenRouter {
     if (isOauthRouteUnitMemberCoolingDown(memberCandidate.member, nowIso)) {
       reasonParts.push('冷却中');
     }
+
+    const dispatchCandidate = this.buildRouteUnitMemberDispatchCandidate(outerCandidate, memberCandidate);
+    const constraintReason = options.selectionConstraint?.({
+      channel: outerCandidate.channel,
+      account: dispatchCandidate.account,
+      site: dispatchCandidate.site,
+      modelName: options.resolvedModel ?? options.requestedModel,
+    });
+    if (constraintReason) reasonParts.push(constraintReason);
 
     return reasonParts;
   }
@@ -3479,6 +3535,14 @@ export class TokenRouter {
     if (candidate.channel.cooldownUntil && candidate.channel.cooldownUntil > nowIso) {
       reasonParts.push('冷却中');
     }
+
+    const constraintReason = options.selectionConstraint?.({
+      channel: candidate.channel,
+      account: candidate.account,
+      site: candidate.site,
+      modelName: options.resolvedModel ?? options.requestedModel,
+    });
+    if (constraintReason) reasonParts.push(constraintReason);
 
     return reasonParts;
   }

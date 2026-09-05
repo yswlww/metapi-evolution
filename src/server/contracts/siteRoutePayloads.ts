@@ -18,6 +18,7 @@ const siteCreatePayloadSchema = z.object({
   sortOrder: unknownField,
   globalWeight: unknownField,
   maxConcurrency: z.unknown().optional(),
+  imageProvider: z.unknown().optional(),
 }).passthrough();
 
 const siteUpdatePayloadSchema = z.object({
@@ -34,6 +35,7 @@ const siteUpdatePayloadSchema = z.object({
   sortOrder: unknownField,
   globalWeight: unknownField,
   maxConcurrency: z.unknown().optional(),
+  imageProvider: z.unknown().optional(),
 }).passthrough();
 
 const siteBatchPayloadSchema = z.object({

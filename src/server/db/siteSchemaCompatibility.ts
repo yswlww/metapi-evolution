@@ -37,6 +37,14 @@ export const SITE_COLUMN_COMPATIBILITY_SPECS: SiteColumnCompatibilitySpec[] = [
     },
   },
   {
+    column: 'image_provider',
+    addSql: {
+      sqlite: 'ALTER TABLE sites ADD COLUMN image_provider text;',
+      mysql: 'ALTER TABLE `sites` ADD COLUMN `image_provider` TEXT NULL',
+      postgres: 'ALTER TABLE "sites" ADD COLUMN "image_provider" TEXT',
+    },
+  },
+  {
     column: 'use_system_proxy',
     addSql: {
       sqlite: 'ALTER TABLE sites ADD COLUMN use_system_proxy integer DEFAULT 0;',

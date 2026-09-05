@@ -1,0 +1,1 @@
+ALTER TABLE `sites` ADD `image_provider` text;

@@ -67,6 +67,7 @@ type SiteRow = {
   customHeadersOverrideRequestHeaders?: boolean | null;
   globalWeight?: number;
   maxConcurrency?: number | null;
+  imageProvider?: string | null;
   isPinned?: boolean;
   sortOrder?: number;
   totalBalance?: number;
@@ -442,7 +443,7 @@ export default function Sites() {
       ];
     const presetOptions = initializationPresetOptions.map((preset) => ({
       value: `preset:${preset.id}`,
-      label: preset.label,
+      label: tr(preset.label),
       description: [
         preset.defaultUrl ? '自动填充官方地址' : '',
         preset.recommendedSkipModelFetch ? 'API Key 优先初始化' : '',
@@ -782,6 +783,7 @@ export default function Sites() {
       customHeadersOverrideRequestHeaders: !!form.customHeadersOverrideRequestHeaders,
       globalWeight: Number(parsedGlobalWeight.toFixed(3)),
       maxConcurrency: normalizedMaxConcurrency.value,
+      imageProvider: form.imageProvider || 'openai-compatible',
       postRefreshProbeEnabled: probeEnabled,
       postRefreshProbeModel: probeModel.trim(),
       postRefreshProbeScope: probeScope,
@@ -982,6 +984,7 @@ export default function Sites() {
         setForm((prev) => ({
           ...prev,
           platform: result.platform,
+          imageProvider: detectedPreset?.imageProvider || prev.imageProvider,
           url: requestedPrimarySiteUrl.action === 'auto_strip_known_api_suffix'
             && typeof result?.url === 'string'
             && result.url.trim()
@@ -1391,6 +1394,7 @@ export default function Sites() {
                       return {
                         ...prev,
                         platform: preset.platform,
+                        imageProvider: preset.imageProvider || prev.imageProvider,
                         url: shouldFillDefaultUrl && preset.defaultUrl ? preset.defaultUrl : prev.url,
                       };
                     });
@@ -1975,6 +1979,25 @@ export default function Sites() {
               <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
                 越大越容易被路由选中。建议 0.5-3，默认 1。
               </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label>
+                <span>图片供应商</span>
+                <ModernSelect
+                  data-testid="site-image-provider-select"
+                  value={form.imageProvider}
+                  onChange={(value) => setForm((prev) => ({ ...prev, imageProvider: value }))}
+                  options={[
+                    { value: 'openai-compatible', label: 'OpenAI 兼容（默认）' },
+                    { value: 'zhipu', label: '智谱图片 API' },
+                    { value: 'volcengine', label: '火山引擎 / 豆包图片 API' },
+                    { value: 'minimax', label: 'MiniMax 图片 API' },
+                    { value: 'dashscope', label: '阿里云 DashScope 图片 API' },
+                    { value: 'gemini-imagen', label: 'Gemini Image / Nano Banana' },
+                  ]}
+                />
+                <small>仅影响标准图片生成与编辑路由；普通中转站请保留 OpenAI 兼容。</small>
+              </label>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <label>

@@ -23,6 +23,7 @@ import { getOrcaRouterTokenTransportError } from '../../services/orcarouterTrans
 import { probeSiteModels } from '../../services/modelService.js';
 import { normalizeSiteMaxConcurrency } from '../../../shared/siteMaxConcurrency.js';
 import { proxyChannelCoordinator } from '../../services/proxyChannelCoordinator.js';
+import { IMAGE_PROVIDER_IDS, normalizeImageProviderId } from '../../services/imageProviders/registry.js';
 
 function sseWrite(raw: import('http').ServerResponse, event: string, data: unknown) {
   try { raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* ignore */ }
@@ -68,6 +69,16 @@ function normalizeGlobalWeight(input: unknown): number | null {
   const parsed = Number(input);
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
   return Math.max(0.01, Math.min(100, Number(parsed.toFixed(3))));
+}
+
+function normalizeSiteImageProvider(input: unknown): { valid: boolean; value: string | null } {
+  if (input === undefined || input === null) return { valid: true, value: null };
+  if (typeof input !== 'string') return { valid: false, value: null };
+  if (!input.trim()) return { valid: true, value: null };
+  const normalized = normalizeImageProviderId(input);
+  return normalized
+    ? { valid: true, value: normalized }
+    : { valid: false, value: null };
 }
 
 function normalizeOptionalExternalCheckinUrl(input: unknown): {
@@ -506,6 +517,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       sortOrder,
       globalWeight,
       maxConcurrency,
+      imageProvider,
       apiEndpoints,
     } = createBody;
     const hasMaxConcurrency = Object.prototype.hasOwnProperty.call(createBody, 'maxConcurrency');
@@ -516,6 +528,10 @@ export async function sitesRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: maxConcurrencyResult.error });
     }
     const normalizedMaxConcurrency = maxConcurrencyResult?.ok ? maxConcurrencyResult.value : null;
+    const normalizedImageProvider = normalizeSiteImageProvider(imageProvider);
+    if (!normalizedImageProvider.valid) {
+      return reply.code(400).send({ error: `Invalid imageProvider. Expected one of: ${IMAGE_PROVIDER_IDS.join(', ')}.` });
+    }
     const normalizedStatus = normalizeSiteStatus(status);
     if (status !== undefined && !normalizedStatus) {
       return reply.code(400).send({ error: 'Invalid site status. Expected active or disabled.' });
@@ -612,6 +628,7 @@ export async function sitesRoutes(app: FastifyInstance) {
           name,
           url: canonicalUrl,
           maxConcurrency: normalizedMaxConcurrency,
+          imageProvider: normalizedImageProvider.value,
           platform: detectedPlatform,
           proxyUrl: normalizedProxyUrl.proxyUrl,
           useSystemProxy: normalizedUseSystemProxy ?? false,
@@ -678,11 +695,18 @@ export async function sitesRoutes(app: FastifyInstance) {
     const updates: any = {};
     const body = parsedBody.data as typeof parsedBody.data & { apiEndpoints?: unknown };
     const hasMaxConcurrency = Object.prototype.hasOwnProperty.call(body, 'maxConcurrency');
+    const hasImageProvider = Object.prototype.hasOwnProperty.call(body, 'imageProvider');
     const maxConcurrencyResult = hasMaxConcurrency
       ? normalizeSiteMaxConcurrency(body.maxConcurrency)
       : null;
     if (maxConcurrencyResult && !maxConcurrencyResult.ok) {
       return reply.code(400).send({ error: maxConcurrencyResult.error });
+    }
+    const normalizedImageProvider = hasImageProvider
+      ? normalizeSiteImageProvider(body.imageProvider)
+      : null;
+    if (normalizedImageProvider && !normalizedImageProvider.valid) {
+      return reply.code(400).send({ error: `Invalid imageProvider. Expected one of: ${IMAGE_PROVIDER_IDS.join(', ')}.` });
     }
     const normalizedStatus = normalizeSiteStatus(body.status);
     if (body.status !== undefined && !normalizedStatus) {
@@ -786,6 +810,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (body.sortOrder !== undefined) updates.sortOrder = normalizedSortOrder;
     if (body.globalWeight !== undefined) updates.globalWeight = normalizedGlobalWeight;
     if (hasMaxConcurrency && maxConcurrencyResult?.ok) updates.maxConcurrency = maxConcurrencyResult.value;
+    if (hasImageProvider && normalizedImageProvider?.valid) updates.imageProvider = normalizedImageProvider.value;
     const anyBody = body as Record<string, unknown>;
     if (anyBody.postRefreshProbeEnabled !== undefined) updates.postRefreshProbeEnabled = anyBody.postRefreshProbeEnabled === true || anyBody.postRefreshProbeEnabled === 1;
     if (anyBody.postRefreshProbeModel !== undefined) updates.postRefreshProbeModel = String(anyBody.postRefreshProbeModel || '').trim();

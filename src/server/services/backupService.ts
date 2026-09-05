@@ -7,6 +7,7 @@ import { mergeAccountExtraConfig } from './accountExtraConfig.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { PLATFORM_ALIASES, detectPlatformByUrlHint } from '../../shared/platformIdentity.js';
 import { normalizeSiteMaxConcurrency } from '../../shared/siteMaxConcurrency.js';
+import { IMAGE_PROVIDER_IDS, normalizeImageProviderId } from './imageProviders/registry.js';
 
 const BACKUP_VERSION = '2.1';
 
@@ -751,6 +752,7 @@ function buildAllApiHubV2AccountsSection(data: RawBackupData): {
       name: asString(input.name) || normalizedUrl,
       url: normalizedUrl,
       maxConcurrency: null,
+      imageProvider: null,
       externalCheckinUrl: null,
       platform: input.platform,
       proxyUrl: null,
@@ -1000,6 +1002,7 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
         name: siteName,
         url: siteUrl,
         maxConcurrency: null,
+        imageProvider: null,
         externalCheckinUrl: null,
         platform,
         proxyUrl: null,
@@ -1447,12 +1450,24 @@ function normalizeImportedSiteMaxConcurrency(row: Record<string, unknown>): numb
   return result.value;
 }
 
+function normalizeImportedSiteImageProvider(row: Record<string, unknown>): SiteRow['imageProvider'] {
+  if (!Object.prototype.hasOwnProperty.call(row, 'imageProvider')) return null;
+  const raw = row.imageProvider;
+  if (raw === null || raw === undefined || (typeof raw === 'string' && !raw.trim())) return null;
+  const normalized = normalizeImageProviderId(raw);
+  if (!normalized) {
+    throw new Error(`Invalid imageProvider. Expected one of: ${IMAGE_PROVIDER_IDS.join(', ')}.`);
+  }
+  return normalized;
+}
+
 function normalizeImportedAccountsSection(section: AccountsBackupSection): AccountsBackupSection {
   return {
     ...section,
     sites: section.sites.map((row) => ({
       ...row,
       maxConcurrency: normalizeImportedSiteMaxConcurrency(row),
+      imageProvider: normalizeImportedSiteImageProvider(row),
     })),
   };
 }
@@ -1596,6 +1611,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         name: row.name,
         url: row.url,
         maxConcurrency: row.maxConcurrency,
+        imageProvider: row.imageProvider ?? null,
         externalCheckinUrl: row.externalCheckinUrl ?? null,
         platform: row.platform,
         proxyUrl: row.proxyUrl ?? null,

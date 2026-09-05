@@ -21,6 +21,7 @@ export type SiteInitializationPreset = {
   providerLabel: string;
   description: string;
   platform: string;
+  imageProvider?: 'openai-compatible' | 'zhipu' | 'volcengine' | 'minimax' | 'dashscope' | 'gemini-imagen';
   defaultUrl?: string;
   initialSegment: 'session' | 'apikey';
   recommendedSkipModelFetch: boolean;

@@ -7,16 +7,13 @@ import { isTokenExpiredError } from '../../services/alertRules.js';
 import { estimateProxyCost } from '../../services/modelPricingService.js';
 import { shouldRetryProxyRequest } from '../../services/proxyRetryPolicy.js';
 import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from '../../services/downstreamRoutingPolicy.js';
-import { withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
-import { getProxyUrlFromExtraConfig } from '../../services/accountExtraConfig.js';
 import { composeProxyLogMessage } from '../../services/proxyLogMessage.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
-import { cloneFormDataWithOverrides, ensureMultipartBufferParser, parseMultipartFormData } from '../../services/multipartFormData.js';
+import { ensureMultipartBufferParser, parseMultipartFormData } from '../../services/multipartFormData.js';
 import { getProxyAuthContext } from '../../middleware/auth.js';
-import { buildUpstreamUrl } from './upstreamUrl.js';
 import { detectDownstreamClientContext, type DownstreamClientContext } from '../../proxy-core/downstreamClientContext.js';
 import { insertProxyLog } from '../../services/proxyLogStore.js';
-import { fetchWithObservedFirstByte, getObservedResponseMeta } from '../../proxy-core/firstByteTimeout.js';
+import { fetchWithObservedFirstByte } from '../../proxy-core/firstByteTimeout.js';
 import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
 import { runWithProxySiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
 import {
@@ -24,6 +21,12 @@ import {
   isSiteConcurrencyLimitError,
   replySiteConcurrencyLimit,
 } from './siteConcurrencyBoundary.js';
+import {
+  executeImageProviderAttempt,
+  getImageAttemptFirstByteLatencyMs,
+  normalizeImageProviderResponse,
+} from '../../services/imageProviderRequest.js';
+import type { NeutralImageRequest } from '../../services/imageProviderRequest.js';
 import {
   buildForcedChannelUnavailableMessage,
   canRetryChannelSelection,
@@ -51,8 +54,14 @@ export async function imagesProxyRoute(app: FastifyInstance) {
       body,
     });
     const firstByteTimeoutMs = Math.max(0, Math.trunc((config.proxyFirstByteTimeoutSec || 0) * 1000));
+    const neutralRequest: NeutralImageRequest = {
+      operation: 'generate',
+      requestedModel,
+      jsonBody: body as Record<string, unknown>,
+    };
     const excludeChannelIds: number[] = [];
     let retryCount = 0;
+    let imageEligibilityReason: string | null = null;
 
     while (retryCount <= getProxyMaxChannelRetries()) {
       const selected = await selectProxyChannelForAttempt({
@@ -61,10 +70,12 @@ export async function imagesProxyRoute(app: FastifyInstance) {
         excludeChannelIds,
         retryCount,
         forcedChannelId,
+        imageOperation: 'generate',
+        onImageEligibilityRejected: (reason) => { imageEligibilityReason = reason; },
       });
 
       if (!selected) {
-        const noChannelMessage = buildForcedChannelUnavailableMessage(forcedChannelId);
+        const noChannelMessage = buildForcedChannelUnavailableMessage(forcedChannelId, imageEligibilityReason);
         await reportProxyAllFailed({
           model: requestedModel,
           reason: forcedChannelId ? noChannelMessage : 'No available channels after retries',
@@ -76,48 +87,51 @@ export async function imagesProxyRoute(app: FastifyInstance) {
 
       excludeChannelIds.push(selected.channel.id);
       const upstreamModel = selected.actualModel || requestedModel;
-      const forwardBody = { ...body, model: upstreamModel };
       const startTime = Date.now();
       const abort = createProxyRequestAbortSignal(request, reply);
 
       try {
-        const { upstream, text, firstByteLatencyMs } = await runWithProxySiteApiEndpointPool(selected.site, async (target, lease) => {
+        const { upstream, text, firstByteLatencyMs, provider } = await runWithProxySiteApiEndpointPool(selected.site, async (target, lease) => {
           const attemptStartedAtMs = Date.now();
-          const targetUrl = buildUpstreamUrl(target.baseUrl, '/v1/images/generations');
-          const response = await fetchWithObservedFirstByte(
-            async (signal) => fetch(targetUrl, withSiteRecordProxyRequestInit(selected.site, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${selected.tokenValue}`,
-              },
-              body: JSON.stringify(forwardBody),
-              signal: signal
-                ? AbortSignal.any([abort.signal, signal])
-                : abort.signal,
-            }, getProxyUrlFromExtraConfig(selected.account.extraConfig))),
-            {
-              firstByteTimeoutMs,
-              startedAtMs: attemptStartedAtMs,
-            },
-          );
-          const observedFirstByteLatencyMs = getObservedResponseMeta(response)?.firstByteLatencyMs ?? null;
-          const responseText = await response.text();
-          if (!response.ok) {
+          const attempt = await executeImageProviderAttempt({
+            selected,
+            target,
+            request: neutralRequest,
+            signal: abort.signal,
+            fetchRequest: (url, init) => fetchWithObservedFirstByte(
+              async (signal) => fetch(url, {
+                ...(init as any),
+                signal: signal
+                  ? AbortSignal.any([abort.signal, signal])
+                  : abort.signal,
+              }),
+              { firstByteTimeoutMs, startedAtMs: attemptStartedAtMs },
+            ),
+          });
+          const observedFirstByteLatencyMs = getImageAttemptFirstByteLatencyMs(attempt.response);
+          const responseText = await attempt.response.text();
+          if (!attempt.response.ok) {
             throw new SiteApiEndpointRequestError(responseText || 'unknown error', {
-              status: response.status,
+              status: attempt.response.status,
               rawErrText: responseText || null,
               firstByteLatencyMs: observedFirstByteLatencyMs,
             });
           }
           return {
-            upstream: response,
+            upstream: attempt.response,
+            provider: attempt.provider,
             text: responseText,
             firstByteLatencyMs: observedFirstByteLatencyMs,
           };
         }, { signal: abort.signal });
 
-        const data = parseUpstreamImageResponse(text);
+        const data = normalizeImageProviderResponse({
+          provider,
+          operation: neutralRequest.operation,
+          modelName: upstreamModel,
+          response: upstream,
+          bodyText: text,
+        });
         if (!data.ok) {
           await recordTokenRouterEventBestEffort('record malformed upstream response', () => tokenRouter.recordFailure(selected.channel.id, {
             status: 502,
@@ -264,8 +278,15 @@ export async function imagesProxyRoute(app: FastifyInstance) {
       body: jsonBody || Object.fromEntries(multipartForm?.entries?.() || []),
     });
     const firstByteTimeoutMs = Math.max(0, Math.trunc((config.proxyFirstByteTimeoutSec || 0) * 1000));
+    const neutralRequest: NeutralImageRequest = {
+      operation: 'edit',
+      requestedModel,
+      jsonBody: jsonBody || undefined,
+      multipartForm: multipartForm || undefined,
+    };
     const excludeChannelIds: number[] = [];
     let retryCount = 0;
+    let imageEligibilityReason: string | null = null;
 
     while (retryCount <= getProxyMaxChannelRetries()) {
       const selected = await selectProxyChannelForAttempt({
@@ -274,10 +295,12 @@ export async function imagesProxyRoute(app: FastifyInstance) {
         excludeChannelIds,
         retryCount,
         forcedChannelId,
+        imageOperation: 'edit',
+        onImageEligibilityRejected: (reason) => { imageEligibilityReason = reason; },
       });
 
       if (!selected) {
-        const noChannelMessage = buildForcedChannelUnavailableMessage(forcedChannelId);
+        const noChannelMessage = buildForcedChannelUnavailableMessage(forcedChannelId, imageEligibilityReason);
         await reportProxyAllFailed({
           model: requestedModel,
           reason: forcedChannelId ? noChannelMessage : 'No available channels after retries',
@@ -293,59 +316,47 @@ export async function imagesProxyRoute(app: FastifyInstance) {
       const abort = createProxyRequestAbortSignal(request, reply);
 
       try {
-        const { upstream, text, firstByteLatencyMs } = await runWithProxySiteApiEndpointPool(selected.site, async (target, lease) => {
+        const { upstream, text, firstByteLatencyMs, provider } = await runWithProxySiteApiEndpointPool(selected.site, async (target, lease) => {
           const attemptStartedAtMs = Date.now();
-          const targetUrl = buildUpstreamUrl(target.baseUrl, '/v1/images/edits');
-          const requestInit = multipartForm
-            ? withSiteRecordProxyRequestInit(selected.site, {
-              method: 'POST',
-              headers: {
-                Authorization: `Bearer ${selected.tokenValue}`,
-              },
-              body: cloneFormDataWithOverrides(multipartForm, {
-                model: upstreamModel,
-              }) as any,
-            }, getProxyUrlFromExtraConfig(selected.account.extraConfig))
-            : withSiteRecordProxyRequestInit(selected.site, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${selected.tokenValue}`,
-              },
-              body: JSON.stringify({
-                ...(jsonBody || {}),
-                model: upstreamModel,
+          const attempt = await executeImageProviderAttempt({
+            selected,
+            target,
+            request: neutralRequest,
+            signal: abort.signal,
+            fetchRequest: (url, init) => fetchWithObservedFirstByte(
+              async (signal) => fetch(url, {
+                ...(init as any),
+                signal: signal
+                  ? AbortSignal.any([abort.signal, signal])
+                  : abort.signal,
               }),
-            }, getProxyUrlFromExtraConfig(selected.account.extraConfig));
-          const response = await fetchWithObservedFirstByte(
-            async (signal) => fetch(targetUrl, {
-              ...requestInit,
-              signal: signal
-                ? AbortSignal.any([abort.signal, signal])
-                : abort.signal,
-            }),
-            {
-              firstByteTimeoutMs,
-              startedAtMs: attemptStartedAtMs,
-            },
-          );
-          const observedFirstByteLatencyMs = getObservedResponseMeta(response)?.firstByteLatencyMs ?? null;
-          const responseText = await response.text();
-          if (!response.ok) {
+              { firstByteTimeoutMs, startedAtMs: attemptStartedAtMs },
+            ),
+          });
+          const observedFirstByteLatencyMs = getImageAttemptFirstByteLatencyMs(attempt.response);
+          const responseText = await attempt.response.text();
+          if (!attempt.response.ok) {
             throw new SiteApiEndpointRequestError(responseText || 'unknown error', {
-              status: response.status,
+              status: attempt.response.status,
               rawErrText: responseText || null,
               firstByteLatencyMs: observedFirstByteLatencyMs,
             });
           }
           return {
-            upstream: response,
+            upstream: attempt.response,
+            provider: attempt.provider,
             text: responseText,
             firstByteLatencyMs: observedFirstByteLatencyMs,
           };
         }, { signal: abort.signal });
 
-        const data = parseUpstreamImageResponse(text);
+        const data = normalizeImageProviderResponse({
+          provider,
+          operation: neutralRequest.operation,
+          modelName: upstreamModel,
+          response: upstream,
+          bodyText: text,
+        });
         if (!data.ok) {
           await recordTokenRouterEventBestEffort('record malformed upstream response', () => tokenRouter.recordFailure(selected.channel.id, {
             status: 502,
@@ -542,13 +553,5 @@ async function recordTokenRouterEventBestEffort(
     await operation();
   } catch (error) {
     console.warn(`[proxy/images] failed to ${label}`, error);
-  }
-}
-
-function parseUpstreamImageResponse(text: string): { ok: true; value: any } | { ok: false; message: string } {
-  try {
-    return { ok: true, value: JSON.parse(text) };
-  } catch {
-    return { ok: false, message: text || 'Upstream returned malformed JSON' };
   }
 }

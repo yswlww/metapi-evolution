@@ -1,1 +1,1 @@
-ALTER TABLE `sites` ADD COLUMN `max_concurrency` INT;
+ALTER TABLE `sites` ADD COLUMN `image_provider` TEXT;

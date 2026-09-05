@@ -7,6 +7,12 @@ import {
 } from './siteInitializationPresets.js';
 
 describe('siteInitializationPresets', () => {
+  it('only opts known native image endpoints into a provider', () => {
+    expect(getSiteInitializationPreset('minimax-openai')?.imageProvider).toBe('minimax');
+    expect(getSiteInitializationPreset('minimax-claude')?.imageProvider).toBeUndefined();
+    expect(getSiteInitializationPreset('codingplan-openai')?.imageProvider).toBeUndefined();
+  });
+
   it('exposes vendor presets with recommended API-key-first initialization', () => {
     const presetIds = listSiteInitializationPresets().map((preset) => preset.id);
     expect(presetIds).toEqual(expect.arrayContaining([

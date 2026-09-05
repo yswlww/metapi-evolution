@@ -11,6 +11,12 @@ import {
 import { normalizeSiteMaxConcurrency } from '../../../shared/siteMaxConcurrency.js';
 
 describe('buildSiteSaveAction', () => {
+  it('hydrates image provider configuration with a compatibility default', () => {
+    expect(siteFormFromSite({ imageProvider: 'minimax' })).toMatchObject({ imageProvider: 'minimax' });
+    expect(siteFormFromSite({ imageProvider: null })).toMatchObject({ imageProvider: 'openai-compatible' });
+    expect(emptySiteForm()).toMatchObject({ imageProvider: 'openai-compatible' });
+  });
+
   it('hydrates site concurrency values as editable values', () => {
     expect(siteFormFromSite({ maxConcurrency: 7 })).toMatchObject({ maxConcurrency: '7' });
     expect(siteFormFromSite({ maxConcurrency: null })).toMatchObject({ maxConcurrency: '0' });
@@ -37,11 +43,12 @@ describe('buildSiteSaveAction', () => {
       customHeadersOverrideRequestHeaders: false,
       globalWeight: 1,
       maxConcurrency: 7,
+      imageProvider: 'minimax',
     };
 
     expect(buildSiteSaveAction({ mode: 'add' }, form)).toMatchObject({
       kind: 'add',
-      payload: { maxConcurrency: 7 },
+      payload: { maxConcurrency: 7, imageProvider: 'minimax' },
     });
   });
 
