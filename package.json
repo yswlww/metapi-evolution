@@ -91,7 +91,7 @@
     "rate-limiter-flexible": "^11.1.0",
     "socks": "^2.8.9",
     "undici": "^6.25.0",
-    "ws": "^8.20.1",
+    "ws": "^8.21.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {
