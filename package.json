@@ -86,7 +86,7 @@
     "minimist": "^1.2.8",
     "mysql2": "^3.22.3",
     "node-cron": "^4.2.1",
-    "nodemailer": "^8.0.4",
+    "nodemailer": "^9.0.1",
     "pg": "^8.16.3",
     "rate-limiter-flexible": "^11.1.0",
     "socks": "^2.8.9",
