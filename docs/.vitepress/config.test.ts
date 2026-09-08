@@ -64,6 +64,10 @@ describe('docs vitepress config', () => {
     expect(existsSync(resolve(repoRoot, 'docs/public/favicon.ico'))).toBe(true);
   });
 
+  it('builds under the GitHub Pages subpath', () => {
+    expect(config.base).toBe('/metapi-evolution/');
+  });
+
   it('declares the main-app favicon assets in docs head tags', () => {
     const iconLinks =
       config.head?.filter(

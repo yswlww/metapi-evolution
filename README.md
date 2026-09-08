@@ -446,7 +446,7 @@ Metapi 完全自托管，所有数据（账号、令牌、路由、日志）均�
 
 ### 独立维护与兼容性
 
-本分支由社区维护者根据自身使用需求独立开发，[`yswlww/metapi-evolution`](https://github.com/yswlww/metapi-evolution) 是本独立演进分支的维护入口，承载后续开发、Issue、Pull Request 与 Release。自迁移以来，桌面版已改以独立身份发布：应用 ID 为 `io.github.yswlww.metapi.desktop`，产品名称为 `Metapi-Evolution`；桌面版数据目录保持兼容（沿用原 `Metapi` 数据目录），但早期桌面版不会通过自动更新迁移到新身份，需要手动安装新版本。Docker 镜像 `kennethww/metapi`、npm 包名 `metapi`、服务器端配置、环境变量、数据目录与升级路径均保持不变。
+本分支由社区维护者根据自身使用需求独立开发，[`yswlww/metapi-evolution`](https://github.com/yswlww/metapi-evolution) 是本独立演进分支的维护入口，承载后续开发、Issue、Pull Request 与 Release。自迁移以来，桌面版已改以独立身份发布：应用 ID 为 `io.github.yswlww.metapi.desktop`，产品名称为 `Metapi-Evolution`；桌面版数据目录保持兼容（沿用原 `Metapi` 数据目录），但早期桌面版不会通过自动更新迁移到新身份，需要手动安装新版本。Docker 镜像 `kennethww/metapi`、npm 包名 `metapi`、服务器端配置、环境变量、数据目录与升级路径均保持不变。另外，新旧桌面版共用同一数据目录，请先退出旧版桌面应用（包括托盘常驻）再启动新版本，否则新实例会因单实例锁直接退出。
 
 ### 上游参考政策
 
