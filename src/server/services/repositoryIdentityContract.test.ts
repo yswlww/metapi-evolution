@@ -11,6 +11,8 @@ describe('repositoryIdentityContract', () => {
     expect(pkg.repository?.url).toBe('https://github.com/yswlww/metapi-evolution.git');
     expect(pkg.bugs?.url).toBe('https://github.com/yswlww/metapi-evolution/issues');
     expect(pkg.homepage).toBe('https://github.com/yswlww/metapi-evolution#readme');
+    expect(pkg.author?.name).toBe('yswlww');
+    expect(pkg.author?.email).toBe('yswlww@users.noreply.github.com');
   });
 
   it('verifies render.yaml repo URL points to yswlww/metapi-evolution', () => {
