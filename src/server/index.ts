@@ -263,11 +263,11 @@ if (existsSync(webDir)) {
     setHeaders: (res, filePath) => {
       const normalizedPath = normalize(filePath);
       if (normalizedPath.includes(`${sep}assets${sep}`)) {
-        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        (res as unknown as import('node:http').ServerResponse).setHeader('Cache-Control', 'public, max-age=31536000, immutable');
         return;
       }
       if (normalizedPath.endsWith(`${sep}index.html`)) {
-        res.setHeader('Cache-Control', 'no-cache');
+        (res as unknown as import('node:http').ServerResponse).setHeader('Cache-Control', 'no-cache');
       }
     },
   });
