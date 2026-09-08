@@ -28,6 +28,15 @@ describe('repositoryIdentityContract', () => {
     expect(content).toContain('https://api.github.com/repos/yswlww/metapi-evolution/releases');
   });
 
+  it('verifies electron-builder identity points to yswlww-owned destinations', () => {
+    const content = readFileSync(resolve(rootDir, 'electron-builder.yml'), 'utf8');
+    expect(content).toContain('appId: io.github.yswlww.metapi.desktop');
+    expect(content).toContain('productName: Metapi-Evolution');
+    expect(content).toContain('owner: yswlww');
+    expect(content).toContain('repo: metapi-evolution');
+    expect(content).not.toContain('cita777');
+  });
+
   it('verifies About.tsx links point to yswlww/metapi-evolution and version 1.4.2', () => {
     const content = readFileSync(resolve(rootDir, 'src/web/pages/About.tsx'), 'utf8');
     expect(content).toContain('https://github.com/yswlww/metapi-evolution');

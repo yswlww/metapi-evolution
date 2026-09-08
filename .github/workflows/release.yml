@@ -176,7 +176,7 @@ jobs:
           ELECTRON_RUN_AS_NODE: 1
         run: |
           $appRoot = Join-Path $PWD 'release\win-unpacked\resources\app'
-          $exePath = Join-Path $PWD 'release\win-unpacked\Metapi.exe'
+          $exePath = Join-Path $PWD 'release\win-unpacked\Metapi-Evolution.exe'
           Push-Location $appRoot
           try {
             & $exePath -e "require('./node_modules/better-sqlite3'); console.log('better-sqlite3 ok')"
