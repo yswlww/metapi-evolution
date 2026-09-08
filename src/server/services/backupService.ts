@@ -1,5 +1,5 @@
 import { asc, eq } from 'drizzle-orm';
-import cron from 'node-cron';
+import cron, { type ScheduledTask } from 'node-cron';
 import { db, schema } from '../db/index.js';
 import { requireInsertedRowId } from '../db/insertHelpers.js';
 import { upsertSetting } from '../db/upsertSetting.js';
@@ -244,7 +244,7 @@ const BACKUP_WEBDAV_CONFIG_SETTING_KEY = 'backup_webdav_config_v1';
 const BACKUP_WEBDAV_STATE_SETTING_KEY = 'backup_webdav_state_v1';
 const BACKUP_WEBDAV_DEFAULT_AUTO_SYNC_CRON = '0 */6 * * *';
 const BACKUP_WEBDAV_FETCH_TIMEOUT_MS = 15_000;
-let backupWebdavTask: cron.ScheduledTask | null = null;
+let backupWebdavTask: ScheduledTask | null = null;
 
 const DIRECT_API_PLATFORMS = new Set([
   'openai',
