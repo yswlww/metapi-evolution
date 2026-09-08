@@ -64,11 +64,11 @@ describe('desktop navigation guard', () => {
     });
 
     const result = harness.getOpenHandler()({
-      url: 'https://metapi.cita777.me',
+      url: 'https://yswlww.github.io/metapi-evolution',
     });
 
     expect(result).toEqual({ action: 'deny' });
-    expect(openExternal).toHaveBeenCalledWith('https://metapi.cita777.me');
+    expect(openExternal).toHaveBeenCalledWith('https://yswlww.github.io/metapi-evolution');
   });
 
   it('prevents same-window cross-origin navigations and opens them externally', () => {

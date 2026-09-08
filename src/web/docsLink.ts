@@ -1,2 +1,2 @@
-export const SITE_DOCS_URL = 'https://metapi.cita777.me';
-export const SITE_GITHUB_URL = 'https://github.com/cita-777';
+export const SITE_DOCS_URL = 'https://yswlww.github.io/metapi-evolution';
+export const SITE_GITHUB_URL = 'https://github.com/yswlww/metapi-evolution';
