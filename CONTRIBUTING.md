@@ -213,7 +213,7 @@ If you're adding support for a new AI API platform / 如果您要添加对新 AI
 
 ## Getting Help / 获取帮助
 
-- 📖 [Documentation](https://metapi.cita777.me) / [文档](https://metapi.cita777.me)
+- 📖 [Documentation](https://yswlww.github.io/metapi-evolution) / [文档](https://yswlww.github.io/metapi-evolution)
 - 💬 [GitHub Discussions](https://github.com/yswlww/metapi-evolution/discussions) / [GitHub 讨论区](https://github.com/yswlww/metapi-evolution/discussions)
 - 🐛 [Issue Tracker](https://github.com/yswlww/metapi-evolution/issues) / [Issue 跟踪](https://github.com/yswlww/metapi-evolution/issues)
 
