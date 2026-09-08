@@ -36,7 +36,7 @@ describe('About update center', () => {
       githubRelease: {
         normalizedVersion: '1.3.0',
         displayVersion: '1.3.0',
-        url: 'https://github.com/cita-777/metapi/releases/tag/v1.3.0',
+        url: 'https://github.com/yswlww/metapi-evolution/releases/tag/v1.3.0',
       },
       dockerHubTag: {
         normalizedVersion: 'latest',
