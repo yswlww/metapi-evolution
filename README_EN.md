@@ -48,12 +48,12 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 </p>
 
 <p align="center">
-  <a href="https://metapi.cita777.me"><strong>Docs</strong></a> ·
-  <a href="https://metapi.cita777.me/getting-started">Quick Start</a> ·
-  <a href="https://metapi.cita777.me/deployment">Deployment</a> ·
-  <a href="https://metapi.cita777.me/configuration">Configuration</a> ·
-  <a href="https://metapi.cita777.me/client-integration">Client Integration</a> ·
-  <a href="https://metapi.cita777.me/faq">FAQ</a> ·
+  <a href="https://yswlww.github.io/metapi-evolution"><strong>Docs</strong></a> ·
+  <a href="https://yswlww.github.io/metapi-evolution/getting-started">Quick Start</a> ·
+  <a href="https://yswlww.github.io/metapi-evolution/deployment">Deployment</a> ·
+  <a href="https://yswlww.github.io/metapi-evolution/configuration">Configuration</a> ·
+  <a href="https://yswlww.github.io/metapi-evolution/client-integration">Client Integration</a> ·
+  <a href="https://yswlww.github.io/metapi-evolution/faq">FAQ</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
@@ -570,7 +570,7 @@ Metapi is fully self-hosted. All data (accounts, tokens, routes, logs) stays in 
 
 ### Independent maintenance and compatibility
 
-This branch is developed independently by community maintainers for their own use cases. [`yswlww/metapi-evolution`](https://github.com/yswlww/metapi-evolution) is the maintenance home for this independent continuation and hosts this branch's ongoing development, issues, pull requests, and releases. The repository transition does not change the `metapi` product name, the `kennethww/metapi` Docker image, or the `me.cita777.metapi.desktop` desktop application ID, and is not intended to break compatibility with existing configuration, environment variables, data directories, or upgrade paths.
+This branch is developed independently by community maintainers for their own use cases. [`yswlww/metapi-evolution`](https://github.com/yswlww/metapi-evolution) is the maintenance home for this independent continuation and hosts this branch's ongoing development, issues, pull requests, and releases. The desktop app now ships under an independent identity: application ID `io.github.yswlww.metapi.desktop` and product name `Metapi-Evolution`, with the desktop data directory kept compatible (the legacy `Metapi` data directory is still used). Existing desktop installs do not migrate to the new identity via auto-update and must be upgraded manually. The `kennethww/metapi` Docker image, the `metapi` npm package name, server-side configuration, environment variables, data directories, and upgrade paths are unchanged. Additionally, the legacy and new desktop apps share one data directory, so quit the legacy desktop app (including its tray icon) before launching the new build — otherwise the new instance exits immediately due to the single-instance lock.
 
 ### Upstream reference policy
 

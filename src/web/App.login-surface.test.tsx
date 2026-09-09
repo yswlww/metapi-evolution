@@ -11,12 +11,12 @@ function collectText(node: ReactTestInstance): string {
 }
 
 describe('Login surface', () => {
-  it('uses the site root as the documentation URL', () => {
-    expect(SITE_DOCS_URL).toBe('https://metapi.cita777.me');
+  it('uses the GitHub Pages docs site as the documentation URL', () => {
+    expect(SITE_DOCS_URL).toBe('https://yswlww.github.io/metapi-evolution');
   });
 
-  it('uses the author github profile for the login github shortcut', () => {
-    expect(SITE_GITHUB_URL).toBe('https://github.com/cita-777');
+  it('uses the evolution repository for the login github shortcut', () => {
+    expect(SITE_GITHUB_URL).toBe('https://github.com/yswlww/metapi-evolution');
   });
 
   it('renders a poster-style hero with a floating admin login panel', () => {

@@ -64,6 +64,10 @@ describe('docs vitepress config', () => {
     expect(existsSync(resolve(repoRoot, 'docs/public/favicon.ico'))).toBe(true);
   });
 
+  it('builds under the GitHub Pages subpath', () => {
+    expect(config.base).toBe('/metapi-evolution/');
+  });
+
   it('declares the main-app favicon assets in docs head tags', () => {
     const iconLinks =
       config.head?.filter(
@@ -75,9 +79,9 @@ describe('docs vitepress config', () => {
           (entry[1].rel === 'icon' || entry[1].rel === 'shortcut icon'),
       ) ?? [];
 
-    expect(iconLinks.some((entry) => typeof entry[1] === 'object' && entry[1] !== null && 'href' in entry[1] && entry[1].href === '/favicon.png')).toBe(true);
-    expect(iconLinks.some((entry) => typeof entry[1] === 'object' && entry[1] !== null && 'href' in entry[1] && entry[1].href === '/favicon-64.png')).toBe(true);
-    expect(iconLinks.some((entry) => typeof entry[1] === 'object' && entry[1] !== null && 'href' in entry[1] && entry[1].href === '/favicon.ico')).toBe(true);
+    expect(iconLinks.some((entry) => typeof entry[1] === 'object' && entry[1] !== null && 'href' in entry[1] && entry[1].href === '/metapi-evolution/favicon.png')).toBe(true);
+    expect(iconLinks.some((entry) => typeof entry[1] === 'object' && entry[1] !== null && 'href' in entry[1] && entry[1].href === '/metapi-evolution/favicon-64.png')).toBe(true);
+    expect(iconLinks.some((entry) => typeof entry[1] === 'object' && entry[1] !== null && 'href' in entry[1] && entry[1].href === '/metapi-evolution/favicon.ico')).toBe(true);
   });
 
   it('aliases dayjs to the ESM entry for mermaid browser compatibility', () => {

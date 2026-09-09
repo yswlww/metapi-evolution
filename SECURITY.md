@@ -68,7 +68,7 @@ Use one of these private channels / 使用以下私密渠道之一:
    - This allows for coordinated disclosure and CVE assignment / 这允许协调披露和 CVE 分配
 
 2. **Email** / **邮件**
-   - Send to: `cita-777@users.noreply.github.com`
+   - Send to: `yswlww@users.noreply.github.com`
    - Subject: `[Metapi Security] <brief description>` / 主题：`[Metapi Security] <简要描述>`
 
 ### What to Include / 应包含的内容
@@ -167,9 +167,9 @@ We currently do not offer a paid bug bounty program. However, we deeply apprecia
 
 ## Questions / 问题
 
-If you have questions about this security policy, please contact `cita-777@users.noreply.github.com`.
+If you have questions about this security policy, please contact `yswlww@users.noreply.github.com` or open a [GitHub Security Advisory](https://github.com/yswlww/metapi-evolution/security/advisories/new).
 
-如果您对本安全政策有疑问，请联系 `cita-777@users.noreply.github.com`。
+如果您对本安全政策有疑问，请联系 `yswlww@users.noreply.github.com` 或通过 [GitHub 安全公告](https://github.com/yswlww/metapi-evolution/security/advisories/new) 联系。
 
 ---
 

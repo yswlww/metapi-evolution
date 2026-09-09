@@ -23,6 +23,7 @@ import {
 } from './runtime.js';
 import { getDesktopRuntimeIconPath, getDesktopTrayIconPath } from './iconAssets.js';
 import { attachDesktopNavigationGuard, createSafeOpenExternal } from './navigationGuard.js';
+import { resolvePinnedUserDataPath } from './userData.js';
 
 const { autoUpdater } = electronUpdater;
 
@@ -32,6 +33,8 @@ let serverProcess: ChildProcess | null = null;
 let serverUrl = '';
 let isQuitting = false;
 let isRestartingBackend = false;
+
+app.setPath('userData', resolvePinnedUserDataPath(app.getPath('appData')));
 
 log.initialize();
 
@@ -80,7 +83,7 @@ function showMainWindow() {
 function buildTrayMenu() {
   return Menu.buildFromTemplate([
     {
-      label: 'Open Metapi',
+      label: 'Open Metapi-Evolution',
       click: () => showMainWindow(),
     },
     {
@@ -132,7 +135,7 @@ function setupTray() {
     trayImage.setTemplateImage(true);
   }
   tray = new Tray(trayImage);
-  tray.setToolTip('Metapi');
+  tray.setToolTip('Metapi-Evolution');
   tray.setContextMenu(buildTrayMenu());
   tray.on('double-click', () => showMainWindow());
 }
@@ -279,8 +282,8 @@ async function handleServerCrash(code: number | null) {
   mainWindow?.hide();
   const result = await dialog.showMessageBox({
     type: 'error',
-    title: 'Metapi backend stopped',
-    message: `The local Metapi backend exited unexpectedly${typeof code === 'number' ? ` (code ${code})` : ''}.`,
+    title: 'Metapi-Evolution backend stopped',
+    message: `The local Metapi-Evolution backend exited unexpectedly${typeof code === 'number' ? ` (code ${code})` : ''}.`,
     detail: 'You can restart the backend now or quit the desktop app.',
     buttons: ['Restart Backend', 'Quit'],
     defaultId: 0,
@@ -315,7 +318,7 @@ async function restartBackend() {
     await dialog.showMessageBox({
       type: 'error',
       title: 'Restart failed',
-      message: 'Metapi could not restart the local backend.',
+      message: 'Metapi-Evolution could not restart the local backend.',
       detail: error instanceof Error ? error.message : String(error),
     });
   } finally {
@@ -428,7 +431,7 @@ if (!hasSingleInstanceLock) {
         log.error('Failed to boot Metapi desktop', error);
         const result = await dialog.showMessageBox({
           type: 'error',
-          title: 'Metapi failed to start',
+          title: 'Metapi-Evolution failed to start',
           message: 'The desktop shell could not start the local Metapi service.',
           detail: error instanceof Error ? error.message : String(error),
           buttons: ['Retry', 'Quit'],

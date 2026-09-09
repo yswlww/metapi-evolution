@@ -33,12 +33,12 @@
 </p>
 
 <p align="center">
-  <a href="https://metapi.cita777.me"><strong>📚 在线文档</strong></a> ·
-  <a href="https://metapi.cita777.me/getting-started">快速上手</a> ·
-  <a href="https://metapi.cita777.me/deployment">部署指南</a> ·
-  <a href="https://metapi.cita777.me/configuration">配置说明</a> ·
-  <a href="https://metapi.cita777.me/client-integration">客户端接入</a> ·
-  <a href="https://metapi.cita777.me/faq">常见问题</a>
+  <a href="https://yswlww.github.io/metapi-evolution"><strong>📚 在线文档</strong></a> ·
+  <a href="https://yswlww.github.io/metapi-evolution/getting-started">快速上手</a> ·
+  <a href="https://yswlww.github.io/metapi-evolution/deployment">部署指南</a> ·
+  <a href="https://yswlww.github.io/metapi-evolution/configuration">配置说明</a> ·
+  <a href="https://yswlww.github.io/metapi-evolution/client-integration">客户端接入</a> ·
+  <a href="https://yswlww.github.io/metapi-evolution/faq">常见问题</a>
 </p>
 
 </div>
@@ -363,9 +363,9 @@ docker run -d --name metapi \
 > 桌面安装包首次启动也属于这类场景：如果你没有额外注入 `AUTH_TOKEN`，默认管理员令牌同样是 `change-me-admin-token`。
 > 如果在「设置」面板中修改了管理员令牌，后续登录请使用新令牌。
 
-Docker Compose、桌面安装包、反向代理、升级与数据库选项等详见 [部署指南](https://metapi.cita777.me/deployment)。
+Docker Compose、桌面安装包、反向代理、升级与数据库选项等详见 [部署指南](https://yswlww.github.io/metapi-evolution/deployment)。
 
-📖 **[环境变量与配置](https://metapi.cita777.me/configuration)** · **[客户端接入指南](https://metapi.cita777.me/client-integration)** · **[常见问题](https://metapi.cita777.me/faq)**
+📖 **[环境变量与配置](https://yswlww.github.io/metapi-evolution/configuration)** · **[客户端接入指南](https://yswlww.github.io/metapi-evolution/client-integration)** · **[常见问题](https://yswlww.github.io/metapi-evolution/faq)**
 
 ---
 
@@ -446,7 +446,7 @@ Metapi 完全自托管，所有数据（账号、令牌、路由、日志）均�
 
 ### 独立维护与兼容性
 
-本分支由社区维护者根据自身使用需求独立开发，[`yswlww/metapi-evolution`](https://github.com/yswlww/metapi-evolution) 仅作为本独立演进分支的维护入口，用于承载本分支的后续开发、Issue、Pull Request 与 Release。仓库身份的迁移不会改变产品名称 `metapi`、Docker 镜像 `kennethww/metapi`、桌面应用 ID `me.cita777.metapi.desktop`，也不会有意破坏既有配置、环境变量、数据目录或升级路径的相容性。
+本分支由社区维护者根据自身使用需求独立开发，[`yswlww/metapi-evolution`](https://github.com/yswlww/metapi-evolution) 是本独立演进分支的维护入口，承载后续开发、Issue、Pull Request 与 Release。自迁移以来，桌面版已改以独立身份发布：应用 ID 为 `io.github.yswlww.metapi.desktop`，产品名称为 `Metapi-Evolution`；桌面版数据目录保持兼容（沿用原 `Metapi` 数据目录），但早期桌面版不会通过自动更新迁移到新身份，需要手动安装新版本。Docker 镜像 `kennethww/metapi`、npm 包名 `metapi`、服务器端配置、环境变量、数据目录与升级路径均保持不变。另外，新旧桌面版共用同一数据目录，请先退出旧版桌面应用（包括托盘常驻）再启动新版本，否则新实例会因单实例锁直接退出。
 
 ### 上游参考政策
 

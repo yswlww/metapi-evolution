@@ -11,6 +11,8 @@ describe('repositoryIdentityContract', () => {
     expect(pkg.repository?.url).toBe('https://github.com/yswlww/metapi-evolution.git');
     expect(pkg.bugs?.url).toBe('https://github.com/yswlww/metapi-evolution/issues');
     expect(pkg.homepage).toBe('https://github.com/yswlww/metapi-evolution#readme');
+    expect(pkg.author?.name).toBe('yswlww');
+    expect(pkg.author?.email).toBe('yswlww@users.noreply.github.com');
   });
 
   it('verifies render.yaml repo URL points to yswlww/metapi-evolution', () => {
@@ -26,6 +28,15 @@ describe('repositoryIdentityContract', () => {
   it('verifies updateCenterVersionService uses yswlww/metapi-evolution default URLs', () => {
     const content = readFileSync(resolve(rootDir, 'src/server/services/updateCenterVersionService.ts'), 'utf8');
     expect(content).toContain('https://api.github.com/repos/yswlww/metapi-evolution/releases');
+  });
+
+  it('verifies electron-builder identity points to yswlww-owned destinations', () => {
+    const content = readFileSync(resolve(rootDir, 'electron-builder.yml'), 'utf8');
+    expect(content).toContain('appId: io.github.yswlww.metapi.desktop');
+    expect(content).toContain('productName: Metapi-Evolution');
+    expect(content).toContain('owner: yswlww');
+    expect(content).toContain('repo: metapi-evolution');
+    expect(content).not.toContain('cita777');
   });
 
   it('verifies About.tsx links point to yswlww/metapi-evolution and version 1.4.2', () => {
@@ -46,7 +57,10 @@ describe('repositoryIdentityContract', () => {
     expect(readme).not.toContain('唯一权威来源');
     expect(readme).toContain('不直接合并上游分支、Pull Request 或连续提交');
     expect(readme).toContain('`kennethww/metapi`');
-    expect(readme).toContain('`me.cita777.metapi.desktop`');
+    expect(readme).toContain('`io.github.yswlww.metapi.desktop`');
+    expect(readme).not.toContain('`me.cita777.metapi.desktop`');
+    expect(readme).toContain('Metapi-Evolution');
+    expect(readme).toContain('https://yswlww.github.io/metapi-evolution');
 
     expect(readmeEn).toContain('independent continuation of [`cita-777/metapi`](https://github.com/cita-777/metapi)');
     expect(readmeEn).toContain('full Git commit history, historical release tags, and contributor records');
@@ -56,7 +70,10 @@ describe('repositoryIdentityContract', () => {
     expect(readmeEn).not.toContain('authoritative source');
     expect(readmeEn).toContain('does not directly merge upstream branches, pull requests, or commit series');
     expect(readmeEn).toContain('`kennethww/metapi`');
-    expect(readmeEn).toContain('`me.cita777.metapi.desktop`');
+    expect(readmeEn).toContain('`io.github.yswlww.metapi.desktop`');
+    expect(readmeEn).not.toContain('`me.cita777.metapi.desktop`');
+    expect(readmeEn).toContain('Metapi-Evolution');
+    expect(readmeEn).toContain('https://yswlww.github.io/metapi-evolution');
   });
 
   it('tracks upstream PR dispositions and evolution PR history in the optimization checklist', () => {
