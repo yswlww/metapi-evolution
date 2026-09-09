@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/logos/logo-full.png" alt="Metapi" width="280">
+<img src="docs/logos/logo-full.png" alt="Metapi Evolution" width="280">
 
 # Metapi Evolution
 
@@ -48,7 +48,7 @@ into **one API Key, one endpoint** — with automatic model discovery, smart rou
 
 ## 🌐 Live Demo
 
-> Try Metapi without deploying — full-featured demo instance:
+> Try Metapi Evolution without deploying — full-featured demo instance:
 
 | | |
 |---|---|
@@ -60,11 +60,11 @@ into **one API Key, one endpoint** — with automatic model discovery, smart rou
 
 ---
 
-## 🤔 Why Metapi?
+## 🤔 Why Metapi Evolution?
 
-The AI ecosystem is seeing a growing number of aggregation relay stations based on New API / One API and similar projects. Managing balances, model lists, and API keys across multiple sites is scattered and time-consuming. **Metapi acts as the Meta-Aggregation Layer on top of these relay stations**, unifying multiple sites into one endpoint — all downstream tools (Cursor, Claude Code, Codex, Open WebUI, etc.) can seamlessly access all models.
+The AI ecosystem is seeing a growing number of aggregation relay stations based on New API / One API and similar projects. Managing balances, model lists, and API keys across multiple sites is scattered and time-consuming. **Metapi Evolution acts as the Meta-Aggregation Layer on top of these relay stations**, unifying multiple sites into one endpoint — all downstream tools (Cursor, Claude Code, Codex, Open WebUI, etc.) can seamlessly access all models.
 
-| With multiple relay sites… | How Metapi Solves It |
+| With multiple relay sites… | How Metapi Evolution Solves It |
 | --- | --- |
 | 🔑 One key per site, tedious client config | **Unified proxy endpoint + optional per-project downstream keys** — all site models auto-aggregated under `/v1/*` |
 | 💸 No idea which site offers the cheapest model | **Smart routing** auto-selects the optimal channel by cost, balance, and usage |
@@ -352,11 +352,11 @@ Alert scenarios: low balance warning, site/account anomalies, check-in failures,
 <summary><strong>🏛️ Architecture Overview</strong></summary>
 
 <div align="center">
-  <img src="docs/screenshots/metapi-architecture.png" alt="Metapi: Federated AI Model Aggregation Gateway Architecture" style="max-width: 100%; height: auto;" />
+  <img src="docs/screenshots/metapi-architecture.png" alt="Metapi Evolution: Federated AI Model Aggregation Gateway Architecture" style="max-width: 100%; height: auto;" />
 </div>
 
 - **Downstream clients** (Cursor · Claude Code · Codex · Open WebUI, etc.) → `Authorization: Bearer <PROXY_TOKEN>`
-- **Metapi gateway**: unified `/v1` proxy · smart routing · model discovery · format conversion (OpenAI ⇄ Claude) · check-in / balance / alerts / dashboard
+- **Metapi Evolution gateway**: unified `/v1` proxy · smart routing · model discovery · format conversion (OpenAI ⇄ Claude) · check-in / balance / alerts / dashboard
 - **Upstream platforms**: New API · One API · OneHub · DoneHub · Veloera · AxonHub · Sub2API …
 
 </details>
@@ -374,7 +374,7 @@ Alert scenarios: low balance warning, site/account anomalies, check-in failures,
 
 ## 🔧 Client Integration at a Glance
 
-Metapi exposes standard OpenAI / Claude compatible endpoints. Point any client at two values:
+Metapi Evolution exposes standard OpenAI / Claude compatible endpoints. Point any client at two values:
 
 | Setting | Value |
 | --- | --- |
@@ -436,7 +436,7 @@ The docs source lives in the [`docs/`](docs/) directory; every push to `main` de
 
 ## 🔒 Data & Privacy
 
-Metapi is fully self-hosted. All data (accounts, tokens, routes, logs) stays in your own deployment environment. No data is sent to any third party. Proxy requests are transmitted directly between your server and upstream sites only.
+Metapi Evolution is fully self-hosted. All data (accounts, tokens, routes, logs) stays in your own deployment environment. No data is sent to any third party. Proxy requests are transmitted directly between your server and upstream sites only.
 
 ---
 
@@ -482,7 +482,7 @@ If you discover a security issue, please refer to [SECURITY.md](SECURITY.md) and
 
 ## 🙏 Thanks
 
-Thanks to everyone who has contributed code, bug reports, ideas, and real-world feedback to Metapi. A lot of the product polish in this project came directly from community usage and iteration.
+Thanks to everyone who has contributed code, bug reports, ideas, and real-world feedback to Metapi Evolution. A lot of the product polish in this project came directly from community usage and iteration.
 
 Special thanks to all contributors:
 
@@ -503,7 +503,7 @@ Special thanks to all contributors:
 
 <div align="center">
 
-**If Metapi helps you, a Star is the best support!**
+**If Metapi Evolution helps you, a Star is the best support!**
 
 <sub>Built with love by the AI community</sub>
 

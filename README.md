@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/logos/logo-full.png" alt="Metapi" width="280">
+<img src="docs/logos/logo-full.png" alt="Metapi Evolution" width="280">
 
 # Metapi Evolution
 
@@ -48,7 +48,7 @@
 
 ## 🌐 在线体验
 
-> 无需部署，直接体验 Metapi 的完整功能：
+> 无需部署，直接体验 Metapi Evolution 的完整功能：
 
 |                        |                                                            |
 | ---------------------- | ---------------------------------------------------------- |
@@ -60,11 +60,11 @@
 
 ---
 
-## 🤔 为什么选 Metapi？
+## 🤔 为什么选 Metapi Evolution？
 
-现在 AI 生态里有大量基于 New API / One API 系列的聚合中转站。要在多个站点间管理余额、模型和密钥，往往既分散又费时。**Metapi 是这些中转站之上的「元聚合层」（Meta-Aggregation Layer）**：多个站点统一为一个入口，下游所有工具（Cursor、Claude Code、Codex、Open WebUI 等）无感接入全部模型。
+现在 AI 生态里有大量基于 New API / One API 系列的聚合中转站。要在多个站点间管理余额、模型和密钥，往往既分散又费时。**Metapi Evolution 是这些中转站之上的「元聚合层」（Meta-Aggregation Layer）**：多个站点统一为一个入口，下游所有工具（Cursor、Claude Code、Codex、Open WebUI 等）无感接入全部模型。
 
-| 有了多个中转站之后…                        | Metapi 怎么解决                                                        |
+| 有了多个中转站之后…                        | Metapi Evolution 怎么解决                                                        |
 | ------------------------------------- | ---------------------------------------------------------------------- |
 | 🔑 每个站点一个 Key，下游工具配置一堆 | **统一代理入口 + 可选多下游 Key 策略**，模型自动聚合到 `/v1/*` |
 | 💸 不知道哪个站点用某个模型最便宜     | **智能路由** 自动按成本、余额、使用率选最优通道                  |
@@ -353,11 +353,11 @@ Docker Compose、反向代理、升级与数据库选项等详见 [部署指南]
 <summary><strong>🏛️ 架构概览</strong></summary>
 
 <div align="center">
-  <img src="docs/screenshots/metapi-architecture.png" alt="Metapi: Federated AI Model Aggregation Gateway Architecture" style="max-width: 100%; height: auto;" />
+  <img src="docs/screenshots/metapi-architecture.png" alt="Metapi Evolution: Federated AI Model Aggregation Gateway Architecture" style="max-width: 100%; height: auto;" />
 </div>
 
 - **下游客户端**（Cursor · Claude Code · Codex · Open WebUI 等）→ `Authorization: Bearer <PROXY_TOKEN>`
-- **Metapi 网关**：统一 `/v1` 代理 · 智能路由 · 模型发现 · 格式转换（OpenAI ⇄ Claude）· 签到 / 余额 / 告警 / 看板
+- **Metapi Evolution 网关**：统一 `/v1` 代理 · 智能路由 · 模型发现 · 格式转换（OpenAI ⇄ Claude）· 签到 / 余额 / 告警 / 看板
 - **上游平台**：New API · One API · OneHub · DoneHub · Veloera · AnyRouter · AxonHub · Sub2API …
 
 </details>
@@ -375,7 +375,7 @@ Docker Compose、反向代理、升级与数据库选项等详见 [部署指南]
 
 ## 🔧 下游接入速览
 
-Metapi 暴露标准 OpenAI / Claude 兼容端点，客户端只需改两处：
+Metapi Evolution 暴露标准 OpenAI / Claude 兼容端点，客户端只需改两处：
 
 | 设置         | 值                                                         |
 | ------------ | ---------------------------------------------------------- |
@@ -437,7 +437,7 @@ npm run docs:dev          # 本地预览文档站
 
 ## 🔒 数据与隐私
 
-Metapi 完全自托管，所有数据（账号、令牌、路由、日志）均存储在你自己的部署环境中，不会向任何第三方发送数据。代理请求仅在你的服务器与上游站点之间直连传输。
+Metapi Evolution 完全自托管，所有数据（账号、令牌、路由、日志）均存储在你自己的部署环境中，不会向任何第三方发送数据。代理请求仅在你的服务器与上游站点之间直连传输。
 
 ---
 
@@ -483,7 +483,7 @@ Metapi 完全自托管，所有数据（账号、令牌、路由、日志）均�
 
 ## 🙏 致谢
 
-感谢所有为 Metapi 提交代码、反馈问题、提供思路和实测数据的朋友。这个项目的很多能力，都是在社区的真实使用和反复打磨中慢慢长出来的。
+感谢所有为 Metapi Evolution 提交代码、反馈问题、提供思路和实测数据的朋友。这个项目的很多能力，都是在社区的真实使用和反复打磨中慢慢长出来的。
 
 特别感谢所有贡献者：
 
@@ -501,7 +501,7 @@ Metapi 完全自托管，所有数据（账号、令牌、路由、日志）均�
 
 <div align="center">
 
-**⭐ 如果 Metapi 对你有帮助，给个 Star 就是最大的支持！**
+**⭐ 如果 Metapi Evolution 对你有帮助，给个 Star 就是最大的支持！**
 
 `<sub>`Built with ❤️ by the AI community`</sub>`
 
