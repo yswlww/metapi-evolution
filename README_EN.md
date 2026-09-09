@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="docs/logos/logo-full.png" alt="Metapi Evolution" width="280">
-
 # Metapi Evolution
 
 **A relay for relays — aggregate scattered AI relay stations into one unified gateway**

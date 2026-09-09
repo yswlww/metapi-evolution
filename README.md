@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="docs/logos/logo-full.png" alt="Metapi Evolution" width="280">
-
 # Metapi Evolution
 
 **中转站的中转站 — 将分散的 AI 中转站聚合为一个统一网关**
