@@ -2,42 +2,37 @@
 
 <img src="docs/logos/logo-full.png" alt="Metapi" width="280">
 
+# Metapi Evolution
+
 **A relay for relays — aggregate scattered AI relay stations into one unified gateway**
 
+Bring together all your New API / One API / OneHub / Done Hub / Veloera / AxonHub / Sub2API sites
+into **one API Key, one endpoint** — with automatic model discovery, smart routing, and cost optimization.
+
+[Live Demo](#-live-demo) · [Docs](https://yswlww.github.io/metapi-evolution) · [Quick Start](#-quick-start) · [Download Desktop](https://github.com/yswlww/metapi-evolution/releases) · [Report an Issue](https://github.com/yswlww/metapi-evolution/issues)
+
 <p>
-Bring together all your New API / One API / OneHub / DoneHub / Veloera / AnyRouter / Sub2API sites
-<br>
-into <strong>one API Key, one endpoint</strong>, with automatic model discovery, smart routing, and cost optimization.
-</p>
-
-<p align="center">
-  <a href="https://linux.do/t/topic/1671489" alt="LINUX DO">
-    <img src="https://shorturl.at/ggSqS" alt="LINUX DO">
-  </a>
-</p>
-
-<p align="center">
 <a href="https://github.com/yswlww/metapi-evolution/releases">
-  <img alt="GitHub Release" src="https://img.shields.io/github/v/release/yswlww/metapi-evolution?label=Release&logo=github&style=flat">
-</a><!--
---><a href="https://github.com/yswlww/metapi-evolution/stargazers">
-  <img alt="GitHub Stars" src="https://img.shields.io/github/stars/yswlww/metapi-evolution?style=flat&logo=github&label=Stars">
-</a><!--
---><a href="https://hub.docker.com/r/kennethww/metapi">
+  <img alt="Release" src="https://img.shields.io/github/v/release/yswlww/metapi-evolution?label=Release&logo=github&style=flat">
+</a>
+<a href="https://github.com/yswlww/metapi-evolution/stargazers">
+  <img alt="Stars" src="https://img.shields.io/github/stars/yswlww/metapi-evolution?style=flat&logo=github&label=Stars">
+</a>
+<a href="https://hub.docker.com/r/kennethww/metapi">
   <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/kennethww/metapi?style=flat&logo=docker&label=Docker%20Pulls">
-</a><!--
---><a href="https://hub.docker.com/r/kennethww/metapi">
-  <img alt="Docker Image" src="https://img.shields.io/badge/docker-kennethww%2Fmetapi-blue?logo=docker&style=flat">
-</a><!--
---><a href="LICENSE">
+</a>
+<a href="https://github.com/yswlww/metapi-evolution/actions/workflows/ci.yml">
+  <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/yswlww/metapi-evolution/ci.yml?branch=main&label=CI&logo=github&style=flat">
+</a>
+<a href="LICENSE">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat">
-</a><!--
---><img alt="Node.js" src="https://img.shields.io/badge/Node.js-22.15%2B-339933?logo=node.js&style=flat"><!--
---><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&style=flat"><!--
---><a href="https://zeabur.com/templates/DOX5PR">
+</a>
+<img alt="Node.js" src="https://img.shields.io/badge/Node.js-25%2B-339933?logo=node.js&style=flat">
+<img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-6.x-3178C6?logo=typescript&style=flat">
+<a href="https://zeabur.com/templates/DOX5PR">
   <img alt="Deploy on Zeabur" src="https://zeabur.com/button.svg" height="28">
-</a><!--
---><a href="https://render.com/deploy?repo=https://github.com/yswlww/metapi-evolution">
+</a>
+<a href="https://render.com/deploy?repo=https://github.com/yswlww/metapi-evolution">
   <img alt="Deploy to Render" src="https://render.com/images/deploy-to-render-button.svg" height="28">
 </a>
 </p>
@@ -45,16 +40,6 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 <p align="center">
   <a href="README.md">中文</a> |
   <a href="README_EN.md"><strong>English</strong></a>
-</p>
-
-<p align="center">
-  <a href="https://yswlww.github.io/metapi-evolution"><strong>Docs</strong></a> ·
-  <a href="https://yswlww.github.io/metapi-evolution/getting-started">Quick Start</a> ·
-  <a href="https://yswlww.github.io/metapi-evolution/deployment">Deployment</a> ·
-  <a href="https://yswlww.github.io/metapi-evolution/configuration">Configuration</a> ·
-  <a href="https://yswlww.github.io/metapi-evolution/client-integration">Client Integration</a> ·
-  <a href="https://yswlww.github.io/metapi-evolution/faq">FAQ</a> ·
-  <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
 </div>
@@ -71,38 +56,32 @@ into <strong>one API Key, one endpoint</strong>, with automatic model discovery,
 | 🔑 **Admin Token** | `123456` |
 
 > **⚠️ Security Notice**: This is a public demo. **Do NOT enter any real API keys, credentials, or site information.** Data may be reset at any time.
-
 > **ℹ️ Note**: Demo runs on Render free tier + OpenRouter free models (only `:free` suffixed models available). First visit may take 30-60s to wake up.
 
 ---
 
-## About
+## 🤔 Why Metapi?
 
-The AI ecosystem is seeing a growing number of aggregation relay stations based on New API / One API and similar projects. Managing balances, model lists, and API keys across multiple sites is scattered and time-consuming.
+The AI ecosystem is seeing a growing number of aggregation relay stations based on New API / One API and similar projects. Managing balances, model lists, and API keys across multiple sites is scattered and time-consuming. **Metapi acts as the Meta-Aggregation Layer on top of these relay stations**, unifying multiple sites into one endpoint — all downstream tools (Cursor, Claude Code, Codex, Open WebUI, etc.) can seamlessly access all models.
 
-**Metapi** acts as the **Meta-Aggregation Layer** on top of these relay stations, unifying multiple sites into **one endpoint (with configurable per-project downstream API Keys)** — all downstream tools (Cursor, Claude Code, Codex, Open WebUI, etc.) can seamlessly access all models. Currently supported upstream platforms:
-
-- [New API](https://github.com/QuantumNous/new-api)
-- [One API](https://github.com/songquanpeng/one-api)
-- [OneHub](https://github.com/MartialBE/one-hub)
-- [DoneHub](https://github.com/deanxv/done-hub)
-- [Veloera](https://github.com/Veloera/Veloera)
-- [AnyRouter](https://anyrouter.top) — Universal routing platform
-- [AxonHub](https://github.com/looplj/axonhub) — OpenAI-compatible gateway with Responses-first routing
-- [Sub2API](https://github.com/Wei-Shaw/sub2api) — Subscription-based relay
-
-| Pain Point | How Metapi Solves It |
+| With multiple relay sites… | How Metapi Solves It |
 | --- | --- |
-| One key per site, tedious client config | **Unified proxy endpoint + optional per-project downstream keys** — all site models auto-aggregated under `/v1/*` |
-| No idea which site offers the cheapest model | **Smart routing** auto-selects the optimal channel by cost, balance, and usage |
-| Site goes down, manual switching is a hassle | **Auto-failover** — failed channels cool down and traffic shifts automatically |
-| Balances scattered everywhere | **Centralized dashboard** — at-a-glance overview with low-balance alerts |
-| Daily check-ins across sites | **Auto check-in** — scheduled execution with reward tracking |
-| Don't know which site has which models | **Auto model discovery** — new upstream models appear with zero config |
+| 🔑 One key per site, tedious client config | **Unified proxy endpoint + optional per-project downstream keys** — all site models auto-aggregated under `/v1/*` |
+| 💸 No idea which site offers the cheapest model | **Smart routing** auto-selects the optimal channel by cost, balance, and usage |
+| 🔄 Site goes down, manual switching is a hassle | **Auto-failover** — failed channels cool down and traffic shifts automatically |
+| 📊 Balances scattered everywhere | **Centralized dashboard** — at-a-glance overview with low-balance alerts |
+| ✅ Daily check-ins across sites | **Auto check-in** — scheduled execution with reward tracking |
+| 🤷 Don't know which site has which models | **Auto model discovery** — new upstream models appear with zero config |
 
----
+**Supported upstreams** go beyond traditional aggregation panels:
 
-## Screenshots
+- **Aggregation panels**: [New API](https://github.com/QuantumNous/new-api), [One API](https://github.com/songquanpeng/one-api), [OneHub](https://github.com/MartialBE/one-hub), [DoneHub](https://github.com/deanxv/done-hub), [Veloera](https://github.com/Veloera/Veloera), [AnyRouter](https://anyrouter.top), [Sub2API](https://github.com/Wei-Shaw/sub2api), [AxonHub](https://github.com/looplj/axonhub)
+- **Generic compatible APIs**: OrcaRouter (OpenAI-compatible API keys), OpenAI / Claude / Gemini compatible endpoints, and `cliproxyapi` / CPA
+- **Official presets**: Alibaba Cloud / Zhipu / Doubao Coding Plans, DeepSeek, Moonshot (Kimi), MiniMax, ModelScope
+- **OAuth connections**: Codex, Claude, Gemini CLI, Antigravity
+
+<details>
+<summary><strong>📊 Screenshots (click to expand)</strong></summary>
 
 <table>
   <tr>
@@ -167,140 +146,18 @@ The AI ecosystem is seeing a growing number of aggregation relay stations based 
   </tr>
 </table>
 
----
-
-## Architecture Overview
-
-**Downstream Clients** (Cursor · Claude Code · Codex · Open WebUI · Cherry Studio, etc.)
-&emsp;↓ &ensp;`Authorization: Bearer <PROXY_TOKEN>`
-**Metapi Gateway**
-&emsp;• Unified `/v1` proxy for core OpenAI / Claude-compatible endpoints (Responses, Chat Completions, Messages, Completions, Embeddings, Images, Models)
-&emsp;• Smart Routing Engine — weighted selection by cost, balance, and availability; auto-cooldown & retry on failure
-&emsp;• Model Discovery — auto-aggregates all upstream models with zero config
-&emsp;• Format Conversion — transparent bidirectional OpenAI ⇄ Claude conversion
-&emsp;• Auto Check-in · Balance Management · Alerts & Notifications · Data Dashboard
-&emsp;↓
-**Upstream Platforms** (New API · One API · OneHub · DoneHub · Veloera · AnyRouter · AxonHub · Sub2API …)
+</details>
 
 ---
 
-## Features
+## 🚀 Quick Start
 
-### Unified Proxy Gateway
-
-- Compatible with **OpenAI** and **Claude** downstream formats, works with all mainstream clients
-- Supports Responses / Chat Completions / Messages / Completions (Legacy) / Embeddings / Images / Models, plus standard `/v1/files`
-- Full SSE streaming support with automatic format conversion (OpenAI <-> Claude)
-
-### Smart Routing Engine
-
-- Auto-discovers all available models from upstream sites — **zero-config** route table generation
-- Four-tier cost signal: **measured cost -> account-configured cost -> catalog reference price -> default fallback**
-- Multi-channel probabilistic distribution weighted by cost (40%), balance (30%), and usage (30%)
-- Failed channels auto-cool down (default 10-minute cooldown)
-- Auto-retry on failure with automatic channel switching
-- Routing decisions are visually explainable — every choice is transparent and auditable
-
-<div align="center">
-  <img src="docs/screenshots/routes.png" alt="smart-routing-detail" width="700"/>
-  <p><sub>Smart Routing UI — supports exact match, wildcards, probability distribution, and more routing strategies</sub></p>
-</div>
-
-### Multi-Platform Aggregation
-
-| Platform | Adapter | Description |
-| --- | --- | --- |
-| **New API** | `new-api` | Next-gen LLM gateway |
-| **One API** | `one-api` | Classic OpenAI API aggregation |
-| **OneHub** | `onehub` | Enhanced One API fork |
-| **DoneHub** | `done-hub` | Enhanced OneHub fork |
-| **Veloera** | `veloera` | API gateway platform |
-| **AnyRouter** | `anyrouter` | Universal routing platform |
-| **AxonHub** | `axonhub` | OpenAI-compatible gateway with Responses-first routing |
-| **Sub2API** | `sub2api` | Subscription-based relay |
-
-Adapters cover shared capabilities such as model discovery, balance access, token management, and proxy integration; login, check-in, and user-info flows vary by platform.
-
-### Account & Token Management
-
-- **Multi-site, multi-account**: Each site supports multiple accounts, each account can hold multiple API tokens
-- **Health tracking**: `healthy` / `unhealthy` / `degraded` / `disabled` four-state machine
-- **Encrypted credential storage**: All sensitive credentials are encrypted in the local database
-- **Auto-renewal**: Tokens are automatically re-authenticated when expired
-- **Cascading control**: Disabling a site automatically disables all associated accounts
-
-### Model Marketplace
-
-- Cross-site model coverage overview: which models are available, how many accounts cover them, pricing comparison
-- Latency, success rate, and other measured metrics
-- Upstream model catalog caching with brand classification (OpenAI, Anthropic, Google, DeepSeek, etc.)
-- Interactive model tester for online verification
-
-<div align="center">
-  <img src="docs/screenshots/model-marketplace.png" alt="model-marketplace-detail" width="700"/>
-  <p><sub>Model Marketplace — browse all available models' coverage, pricing, and performance metrics in one place</sub></p>
-</div>
-
-### Auto Check-in
-
-- Cron-scheduled automatic check-in (default: daily at 08:00)
-- Smart reward parsing with failure notifications
-- Per-account execution with enable/disable control
-- Full check-in logging with history queries
-- Concurrency locking to prevent duplicate check-ins
-
-### Balance Management
-
-- Scheduled balance refresh (default: every hour), batch updates for all active accounts
-- Income tracking: daily/cumulative income with spending trend analysis
-- Balance fallback estimation: infer balance changes from proxy logs when API is unavailable
-- Auto re-login on credential expiry
-
-### Alerts & Notifications
-
-Five notification channels supported:
-
-| Channel | Description |
-| --- | --- |
-| **Webhook** | Custom HTTP push |
-| **Bark** | iOS push notifications |
-| **ServerChan** | WeChat notifications |
-| **Telegram Bot** | Telegram message notifications |
-| **SMTP Email** | Standard email notifications |
-
-Alert scenarios: low balance warning, site/account anomalies, check-in failures, proxy request failures, token expiry reminders, daily summary reports. Alert cooldown mechanism (default: 300 seconds) prevents duplicate notifications.
-
-### Data Dashboard
-
-- Site balance pie chart, daily spending trend graphs
-- Global search (sites, accounts, models)
-- System event logs, proxy request logs (model, status, latency, token usage, cost estimation)
-
-<div align="center">
-  <img src="docs/screenshots/dashboard.png" alt="dashboard-detail" width="700"/>
-  <p><sub>Data Dashboard — balance distribution, spending trends, system health at a glance</sub></p>
-</div>
-
-### Model Playground
-
-- Interactive chat testing to instantly verify model availability and response quality
-- Select any routed model to compare outputs across different channels
-- Streaming / non-streaming dual mode testing
-
-<div align="center">
-  <img src="docs/screenshots/playground.png" alt="playground-detail" width="700"/>
-  <p><sub>Model Playground — interactive online testing, verify model availability and response quality</sub></p>
-</div>
-
-### Lightweight Deployment
-
-- **Single Docker container** with a default local data directory, plus optional external MySQL / PostgreSQL runtime DB
-- Docker images support `amd64`, `arm64`, and `armv7l` (`linux/arm/v7`) server deployments
-- Full data import/export for worry-free migration
-
----
-
-## Quick Start
+<a href="https://zeabur.com/templates/DOX5PR">
+  <img alt="Deploy on Zeabur" src="https://zeabur.com/button.svg" height="28">
+</a>
+<a href="https://render.com/deploy?repo=https://github.com/yswlww/metapi-evolution">
+  <img alt="Deploy to Render" src="https://render.com/images/deploy-to-render-button.svg" height="28">
+</a>
 
 ### Docker Compose (Recommended)
 
@@ -380,120 +237,159 @@ After starting, visit `http://localhost:4000` and log in with your `AUTH_TOKEN`!
 > The desktop installer falls into this category on first launch too: if you do not inject `AUTH_TOKEN`, the default admin token is also `change-me-admin-token`.
 > If you change the admin token in the Settings panel, use the new token for subsequent logins.
 
-For Docker Compose, desktop installers, reverse proxy, upgrades, and database options, see [Deployment Guide](docs/deployment.md).
+**Desktop app**: download Windows / macOS / Linux installers from [Releases](https://github.com/yswlww/metapi-evolution/releases) — ready out of the box, with a data directory independent from Docker deployments.
+
+For Docker Compose, reverse proxy, upgrades, and database options, see the [Deployment Guide](https://yswlww.github.io/metapi-evolution/deployment).
 
 ---
 
-## Documentation
+## ✨ Core Features
 
-> Docs site (VitePress) local preview:
->
-> ```bash
-> npm run docs:dev
-> ```
->
-> Docs site build:
->
-> ```bash
-> npm run docs:build
-> ```
->
-> GitHub Actions auto publish: each push to `main` runs `.github/workflows/docs-pages.yml` and deploys to GitHub Pages.
-> First-time setup in repository settings:
-> `Settings -> Pages -> Build and deployment -> Source: GitHub Actions`
+<details open>
+<summary><strong>🌐 Unified Proxy Gateway</strong></summary>
 
-| Category | Link | Description |
-| --- | --- | --- |
-| Docs Home | [docs/index.md](docs/index.md) | Publishable docs portal with nav/sidebar/search |
-| Docs Maintenance | [docs/README.md](docs/README.md) | Maintenance and contributor-oriented docs entry |
-| Quick Start | [docs/getting-started.md](docs/getting-started.md) | Get running in 10 minutes |
-| Deployment | [docs/deployment.md](docs/deployment.md) | Docker Compose, reverse proxy, upgrades |
-| Configuration | [docs/configuration.md](docs/configuration.md) | All environment variables and routing params |
-| Client Integration | [docs/client-integration.md](docs/client-integration.md) | Open WebUI / Cherry Studio / Cursor, etc. |
-| Operations | [docs/operations.md](docs/operations.md) | Backup, logging, health checks |
-| FAQ | [docs/faq.md](docs/faq.md) | Common errors and fixes |
-| FAQ/Tutorial Contribution | [docs/community/faq-tutorial-guidelines.md](docs/community/faq-tutorial-guidelines.md) | Templates and workflow for community knowledge |
-
----
-
-## Environment Variables
-
-### Basic Configuration
-
-| Variable | Description | Default |
-| --- | --- | --- |
-| `AUTH_TOKEN` | Admin panel login token (**must change**) | `change-me-admin-token` |
-| `PROXY_TOKEN` | Proxy API Bearer Token (**must change**) | `change-me-proxy-sk-token` |
-| `PORT` | Service listening port | `4000` |
-| `DATA_DIR` | Data directory for local runtime data | `./data` |
-| `TZ` | Timezone | `Asia/Shanghai` |
-| `ACCOUNT_CREDENTIAL_SECRET` | Account credential encryption key | Defaults to `AUTH_TOKEN` |
-
-### Scheduled Tasks
-
-| Variable | Description | Default |
-| --- | --- | --- |
-| `CHECKIN_CRON` | Auto check-in cron expression | `0 8 * * *` |
-| `BALANCE_REFRESH_CRON` | Balance refresh cron expression | `0 * * * *` |
-
-<details>
-<summary><strong>Smart Routing, Notification & Security Configuration</strong></summary>
-
-See [docs/configuration.md](docs/configuration.md) for full details on smart routing parameters, notification channels (Webhook / Bark / ServerChan / Telegram / SMTP), and security settings (IP allowlist).
+- Compatible with **OpenAI** and **Claude** downstream formats, works with all mainstream clients
+- Supports Responses / Chat Completions / Messages / Completions (Legacy) / Embeddings / Images / Models, plus standard `/v1/files`
+- Full SSE streaming support with automatic format conversion (OpenAI <-> Claude)
 
 </details>
 
-Full configuration reference: [docs/configuration.md](docs/configuration.md)
+<details open>
+<summary><strong>🧠 Smart Routing Engine</strong></summary>
 
----
+- Auto-discovers all available models from upstream sites — **zero-config** route table generation
+- Four-tier cost signal: **measured cost -> account-configured cost -> catalog reference price -> default fallback**
+- Multi-channel probabilistic distribution weighted by cost (40%), balance (30%), and usage (30%)
+- Failed channels auto-cool down (default 10-minute cooldown); auto-retry with channel switching on failure
+- Routing decisions are visually explainable — every choice is transparent and auditable
 
-## Proxy API Endpoints
+</details>
 
-Metapi exposes standard OpenAI / Claude compatible endpoints:
+<details open>
+<summary><strong>📡 Multi-Platform Aggregation</strong></summary>
 
-| Endpoint | Method | Description |
+| Platform | Adapter | Description |
 | --- | --- | --- |
-| `/v1/responses` | POST | OpenAI Responses |
-| `/v1/chat/completions` | POST | OpenAI Chat Completions |
-| `/v1/messages` | POST | Claude Messages |
-| `/v1/completions` | POST | OpenAI Completions (Legacy) |
-| `/v1/embeddings` | POST | Embeddings |
-| `/v1/images/generations` | POST | Image Generation |
-| `/v1/files` | POST / GET | OpenAI Files upload and list |
-| `/v1/files/:fileId` | GET / DELETE | OpenAI Files retrieve metadata and delete |
-| `/v1/files/:fileId/content` | GET | OpenAI Files raw content |
-| `/v1/models` | GET | List all available models |
+| **New API** | `new-api` | Next-gen LLM gateway |
+| **One API** | `one-api` | Classic OpenAI API aggregation |
+| **OneHub** | `onehub` | Enhanced One API fork |
+| **DoneHub** | `done-hub` | Enhanced OneHub fork |
+| **Veloera** | `veloera` | API gateway platform |
+| **AxonHub** | `axonhub` | OpenAI-compatible gateway with Responses-first routing |
+| **Sub2API** | `sub2api` | Subscription-based relay |
+| **OrcaRouter** | `orcarouter` | OpenAI-compatible API key proxy with model discovery |
 
-Include `Authorization: Bearer <PROXY_TOKEN>` in request headers.
+Adapters cover shared capabilities such as model discovery, balance access, token management, and proxy integration; login, check-in, and user-info flows vary by platform.
 
-The global `PROXY_TOKEN` works by default.
-From `System Settings -> Downstream API Key Strategy` you can create multiple project-level downstream keys with individual configuration:
+</details>
 
-- Expiration time (expiresAt)
-- Cost and request limits (MaxCost / MaxRequests)
-- Model allowlist (SupportedModels, supports exact/glob/re:regex)
-- Route allowlist (AllowedRouteIds)
-- Site weight multipliers (SiteWeightMultipliers, control per-project upstream preference ratios)
+<details open>
+<summary><strong>👥 Account & Token Management</strong></summary>
+
+- **Multi-site, multi-account**: Each site supports multiple accounts, each account can hold multiple API tokens
+- **Health tracking**: `healthy` / `unhealthy` / `degraded` / `disabled` four-state machine
+- **Encrypted credential storage**: All sensitive credentials are encrypted in the local database
+- **Auto-renewal**: Tokens are automatically re-authenticated when expired
+- **Cascading control**: Disabling a site automatically disables all associated accounts
+
+</details>
+
+<details>
+<summary><strong>🏪 Model Marketplace · ✅ Auto Check-in · 💰 Balance Management (click to expand)</strong></summary>
+
+**Model Marketplace**
+
+- Cross-site model coverage overview: which models are available, how many accounts cover them, pricing comparison
+- Latency, success rate, and other measured metrics
+- Upstream model catalog caching with brand classification (OpenAI, Anthropic, Google, DeepSeek, etc.)
+- Interactive model tester for online verification
+
+**Auto Check-in**
+
+- Cron-scheduled automatic check-in (default: daily at 08:00) with smart reward parsing and failure notifications
+- Per-account execution with enable/disable control; concurrency locking prevents duplicate check-ins
+- Full check-in logging with history queries
+
+**Balance Management**
+
+- Scheduled balance refresh (default: every hour), batch updates for all active accounts
+- Income tracking: daily/cumulative income with spending trend analysis
+- Balance fallback estimation: infer balance changes from proxy logs when API is unavailable
+- Auto re-login on credential expiry
+
+</details>
+
+<details>
+<summary><strong>🔔 Alerts & Notifications · 📊 Data Dashboard · 🎮 Model Playground (click to expand)</strong></summary>
+
+**Alerts & Notifications** — five channels:
+
+| Channel | Description |
+| --- | --- |
+| **Webhook** | Custom HTTP push |
+| **Bark** | iOS push notifications |
+| **ServerChan** | WeChat notifications |
+| **Telegram Bot** | Telegram message notifications |
+| **SMTP Email** | Standard email notifications |
+
+Alert scenarios: low balance warning, site/account anomalies, check-in failures, proxy request failures, token expiry reminders, daily summary reports. Alert cooldown mechanism (default: 300 seconds) prevents duplicate notifications.
+
+**Data Dashboard**
+
+- Site balance pie chart, daily spending trend graphs
+- Global search (sites, accounts, models)
+- System event logs, proxy request logs (model, status, latency, token usage, cost estimation)
+
+**Model Playground**
+
+- Interactive chat testing to instantly verify model availability and response quality
+- Select any routed model to compare outputs across different channels
+- Streaming / non-streaming dual mode testing
+
+</details>
+
+<details open>
+<summary><strong>🏛️ Architecture Overview</strong></summary>
+
+<div align="center">
+  <img src="docs/screenshots/metapi-architecture.png" alt="Metapi: Federated AI Model Aggregation Gateway Architecture" style="max-width: 100%; height: auto;" />
+</div>
+
+- **Downstream clients** (Cursor · Claude Code · Codex · Open WebUI, etc.) → `Authorization: Bearer <PROXY_TOKEN>`
+- **Metapi gateway**: unified `/v1` proxy · smart routing · model discovery · format conversion (OpenAI ⇄ Claude) · check-in / balance / alerts / dashboard
+- **Upstream platforms**: New API · One API · OneHub · DoneHub · Veloera · AxonHub · Sub2API …
+
+</details>
+
+<details open>
+<summary><strong>📦 Lightweight Deployment</strong></summary>
+
+- **Single Docker container** with a default local data directory, plus optional external MySQL / PostgreSQL runtime DB
+- Docker images support `amd64`, `arm64`, and `armv7l` (`linux/arm/v7`) server deployments
+- Full data import/export for worry-free migration
+
+</details>
 
 ---
 
-## Client Integration
+## 🔧 Client Integration at a Glance
 
-Compatible with all OpenAI API-compatible clients:
+Metapi exposes standard OpenAI / Claude compatible endpoints. Point any client at two values:
 
 | Setting | Value |
 | --- | --- |
-| **Base URL** | `https://your-domain.com` (clients usually append `/v1` automatically) |
+| **Base URL** | `http://your-host:4000` (most clients append `/v1` automatically) |
 | **API Key** | Your configured `PROXY_TOKEN` |
-| **Model List** | Auto-fetched from `GET /v1/models` |
 
-Standard OpenAI `/v1/files` workflows are also supported for clients that use the official file API.
+Main endpoints: `/v1/responses` · `/v1/chat/completions` · `/v1/messages` · `/v1/completions` · `/v1/embeddings` · `/v1/images/generations` · `/v1/files` · `/v1/models`
 
-For detailed per-client setup, examples, and troubleshooting, see [docs/client-integration.md](docs/client-integration.md).
+From **System Settings → Downstream API Key Strategy** you can issue per-project downstream keys with expiry, cost/request limits, model & route allowlists, and site weight multipliers.
+
+For detailed per-client setup (Open WebUI / Cherry Studio / Cursor / Claude Code, etc.), see the [Client Integration Guide](https://yswlww.github.io/metapi-evolution/client-integration).
 
 ---
 
-## Tech Stack
+## 🏗️ Tech Stack & Development
 
 | Layer | Technology |
 | --- | --- |
@@ -507,62 +403,44 @@ For detailed per-client setup, examples, and troubleshooting, see [docs/client-i
 | **Containerization** | Docker (Debian slim) + Docker Compose |
 | **Testing** | [Vitest](https://vitest.dev) |
 
----
-
-## Local Development
-
 ```bash
-# Install dependencies
-npm install
+npm install               # Install dependencies
+npm run db:migrate        # Run database migrations
+npm run dev               # Start dev environment (frontend + backend hot reload)
 
-# Run database migrations
-npm run db:migrate
-
-# Start dev environment (frontend + backend hot reload)
-npm run dev
+npm run build             # Build frontend + backend
+npm run build:web         # Build frontend only (Vite)
+npm run build:server      # Build backend only (TypeScript)
+npm run dist:desktop:mac:intel  # Build mac Intel (x64) desktop installer
+npm test                  # Run all tests (500+ files / 3,100+ cases)
+npm run docs:dev          # Preview the docs site locally
 ```
 
-```bash
-npm run build          # Build frontend + backend
-npm run build:web      # Build frontend only (Vite)
-npm run build:server   # Build backend only (TypeScript)
-npm run dist:desktop:mac:intel # Build mac Intel (x64) desktop installer
-npm test               # Run all tests
-npm run test:watch     # Watch mode
-npm run db:generate    # Generate Drizzle migration files
-```
+<details>
+<summary><strong>📖 Full documentation index</strong></summary>
+
+| Category | Link | Description |
+| --- | --- | --- |
+| Quick Start | [getting-started](https://yswlww.github.io/metapi-evolution/getting-started) | Get running in 10 minutes |
+| Deployment | [deployment](https://yswlww.github.io/metapi-evolution/deployment) | Compose / reverse proxy / upgrades |
+| Configuration | [configuration](https://yswlww.github.io/metapi-evolution/configuration) | All environment variables and routing params |
+| Client Integration | [client-integration](https://yswlww.github.io/metapi-evolution/client-integration) | Open WebUI / Cursor, etc. |
+| Upstream Integration | [upstream-integration](https://yswlww.github.io/metapi-evolution/upstream-integration) | Per-platform setup |
+| FAQ | [faq](https://yswlww.github.io/metapi-evolution/faq) | Common errors and fixes |
+
+The docs source lives in the [`docs/`](docs/) directory; every push to `main` deploys to GitHub Pages automatically.
+
+</details>
 
 ---
 
-## Related Projects
-
-### Compatible Upstream Platforms
-
-| Project | Description |
-| --- | --- |
-| [New API](https://github.com/QuantumNous/new-api) | Next-gen LLM gateway, one of Metapi's primary upstreams |
-| [One API](https://github.com/songquanpeng/one-api) | Classic OpenAI API aggregation |
-| [OneHub](https://github.com/MartialBE/one-hub) | Enhanced One API fork |
-| [DoneHub](https://github.com/deanxv/done-hub) | Enhanced OneHub fork |
-| [Veloera](https://github.com/Veloera/Veloera) | API gateway platform |
-
-### Referenced & Used Projects
-
-| Project | Description |
-| --- | --- |
-| [All API Hub](https://github.com/qixing-jk/all-api-hub) | Browser extension — all-in-one relay account manager, Metapi's original inspiration |
-| [LLM Metadata](https://github.com/nicepkg/llm-metadata) | LLM model metadata library, used for model description reference |
-| [New API](https://github.com/QuantumNous/new-api) | Platform adapter reference implementation |
-
----
-
-## Data & Privacy
+## 🔒 Data & Privacy
 
 Metapi is fully self-hosted. All data (accounts, tokens, routes, logs) stays in your own deployment environment. No data is sent to any third party. Proxy requests are transmitted directly between your server and upstream sites only.
 
 ---
 
-## Origin and Evolution
+## 🏛️ Origin and Evolution
 
 ### Origin and continuity
 
@@ -578,31 +456,31 @@ This project evolves independently and does not directly merge upstream branches
 
 ---
 
-## Contributing
+## 🤝 Contributing
 
 All forms of contribution are welcome!
 
-- Report bugs — [Submit an Issue](https://github.com/yswlww/metapi-evolution/issues)
-- Feature suggestions — [Start a Discussion](https://github.com/yswlww/metapi-evolution/issues)
-- Code contributions — [Submit a Pull Request](https://github.com/yswlww/metapi-evolution/pulls)
-- Contributing guide — [CONTRIBUTING.md](CONTRIBUTING.md)
-- Code of conduct — [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- 🐛 Report bugs — [Submit an Issue](https://github.com/yswlww/metapi-evolution/issues)
+- 💡 Feature suggestions — [Start a Discussion](https://github.com/yswlww/metapi-evolution/issues)
+- 🔧 Code contributions — [Submit a Pull Request](https://github.com/yswlww/metapi-evolution/pulls)
+- 📝 Contributing guide — [CONTRIBUTING.md](CONTRIBUTING.md)
+- 📜 Code of conduct — [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
 ---
 
-## Security
+## 🛡️ Security
 
 If you discover a security issue, please refer to [SECURITY.md](SECURITY.md) and report it privately.
 
 ---
 
-## License
+## 📜 License
 
 [MIT](LICENSE)
 
 ---
 
-## Thanks
+## 🙏 Thanks
 
 Thanks to everyone who has contributed code, bug reports, ideas, and real-world feedback to Metapi. A lot of the product polish in this project came directly from community usage and iteration.
 
@@ -610,14 +488,14 @@ Special thanks to all contributors:
 
 <!-- metapi-contributors:start -->
 <p align="left">
-  <a href="https://github.com/cita-777"><img src="https://avatars.githubusercontent.com/u/177306803?v=4&s=48" width="48" height="48" alt="cita-777" title="cita-777"/></a> <a href="https://github.com/Hureru"><img src="https://avatars.githubusercontent.com/u/121702350?v=4&s=48" width="48" height="48" alt="Hureru" title="Hureru"/></a> <a href="https://github.com/bnvnvnv"><img src="https://avatars.githubusercontent.com/u/4243616?v=4&s=48" width="48" height="48" alt="bnvnvnv" title="bnvnvnv"/></a> <a href="https://github.com/ksmaze"><img src="https://avatars.githubusercontent.com/u/480916?v=4&s=48" width="48" height="48" alt="ksmaze" title="ksmaze"/></a> <a href="https://github.com/DeliciousBuding"><img src="https://avatars.githubusercontent.com/u/101502465?v=4&s=48" width="48" height="48" alt="DeliciousBuding" title="DeliciousBuding"/></a> <a href="https://github.com/Shinku-Chen"><img src="https://avatars.githubusercontent.com/u/17696928?v=4&s=48" width="48" height="48" alt="Shinku-Chen" title="Shinku-Chen"/></a> <a href="https://github.com/weijiafu14"><img src="https://avatars.githubusercontent.com/u/17469139?v=4&s=48" width="48" height="48" alt="weijiafu14" title="weijiafu14"/></a> <a href="https://github.com/ShicYang"><img src="https://avatars.githubusercontent.com/u/61652316?v=4&s=48" width="48" height="48" alt="ShicYang" title="ShicYang"/></a> <a href="https://github.com/Babylonehy"><img src="https://avatars.githubusercontent.com/u/30937892?v=4&s=48" width="48" height="48" alt="Babylonehy" title="Babylonehy"/></a> <a href="https://github.com/zmoon460"><img src="https://avatars.githubusercontent.com/u/42328751?v=4&s=48" width="48" height="48" alt="zmoon460" title="zmoon460"/></a>
+  <a href="https://github.com/cita-777"><img src="https://avatars.githubusercontent.com/u/177306803?v=4&s=48" width="48" height="48" alt="cita-777" title="cita-777"/></a> <a href="https://github.com/Hureru"><img src="https://avatars.githubusercontent.com/u/121702350?v=4&s=48" width="48" height="48" alt="Hureru" title="Hureru"/></a> <a href="https://github.com/bnvnvnv"><img src="https://avatars.githubusercontent.com/u/4243616?v=4&s=48" width="48" height="48" alt="bnvnvnv" title="bnvnvnv"/></a> <a href="https://github.com/ksmaze"><img src="https://avatars.githubusercontent.com/u/480916?v=4&s=48" width="48" height="48" alt="ksmaze" title="ksmaze"/></a> <a href="https://github.com/DeliciousBuding"><img src="https://avatars.githubusercontent.com/u/101502465?v=4&s=48" width="48" height="48" alt="DeliciousBuding" title="DeliciousBuding"/></a> <a href="https://github.com/Shinku-Chen"><img src="https://avatars.githubusercontent.com/u/17696928?v=4&s=48" width="48" height="48" alt="Shinku-Chen" title="Shinku-Chen"/></a> <a href="https://github.com/weijiafu14"><img src="https://avatars.githubusercontent.com/u/17469139?v=4&s=48" width="48" height="48" alt="weijiafu14" title="weijiafu14"/></a> <a href="https://github.com/ShicYang"><img src="https://avatars.githubusercontent.com/u/61652316?v=4&s=48" width="48" height="48" alt="ShicYang" title="ShicYang"/></a> <a href="https://github.com/Babylonehy"><img src="https://avatars.githubusercontent.com/u/42328751?v=4&s=48" width="48" height="48" alt="Babylonehy" title="Babylonehy"/></a> <a href="https://github.com/zmoon460"><img src="https://avatars.githubusercontent.com/u/42328751?v=4&s=48" width="48" height="48" alt="zmoon460" title="zmoon460"/></a>
   <a href="https://github.com/Brucents"><img src="https://avatars.githubusercontent.com/u/81791987?v=4&s=48" width="48" height="48" alt="Brucents" title="Brucents"/></a> <a href="https://github.com/ImgBotApp"><img src="https://avatars.githubusercontent.com/u/31427850?v=4&s=48" width="48" height="48" alt="ImgBotApp" title="ImgBotApp"/></a> <a href="https://github.com/Zhou-Ruichen"><img src="https://avatars.githubusercontent.com/u/191002401?v=4&s=48" width="48" height="48" alt="Zhou-Ruichen" title="Zhou-Ruichen"/></a> <a href="https://github.com/nodca"><img src="https://avatars.githubusercontent.com/u/96775880?v=4&s=48" width="48" height="48" alt="nodca" title="nodca"/></a> <a href="https://github.com/puyujian"><img src="https://avatars.githubusercontent.com/u/46592377?v=4&s=48" width="48" height="48" alt="puyujian" title="puyujian"/></a> <a href="https://github.com/rcocco"><img src="https://avatars.githubusercontent.com/u/46603462?v=4&s=48" width="48" height="48" alt="rcocco" title="rcocco"/></a> <a href="https://github.com/xuyufengfei"><img src="https://avatars.githubusercontent.com/u/188047874?v=4&s=48" width="48" height="48" alt="xuyufengfei" title="xuyufengfei"/></a>
 </p>
 <!-- metapi-contributors:end -->
 
 ---
 
-## Star History
+## ⭐ Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=yswlww/metapi-evolution&type=date&legend=top-left&v=2)](https://www.star-history.com/#yswlww/metapi-evolution&type=date&legend=top-left)
 
