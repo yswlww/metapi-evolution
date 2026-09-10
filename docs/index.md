@@ -6,8 +6,8 @@ hero:
   text: "中转站的中转站"
   tagline: "将分散的 AI 中转站聚合为一个统一网关"
   image:
-    src: /logos/logo-full.png
-    alt: Metapi
+    src: /logos/logo-icon-512.png
+    alt: Metapi Evolution
   actions:
     - theme: brand
       text: 10 分钟快速上手
