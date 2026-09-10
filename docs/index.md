@@ -2,12 +2,9 @@
 layout: home
 
 hero:
-  name: "Metapi 文档中心"
-  text: "中转站的中转站"
-  tagline: "将分散的 AI 中转站聚合为一个统一网关"
-  image:
-    src: /logos/logo-icon-512.png
-    alt: Metapi Evolution
+  name: "Metapi"
+  text: "Evolution"
+  tagline: "中转站的中转站 — 将分散的 AI 中转站聚合为一个统一网关"
   actions:
     - theme: brand
       text: 10 分钟快速上手
