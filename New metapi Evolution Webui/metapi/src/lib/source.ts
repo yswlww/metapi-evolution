@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPut, apiPatch, apiDelete } from "./client";
+import { apiGet, apiPost, apiPut, apiPatch, apiDelete, apiResponse } from "./client";
 import { SITES as PROTOTYPE_SITES } from "../data/sites";
 import { ACCOUNTS as PROTOTYPE_ACCOUNTS } from "../data/accounts";
 import type { Account, Site } from "../data/prototype";
@@ -843,9 +843,7 @@ export async function updateRuntimeSettings(payload: unknown): Promise<unknown> 
 }
 
 export async function testSystemProxy(data: {
-  url?: string;
-  model?: string;
-  timeoutMs?: number;
+  proxyUrl?: string;
 }): Promise<unknown> {
   if (DATA_MODE === "prototype") return {};
   return apiPost("/api/settings/system-proxy/test", data, { timeoutMs: 20_000 });
@@ -1036,27 +1034,19 @@ export async function startTestChatJob(payload: Record<string, unknown>): Promis
 }
 
 export async function testProxyStream(payload: Record<string, unknown>, signal?: AbortSignal): Promise<Response> {
-  const token = localStorage.getItem("metapi-auth-token");
-  return fetch("/api/test/proxy/stream", {
+  return apiResponse("/api/test/proxy/stream", {
     method: "POST",
     signal,
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 }
 
 export async function testChatStream(payload: Record<string, unknown>, signal?: AbortSignal): Promise<Response> {
-  const token = localStorage.getItem("metapi-auth-token");
-  return fetch("/api/test/chat/stream", {
+  return apiResponse("/api/test/chat/stream", {
     method: "POST",
     signal,
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 }

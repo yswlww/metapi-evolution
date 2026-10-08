@@ -1,4 +1,10 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";import { KeyRound, Plus, RefreshCw, Tags, TrendingUp, Zap } from "lucide-react";
+import { useManagementText } from '../lib/managementParityText';
+import { matchesTags, batchOutcome, type BatchResponse, type CredentialRef } from '../lib/managementParity';
+import { apiPost } from '../lib/client';
+import KeyDrawer from './downstream-keys/KeyDrawer';
+import KeyMetadata from './downstream-keys/KeyMetadata';
+import KeyOverview from './downstream-keys/KeyOverview';
 import { DOWNSTREAM_KEYS as PROTOTYPE_KEYS, DOWNSTREAM_TREND_POINTS, MODELS } from "../data/prototype";
 import {
   buildDownstreamKeyViewModels,
@@ -35,6 +41,8 @@ import {
 /** Prototype model options drawn from the marketplace catalog. */
 const MODEL_OPTIONS = MODELS.map((m) => ({ name: m.name, family: m.family }));
 
+type ManagedKey = (typeof PROTOTYPE_KEYS)[number] & { excludedCredentialRefs?: CredentialRef[]; enabled?: boolean };
+
 // Backend downstream key row (policy view).
 interface BackendDownstreamKey {
   id: number;
@@ -54,12 +62,16 @@ interface BackendDownstreamKey {
   allowedRouteIds: number[];
   siteWeightMultipliers: Record<string, number>;
   excludedSiteIds: number[];
+  excludedCredentialRefs?: CredentialRef[];
   lastUsedAt: string | null;
   createdAt: string;
 }
 
 /** Map a backend policy row to the UI DownstreamKey display shape. */
-function mapBackendKey(raw: BackendDownstreamKey): (typeof PROTOTYPE_KEYS)[number] {
+function mapBackendKey(
+  raw: BackendDownstreamKey,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): ManagedKey {
   const status = !raw.enabled ? "paused" as const
     : raw.expiresAt && new Date(raw.expiresAt) < new Date() ? "expired" as const
     : "active" as const;
@@ -80,8 +92,12 @@ function mapBackendKey(raw: BackendDownstreamKey): (typeof PROTOTYPE_KEYS)[numbe
     selectedGroupRoutes: (raw.allowedRouteIds ?? []).map(String),
     siteWeightMultipliers: raw.siteWeightMultipliers ?? {},
     excludedSiteIds: raw.excludedSiteIds ?? [],
+    excludedCredentialRefs: raw.excludedCredentialRefs ?? [],
+    enabled: raw.enabled,
     status,
-    statusLabel: status === "active" ? "Active" : status === "paused" ? "Paused" : "Expired",
+    statusLabel: status === "active"
+      ? t("ui.keys.active")
+      : status === "paused" ? t("ui.status.paused") : t("ui.status.expired"),
     // Scopes are not a real downstream-key field; leave empty so the card
     // shows only real policy data (tags / model whitelist).
     scopes: [],
@@ -99,6 +115,11 @@ function mapBackendKey(raw: BackendDownstreamKey): (typeof PROTOTYPE_KEYS)[numbe
 
 export default function DownstreamKeys() {
   const t = useUiText();
+  const l = useManagementText();
+  const [metadataOpen, setMetadataOpen] = useState(false);
+  const [overviewId, setOverviewId] = useState<string | null>(null);
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const [tagMode, setTagMode] = useState<'any' | 'all'>('any');
   const [filters, setFilters] = useState<DownstreamKeyFilters>({
     query: "",
     group: "all",
@@ -110,7 +131,7 @@ export default function DownstreamKeys() {
   const [revealedId, setRevealedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | "batch" | null>(null);
-  const [apiKeys, setApiKeys] = useState<typeof PROTOTYPE_KEYS | null>(null);
+  const [apiKeys, setApiKeys] = useState<ManagedKey[] | null>(null);
   const { showToast } = useToast();
 
   // Load keys from the real backend; fall back to prototype data in
@@ -122,12 +143,12 @@ export default function DownstreamKeys() {
     }
     try {
       const { items } = await fetchDownstreamKeys();
-      setApiKeys((items as BackendDownstreamKey[]).map(mapBackendKey));
+      setApiKeys((items as BackendDownstreamKey[]).map((raw) => mapBackendKey(raw, t)));
     } catch (err) {
       setApiKeys([]);
-      showToast(err instanceof Error ? err.message : "Failed to load keys.");
+      showToast(err instanceof Error ? err.message : t("ui.keys.err_load"));
     }
-  }, [showToast]);
+  }, [showToast, t]);
 
   useEffect(() => { reload(); }, [reload]);
 
@@ -151,55 +172,22 @@ export default function DownstreamKeys() {
     });
   };
 
-  const batchEnable = async (enabled: boolean) => {
+  const runKeyBatch = async (action: 'enable' | 'disable' | 'delete' | 'resetUsage') => {
     try {
-      await batchDownstreamApiKeys({
-        ids: Array.from(selectedIds).map(Number),
-        action: enabled ? "enable" : "disable",
-      });
-      showToast(enabled ? t("ui.keys.batch_enabled", { n: selectedIds.size }) : t("ui.keys.batch_disabled", { n: selectedIds.size }));
-      setSelectedIds(new Set());
+      const outcome = batchOutcome(await apiPost<BatchResponse>('/api/downstream-keys/batch', { ids: [...selectedIds].map(Number), action }));
+      setSelectedIds(new Set(outcome.failedIds.map(String)));
+      showToast(`${l('success')}: ${outcome.succeeded}; ${l('failed')}: ${outcome.failedIds.length}${outcome.messages.length ? ` — ${outcome.messages.join('; ')}` : ''}`);
       await reload();
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Batch update failed.");
-    }
+      return outcome;
+    } catch (err) { showToast(err instanceof Error ? err.message : t('ui.keys.batch_update_failed')); return null; }
   };
-
-  const batchReset = async () => {
-    try {
-      await batchDownstreamApiKeys({
-        ids: Array.from(selectedIds).map(Number),
-        action: "resetUsage",
-      });
-      const next: Record<string, number> = { ...usageOverrides };
-      selectedIds.forEach((id) => { next[id] = 0; });
-      setUsageOverrides(next);
-      showToast(t("ui.keys.reset_ok"));
-      setSelectedIds(new Set());
-      await reload();
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Batch reset failed.");
-    }
-  };
-
-  const batchDelete = async () => {
-    try {
-      await batchDownstreamApiKeys({
-        ids: Array.from(selectedIds).map(Number),
-        action: "delete",
-      });
-      showToast(t("ui.keys.deleted", { n: selectedIds.size }));
-      setDeleteTarget(null);
-      setSelectedIds(new Set());
-      await reload();
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Batch delete failed.");
-    }
-  };
+  const batchEnable = (enabled: boolean) => runKeyBatch(enabled ? 'enable' : 'disable');
+  const batchReset = () => runKeyBatch('resetUsage');
+  const batchDelete = async () => { const result = await runKeyBatch('delete'); if (result) setDeleteTarget(null); };
 
   const keys = useMemo(
-    () => buildDownstreamKeyViewModels(keysSource, filters, usageOverrides),
-    [keysSource, filters, usageOverrides],
+    () => buildDownstreamKeyViewModels(keysSource.filter(k => matchesTags(k.tags, tagFilter, tagMode)), filters, usageOverrides),
+    [keysSource, filters, usageOverrides, tagFilter, tagMode],
   );
 
   const summary = useMemo(() => {
@@ -249,7 +237,7 @@ export default function DownstreamKeys() {
       showToast(t("ui.keys.reset_ok"));
       await reload();
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Reset failed.");
+      showToast(err instanceof Error ? err.message : t("ui.keys.reset_failed"));
     }
   };
 
@@ -259,7 +247,7 @@ export default function DownstreamKeys() {
       flash(t("ui.keys.toggle_ok", { id }));
       await reload();
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Update failed.");
+      showToast(err instanceof Error ? err.message : t("ui.keys.update_failed"));
     }
   };
 
@@ -324,7 +312,7 @@ export default function DownstreamKeys() {
       <section className="space-y-4">
         <SectionTitle
           title={t("ui.keys.trend")}
-          description={trendKeyId != null ? "Usage for the selected key." : "7-day request volume across all keys."}
+          description={trendKeyId != null ? t("ui.keys.usage_selected") : "7-day request volume across all keys."}
           eyebrow={t("ui.keys.trend")}
           actions={
             <div className="flex items-center gap-2">
@@ -422,6 +410,7 @@ export default function DownstreamKeys() {
               className="rounded-md border border-[color:var(--color-rose)]/40 px-2.5 py-1.5 font-mono text-[10px] tracking-wider text-[color:var(--color-rose)] hover:bg-[color:var(--color-rose)]/10">
               {t("ui.keys.batch_delete")}
             </button>
+            <button type="button" onClick={() => setMetadataOpen(true)}>{l('metadata')}</button>
             <button type="button" onClick={() => setSelectedIds(new Set())}
               className="ml-auto rounded-md border border-[color:var(--color-border)] px-2.5 py-1.5 font-mono text-[10px] tracking-wider text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]">
               {t("ui.keys.batch_clear")}
@@ -464,6 +453,7 @@ export default function DownstreamKeys() {
           </div>
         </div>
 
+        <div className="flex flex-wrap gap-3"><button onClick={() => setSelectedIds(keys.every(k => selectedIds.has(k.id)) ? new Set() : new Set(keys.map(k => k.id)))}>{l('selectAll')}</button><label>{l('tags')}<input value={tagFilter.join(', ')} onChange={e => setTagFilter(e.target.value.split(/[,，]/).map(t => t.trim()).filter(Boolean))} className="ml-2 rounded border bg-[color:var(--color-panel)] p-2" /></label><select value={tagMode} onChange={e => setTagMode(e.target.value as 'any' | 'all')}><option value="any">{l('any')}</option><option value="all">{l('every')}</option></select></div>
         {keys.length === 0 ? (
           <EmptyState
             title={t("ui.keys.empty_title")}
@@ -503,7 +493,7 @@ export default function DownstreamKeys() {
                             <input type="checkbox" checked={selectedIds.has(key.id)} onChange={() => toggleSelected(key.id)} className="accent-[color:var(--color-lime)]" aria-label={`Select ${key.name}`} />
                           </td>
                           <td className="px-4 py-3">
-                            <div className="font-medium text-[color:var(--color-fg)]">{key.name}</div>
+                            <div className="font-medium text-[color:var(--color-fg)]">{key.name} <button className="text-xs underline" onClick={() => setOverviewId(key.id)}>{l('overview')}</button></div>
                             <div className="mt-1 flex items-center gap-2">
                               <code className="font-mono text-[10px] text-[color:var(--color-fg)]/80 break-all">
                                 {revealedId === key.id ? key.fullToken : key.maskedToken}
@@ -513,7 +503,7 @@ export default function DownstreamKeys() {
                                   type="button"
                                   onClick={() => setRevealedId(revealedId === key.id ? null : key.id)}
                                   className="rounded border border-[color:var(--color-border)] px-1.5 py-0.5 font-mono text-[9px] tracking-wide text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]"
-                                  aria-label={revealedId === key.id ? "Hide full key" : "Reveal full key"}
+                                  aria-label={revealedId === key.id ? t("ui.keys.hide_full") : t("ui.keys.reveal_full")}
                                 >
                                   {revealedId === key.id ? t("ui.keys.hide") : t("ui.keys.reveal")}
                                 </button>
@@ -605,7 +595,8 @@ export default function DownstreamKeys() {
                   <div key={key.id} className="card p-4">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="font-medium text-[color:var(--color-fg)]">{key.name}</div>
+                        <label className="flex gap-2"><input type="checkbox" aria-label={`${l('select')} ${key.name}`} checked={selectedIds.has(key.id)} onChange={() => toggleSelected(key.id)} />{key.name}</label>
+                        <div className="font-medium text-[color:var(--color-fg)]">{key.name} <button className="text-xs underline" onClick={() => setOverviewId(key.id)}>{l('overview')}</button></div>
                         <div className="mt-1 flex items-center gap-2">
                           <code className="font-mono text-[10px] text-[color:var(--color-fg)]/80 break-all">
                             {revealedId === key.id ? key.fullToken : key.maskedToken}
@@ -616,7 +607,7 @@ export default function DownstreamKeys() {
                             type="button"
                             onClick={() => setRevealedId(revealedId === key.id ? null : key.id)}
                             className="rounded border border-[color:var(--color-border)] px-2 py-0.5 font-mono text-[9px] tracking-wide text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]"
-                            aria-label={revealedId === key.id ? "Hide full key" : "Reveal full key"}
+                            aria-label={revealedId === key.id ? t("ui.keys.hide_full") : t("ui.keys.reveal_full")}
                           >
                             {revealedId === key.id ? t("ui.keys.hide") : t("ui.keys.reveal")}
                           </button>
@@ -670,6 +661,8 @@ export default function DownstreamKeys() {
         )}
       </section>
 
+      {metadataOpen && <KeyMetadata ids={[...selectedIds].map(Number)} onClose={() => setMetadataOpen(false)} onSaved={async failedIds => { setSelectedIds(new Set(failedIds.map(String))); await reload(); }} />}
+      {overviewId && <KeyOverview id={Number(overviewId)} onClose={() => setOverviewId(null)} />}
       {drawer && (
         <KeyDrawer
           mode={drawer}
@@ -702,7 +695,7 @@ export default function DownstreamKeys() {
                     setDeleteTarget(null);
                     await reload();
                   } catch (err) {
-                    showToast(err instanceof Error ? err.message : "Delete failed.");
+                    showToast(err instanceof Error ? err.message : t("ui.toast.delete_failed"));
                   }
                 }
               }}
@@ -714,326 +707,5 @@ export default function DownstreamKeys() {
         </div>
       )}
     </div>
-  );
-}
-
-function KeyDrawer({
-  mode,
-  keysSource,
-  onClose,
-  onFlash,
-  onSaved,
-}: {
-  mode: "create" | { id: string };
-  keysSource: typeof PROTOTYPE_KEYS;
-  onClose: () => void;
-  onFlash: (msg: string) => void;
-  onSaved: () => Promise<void>;
-}) {
-  const t = useUiText();
-  const isEdit = mode !== "create";
-  const key = isEdit ? keysSource.find((k) => k.id === mode.id) : undefined;
-  const { showToast } = useToast();
-
-  // form state
-  const [name, setName] = useState(key?.name ?? "");
-  const [tokenKey, setTokenKey] = useState(key?.fullToken ?? `sk-mpe_${Math.random().toString(36).slice(2, 14)}${Math.random().toString(36).slice(2, 14)}`);
-  const [groupName, setGroupName] = useState(key?.groupName ?? "");
-  const [description, setDescription] = useState(key?.description ?? "");
-  const [maxCost, setMaxCost] = useState(String(key?.maxCost ?? ""));
-  const [maxRequests, setMaxRequests] = useState(String(key?.maxRequests ?? ""));
-  const [expiresAt, setExpiresAt] = useState(key?.expiresAt?.slice(0, 16) ?? "");
-  const [enabled, setEnabled] = useState(key ? key.status !== "expired" : true);
-  const [scopes, setScopes] = useState<Record<string, boolean>>({
-    "models:read": true,
-    "requests:write": true,
-    "usage:read": key?.scopes.includes("usage:read") ?? false,
-  });
-  const [tagsDraft, setTagsDraft] = useState(key?.tags.join(", ") ?? "");
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [siteWeightsText, setSiteWeightsText] = useState(
-    key?.siteWeightMultipliers ? JSON.stringify(key.siteWeightMultipliers, null, 2) : "",
-  );
-  const [selectedModels, setSelectedModels] = useState<Set<string>>(() => new Set(key?.supportedModels ?? []));
-  const [modelSearch, setModelSearch] = useState("");
-  const [selectedRoutes, setSelectedRoutes] = useState<Set<string>>(() => new Set(key?.selectedGroupRoutes ?? []));
-  const [routeSearch, setRouteSearch] = useState("");
-  const [excludedSiteIds, setExcludedSiteIds] = useState<Set<number>>(() => new Set(key?.excludedSiteIds ?? []));
-  // Real route + site options for the policy allow/exclude pickers. In API
-  // mode these come from the backend; prototype mode uses the snapshot lists.
-  const [routeOptions, setRouteOptions] = useState<Array<{ id: number; label: string }>>([]);
-  const [siteOptions, setSiteOptions] = useState<Array<{ id: number; label: string }>>([]);
-
-  useEffect(() => {
-    if (DATA_MODE === "prototype") {
-      setRouteOptions([
-        { id: 1, label: "gpt-*" },
-        { id: 2, label: "claude-*" },
-      ]);
-      setSiteOptions([
-        { id: 1, label: "Primary (New API · HK)" },
-        { id: 2, label: "Staging (One API)" },
-      ]);
-      return;
-    }
-    Promise.all([
-      fetchRoutes().catch(() => []),
-      fetchSites().catch(() => []),
-    ]).then(([routes, sites]) => {
-      const r = (routes as any[]).map((route) => ({
-        id: route.id,
-        label: `${route.displayName || route.modelPattern} (${route.modelPattern})`,
-      }));
-      const s = (sites as any[]).map((site) => ({ id: site.id, label: site.name }));
-      setRouteOptions(r);
-      setSiteOptions(s);
-    });
-  }, []);
-  // Real marketplace model catalog. Starts empty in API mode; the fetch result
-  // is used as-is (an empty catalog stays empty — no fake names). Prototype
-  // mode keeps the snapshot list.
-  const [catalogModels, setCatalogModels] = useState<string[]>(
-    DATA_MODE === "prototype" ? Array.from(new Set(MODEL_OPTIONS.map((m) => m.name))) : [],
-  );
-  const [catalogLoaded, setCatalogLoaded] = useState(DATA_MODE === "prototype");
-
-  useEffect(() => {
-    if (DATA_MODE === "prototype") return;
-    fetchModelsMarketplace({ includePricing: false })
-      .then(({ models }) => {
-        const names = (models as Array<{ name?: string }>).map((m) => m.name).filter((n): n is string => !!n);
-        setCatalogModels(names);
-      })
-      .catch(() => { /* keep empty on error */ })
-      .finally(() => setCatalogLoaded(true));
-  }, []);
-
-  const randomizeToken = () => setTokenKey(`sk-mpe_${Math.random().toString(36).slice(2, 14)}${Math.random().toString(36).slice(2, 14)}`);
-
-  const toggleScope = (s: string) => setScopes((p) => ({ ...p, [s]: !p[s] }));
-  const toggleModel = (m: string) => setSelectedModels((p) => { const n = new Set(p); n.has(m) ? n.delete(m) : n.add(m); return n; });
-  const toggleRoute = (r: string) => setSelectedRoutes((p) => { const n = new Set(p); n.has(r) ? n.delete(r) : n.add(r); return n; });
-  const toggleExcludedSite = (id: number) => setExcludedSiteIds((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
-
-  const filteredModels = catalogModels
-    .map((name) => ({ name, family: name.split(/[-_/]/)[0] ?? name }))
-    .filter(
-      (m) => !modelSearch || m.name.toLowerCase().includes(modelSearch.toLowerCase()) || m.family.toLowerCase().includes(modelSearch.toLowerCase()),
-    );
-  const filteredRoutes = routeOptions.filter((r) => !routeSearch || r.label.toLowerCase().includes(routeSearch.toLowerCase()));
-
-  const handleSave = async () => {
-    const payload = {
-      name: (name || key?.name) ?? "",
-      key: tokenKey,
-      description: description || undefined,
-      groupName: groupName || undefined,
-      tags: tags,
-      enabled,
-      ...(expiresAt ? { expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined } : {}),
-      ...(maxCost ? { maxCost: Number(maxCost) } : {}),
-      ...(maxRequests ? { maxRequests: Number(maxRequests) } : {}),
-      supportedModels: Array.from(selectedModels),
-      ...(selectedRoutes.size ? { allowedRouteIds: Array.from(selectedRoutes).map(Number) } : {}),
-      ...(excludedSiteIds.size ? { excludedSiteIds: Array.from(excludedSiteIds) } : {}),
-      // Site weight multipliers parsed from the JSON textarea when valid.
-      ...(siteWeightsText.trim()
-        ? (() => {
-          try {
-            const parsed = JSON.parse(siteWeightsText);
-            return typeof parsed === "object" && parsed !== null ? { siteWeightMultipliers: parsed } : {};
-          } catch { return {}; }
-        })()
-        : {}),
-    };
-    try {
-      if (isEdit && key) {
-        await updateDownstreamApiKey(Number(key.id), payload);
-        showToast(t("ui.keys.save_ok", { name: payload.name }));
-      } else {
-        await createDownstreamApiKey(payload);
-        showToast(t("ui.keys.create_ok"));
-      }
-      onClose();
-      await onSaved();
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Save failed.");
-    }
-  };
-
-  const tags = tagsDraft.split(/[,，\n]/).map((s) => s.trim()).filter(Boolean);
-
-  return (
-    <EditDrawer
-      open
-      onClose={onClose}
-      title={isEdit ? t("ui.keys.edit_drawer", { name: key?.name ?? "" }) : t("ui.keys.create_drawer")}
-      eyebrow={isEdit ? t("ui.keys.edit_eyebrow") : t("ui.keys.create_eyebrow")}
-      subtitle={key ? `${key.tokenPrefix}••••••••` : undefined}
-      footer={
-        <>
-          <button type="button" onClick={onClose}
-            className="h-9 rounded-lg border border-[color:var(--color-border)] px-4 font-mono text-[11px] tracking-wider text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]"
-          >
-            {t("ui.common.cancel")}
-          </button>
-          <button type="button" onClick={handleSave}
-            className="h-9 rounded-lg bg-[color:var(--color-lime)] px-4 font-mono text-[11px] font-bold tracking-wider text-[color:var(--color-ink)] hover:opacity-90"
-          >
-            {isEdit ? t("ui.common.save") : t("ui.keys.create_btn")}
-          </button>
-        </>
-      }
-    >
-      {/* ── BASIC ── */}
-      <Field label={t("ui.keys.name_field")}>
-        <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder={t("ui.keys.name_ph")} />
-      </Field>
-
-      <Field label={t("ui.keys.key_field")}>
-        <div className="flex gap-2 items-stretch">
-          <TextInput value={tokenKey} onChange={(e) => setTokenKey(e.target.value)} placeholder="sk-…" className="flex-1 font-mono" />
-          <button type="button" onClick={randomizeToken}
-            className="h-10 shrink-0 rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel)] px-3 font-mono text-[10px] tracking-wider text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]"
-          >
-            {t("ui.keys.random")}
-          </button>
-        </div>
-      </Field>
-
-      <Field label={t("ui.keys.group_field")}>
-        <TextInput value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder={t("ui.keys.group_ph")} />
-      </Field>
-
-      <Field label={t("ui.keys.request_limit")} hint={t("ui.keys.request_limit_hint")}>
-        <TextInput value={maxRequests} onChange={(e) => setMaxRequests(e.target.value)} placeholder="80000" />
-      </Field>
-
-      <Field label={t("ui.keys.cost_limit")} hint={t("ui.keys.cost_limit_hint")}>
-        <TextInput value={maxCost} onChange={(e) => setMaxCost(e.target.value)} placeholder="20.00" />
-      </Field>
-
-      <Field label={t("ui.keys.expiry_field")}>
-        <TextInput type="datetime-local" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
-      </Field>
-
-      <Toggle checked={enabled} onChange={setEnabled} label={t("ui.keys.enable_immediately")} />
-      <p className="mt-1 text-xs text-[color:var(--color-muted)]">{t("ui.keys.enable_hint")}</p>
-
-      <Field label={t("ui.keys.description_field")}>
-        <TextArea value={description} onChange={(e) => setDescription(e.target.value)} placeholder={t("ui.keys.description_ph")} rows={3} />
-      </Field>
-
-      <Field label={t("ui.keys.tags_field")} hint={t("ui.keys.tags_hint")}>
-        <TextInput value={tagsDraft} onChange={(e) => setTagsDraft(e.target.value)} placeholder={t("ui.keys.tags_ph")} />
-      </Field>
-
-      {/* ── SCOPES ── */}
-      <Field label={t("ui.keys.scopes_field")}>
-        <div className="flex flex-wrap gap-1.5">
-          {Object.entries(scopes).map(([scope, checked]) => (
-            <button key={scope} type="button" aria-pressed={checked} onClick={() => toggleScope(scope)}
-              className={`rounded border px-2 py-1 font-mono text-[10px] tracking-wider ${
-                checked
-                  ? "border-[color:var(--color-lime)]/40 bg-[color:var(--color-lime)]/10 text-[color:var(--color-lime)]"
-                  : "border-[color:var(--color-border)] text-[color:var(--color-muted)]"
-              }`}
-            >
-              {scope}
-            </button>
-          ))}
-        </div>
-      </Field>
-
-      {/* ── ADVANCED ── */}
-      <button
-        type="button"
-        onClick={() => setAdvancedOpen(!advancedOpen)}
-        className="flex w-full items-center justify-between rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)]/60 px-4 py-2.5 text-left font-mono text-[11px] tracking-wider text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)] transition-colors"
-      >
-        <span>{t("ui.keys.advanced")}</span>
-        <span>{advancedOpen ? t("ui.keys.advanced_open") : t("ui.keys.advanced_closed")}</span>
-      </button>
-
-      {advancedOpen && (
-        <div className="space-y-5 pt-1">
-          {/* Site weight JSON */}
-          <Field label={t("ui.keys.site_weights")} hint={t("ui.keys.site_weights_hint")}>
-            <TextArea value={siteWeightsText} onChange={(e) => setSiteWeightsText(e.target.value)} placeholder={t("ui.keys.site_weights_ph")} rows={3} className="font-mono" />
-          </Field>
-
-          {/* Model whitelist */}
-          <Field label={t("ui.keys.models_whitelist")} hint={t("ui.keys.models_hint")}>
-            <span className="chip chip-lime">{t("ui.keys.selected_models", { n: selectedModels.size })}</span>
-            <button type="button" onClick={() => setSelectedModels(new Set(catalogModels))}
-              className="ml-2 h-6 rounded border border-[color:var(--color-border)] px-2 font-mono text-[9px] tracking-wider text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]"
-            >
-              {t("ui.keys.select_all")}
-            </button>
-            <TextInput value={modelSearch} onChange={(e) => setModelSearch(e.target.value)} placeholder={t("ui.keys.search_models")} className="mt-2" />
-            <div className="mt-2 max-h-40 space-y-1 overflow-y-auto pr-1">
-              {!catalogLoaded ? (
-                <p className="text-xs text-[color:var(--color-muted)]">{t("ui.keys.loading_catalog")}</p>
-              ) : catalogModels.length === 0 ? (
-                <p className="text-xs text-[color:var(--color-muted)]">
-                  The model catalog is empty. Refresh the Models page to discover available models.
-                </p>
-              ) : filteredModels.length === 0 ? (
-                <p className="text-xs text-[color:var(--color-muted)]">{t("ui.keys.no_models")}</p>
-              ) : (
-                filteredModels.map((m) => (
-                  <label key={m.name} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs text-[color:var(--color-fg)] hover:bg-white/[0.03]">
-                    <input type="checkbox" checked={selectedModels.has(m.name)} onChange={() => toggleModel(m.name)} className="accent-[color:var(--color-lime)]" />
-                    <span>{m.name}</span>
-                    <span className="ml-auto text-[color:var(--color-muted)]">{m.family}</span>
-                  </label>
-                ))
-              )}
-            </div>
-          </Field>
-
-          {/* Group / model-pattern whitelist */}
-          <Field label={t("ui.keys.routes_whitelist")}>
-            <TextInput value={routeSearch} onChange={(e) => setRouteSearch(e.target.value)} placeholder={t("ui.keys.search_routes")} />
-            <div className="mt-2 max-h-32 space-y-1 overflow-y-auto pr-1">
-              {filteredRoutes.length === 0 ? (
-                <p className="text-xs text-[color:var(--color-muted)]">{t("ui.keys.no_routes")}</p>
-              ) : (
-                filteredRoutes.map((r) => (
-                  <label key={r.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs text-[color:var(--color-fg)] hover:bg-white/[0.03]">
-                    <input type="checkbox" checked={selectedRoutes.has(String(r.id))} onChange={() => toggleRoute(String(r.id))} className="accent-[color:var(--color-lime)]" />
-                    <code className="font-mono text-[10px]">{r.label}</code>
-                  </label>
-                ))
-              )}
-            </div>
-          </Field>
-
-          {/* Excluded sites */}
-          <Field label={t("ui.keys.exclude_sites")} hint={t("ui.keys.exclude_sites_hint")}>
-            <span className="chip chip-amber">{t("ui.keys.excluded_sites_count", { n: excludedSiteIds.size })}</span>
-            <div className="mt-2 space-y-1">
-              {siteOptions.length === 0 ? (
-                <p className="text-xs text-[color:var(--color-muted)]">{t("ui.keys.no_exclude_sites")}</p>
-              ) : (
-                siteOptions.map((site) => (
-                  <label key={site.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs text-[color:var(--color-fg)] hover:bg-white/[0.03]">
-                    <input type="checkbox" checked={excludedSiteIds.has(site.id)} onChange={() => toggleExcludedSite(site.id)} className="accent-[color:var(--color-amber)]" />
-                    <span>{site.label}</span>
-                  </label>
-                ))
-              )}
-            </div>
-          </Field>
-
-          {/* Excluded credentials — read-only notice for prototype */}
-          <div className="rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)]/40 p-4">
-            <p className="font-mono text-[10px] tracking-wider text-[color:var(--color-muted)]">{t("ui.keys.exclude_credentials")}</p>
-            <p className="mt-1 text-xs text-[color:var(--color-muted)]">{t("ui.keys.exclude_credentials_hint")}</p>
-            <p className="mt-2 text-xs text-[color:var(--color-muted)]">{t("ui.keys.no_exclude_credentials")}</p>
-          </div>
-        </div>
-      )}
-    </EditDrawer>
   );
 }

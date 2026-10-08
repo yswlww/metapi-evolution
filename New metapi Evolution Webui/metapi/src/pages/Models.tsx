@@ -1,6 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { Box, Boxes, Layers, RefreshCw, Table as TableIcon, LayoutGrid } from "lucide-react";
-import { MODELS, type Model, type ModelStatus } from "../data/prototype";
+import { MODELS, type ModelStatus } from "../data/prototype";
+import { mapMarketplaceModel, uniqueAccountCount as countAccounts, formatSuccessRate, formatPrice, type MarketplaceModel as Model, type MarketplaceRow } from "./observability/marketplace";
+import { useObservationLabels } from "./observability/labels";
+import { getBrand } from "../../../../src/server/shared/modelBrand";
+import { mergeMarketplaceMetadata } from "../../../../src/web/pages/helpers/modelsMarketplaceMetadata";
 import PageHeader from "../components/PageHeader";
 import {
   EmptyState,
@@ -10,6 +15,7 @@ import {
 } from "../components/PrototypeUI";
 import { useUiText } from "../i18n/useUiText";
 import { useToast } from "../components/Toast";
+import ModelMetadata from "./observability/ModelMetadata";
 import { DATA_MODE, fetchModelsMarketplace } from "../lib/source";
 
 const STATUS_TONES: Record<ModelStatus, string> = {
@@ -22,54 +28,18 @@ type SortKey = "name" | "accountCount" | "tokenCount" | "avgLatency" | "successR
 type SortDir = "asc" | "desc";
 type ViewMode = "card" | "table";
 
-// Backend marketplace model row shape.
-interface BackendMarketplaceModel {
-  name: string;
-  accountCount: number;
-  tokenCount: number;
-  avgLatency: number;
-  successRate: number | null;
-  description?: string | null;
-  tags?: string[];
-  supportedEndpointTypes?: string[];
-  accounts: Array<{ id: number; site: string; username: string | null; latency: number | null; unitCost: number | null; balance: number }>;
-}
-
-function mapBackendModel(raw: BackendMarketplaceModel, idx: number): Model {
-  return {
-    id: `mk-${idx}`,
-    provider: raw.accounts[0]?.site ?? "aggregate",
-    brand: raw.accounts.length ? "Aggregated" : "Aggregated",
-    name: raw.name,
-    family: raw.name.split(/[-_/]/)[0] ?? raw.name,
-    status: "available",
-    statusLabel: "Available",
-    modalities: ["text"],
-    contextWindow: 0,
-    inputPricePerMillion: 0,
-    outputPricePerMillion: 0,
-    capabilities: raw.tags ?? [],
-    description: raw.description ?? "",
-    tags: raw.tags ?? [],
-    supportedEndpointTypes: raw.supportedEndpointTypes ?? [],
-    accountCount: raw.accountCount ?? 0,
-    tokenCount: raw.tokenCount ?? 0,
-    avgLatency: raw.avgLatency ?? null,
-    successRate: raw.successRate,
-    siteOverrides: raw.accounts.map((a) => ({
-      id: String(a.id),
-      siteName: a.site,
-      enabled: true,
-      inputPricePerMillion: a.unitCost ?? 0,
-      outputPricePerMillion: 0,
-    })),
-  };
-}
 
 export default function Models() {
   const t = useUiText();
+  const l = useObservationLabels();
+  const requestId = useRef(0);
+  const { search: locationSearch } = useLocation();
+  const focusedName = new URLSearchParams(locationSearch).get("focusModel")?.trim() ?? "";
+  const [brandFilter, setBrandFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const pageSize = 24;
   const { showToast } = useToast();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(focusedName);
   const [provider, setProvider] = useState<"all" | string>("all");
   const [status, setStatus] = useState<"all" | ModelStatus>("all");
   const [sortBy, setSortBy] = useState<SortKey>("accountCount");
@@ -80,40 +50,65 @@ export default function Models() {
 
   // Provider/brand lists derived from the loaded models (real site names in
   // API mode) instead of the prototype catalog.
-  const providersList = useMemo(() => [...new Set(models.map((m) => m.provider))], [models]);
+  const providersList = useMemo(() => [...new Set(models.flatMap((m) => m.siteOverrides.map((a) => a.siteName)))], [models]);
   const brandsList = useMemo(() => [...new Set(models.map((m) => m.brand))], [models]);
 
   const reload = async (refresh = false) => {
+    const id = ++requestId.current;
     if (DATA_MODE === "prototype") {
-      setModels([...MODELS]);
+      setModels(MODELS.map((m) => ({ ...m, pricingSources: [], successRate: m.successRate == null ? null : m.successRate * 100 })));
       return;
     }
+    setRefreshing(true);
     try {
-      setRefreshing(refresh);
-      const { models: rows } = (await fetchModelsMarketplace({ refresh, includePricing: false })) as { models: BackendMarketplaceModel[] };
-      setModels(rows.map(mapBackendModel));
+      const base = await fetchModelsMarketplace({ refresh, includePricing: false });
+      if (id !== requestId.current) return;
+      const normalize = (rows: MarketplaceRow[]) => rows.map((raw) => ({ ...mapMarketplaceModel(raw), brand: getBrand(raw.name)?.name ?? "" }));
+      const baseRows = base.models as MarketplaceRow[];
+      setModels(normalize(baseRows));
+      // Hydrate all prices/metadata; keep the fast base list on enrichment failure.
+      try {
+        const detailed = await fetchModelsMarketplace({ includePricing: true });
+        if (id !== requestId.current) return;
+        const shape = (r: MarketplaceRow) => ({ ...r, description: r.description ?? null, tags: r.tags ?? [], supportedEndpointTypes: r.supportedEndpointTypes ?? [], pricingSources: r.pricingSources ?? [] });
+        setModels(normalize(mergeMarketplaceMetadata(baseRows.map(shape), (detailed.models as MarketplaceRow[]).map(shape))));
+      } catch (err) {
+        if (id === requestId.current) showToast(err instanceof Error ? err.message : t("ui.models.err_load"));
+      }
+      if (refresh && id === requestId.current) showToast(l("Model refresh requested", "已請求模型刷新", "已请求模型刷新"));
     } catch (err) {
-      setModels([]);
-      showToast(err instanceof Error ? err.message : "Failed to load models.");
+      if (id === requestId.current) showToast(err instanceof Error ? err.message : t("ui.models.err_load"));
     } finally {
-      setRefreshing(false);
+      if (id === requestId.current) setRefreshing(false);
     }
   };
 
-  useEffect(() => { reload(false); }, []);
+  useEffect(() => { reload(false); return () => { requestId.current++; }; }, []);
+  useEffect(() => {
+    setQuery(focusedName);
+    if (focusedName) { setBrandFilter("all"); setProvider("all"); setStatus("all"); setPage(1); }
+  }, [focusedName]);
+  useEffect(() => {
+    if (!focusedName || query !== focusedName || typeof document === "undefined") return;
+    const node = [...document.querySelectorAll<HTMLElement>("[data-model-name]")].find((element) => element.dataset.modelName === focusedName);
+    node?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+    node?.focus({ preventScroll: true });
+  }, [focusedName, query, models, viewMode]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     let list = models.filter((model) => {
+      if (focusedName && query === focusedName && model.name !== focusedName) return false;
       const matchesQuery =
         q.length === 0 ||
         [model.name, model.family, model.brand, model.provider, ...model.capabilities, ...model.tags, model.description]
           .join(" ")
           .toLowerCase()
           .includes(q);
-      const matchesProvider = provider === "all" || model.provider === provider;
+      const matchesProvider = provider === "all" || model.siteOverrides.some((a) => a.siteName === provider);
+      const matchesBrand = brandFilter === "all" || model.brand === brandFilter;
       const matchesStatus = status === "all" || model.status === status;
-      return matchesQuery && matchesProvider && matchesStatus;
+      return matchesQuery && matchesProvider && matchesBrand && matchesStatus;
     });
 
     // Sort
@@ -143,18 +138,22 @@ export default function Models() {
     });
 
     return list;
-  }, [query, provider, status, sortBy, sortDir, models]);
+  }, [query, focusedName, provider, brandFilter, status, sortBy, sortDir, models]);
+  useEffect(() => setPage(1), [query, provider, brandFilter, status, sortBy, sortDir]);
+  const pageRows = filtered.slice((page - 1) * pageSize, page * pageSize);
+  const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  useEffect(() => setPage((p) => Math.min(p, pages)), [pages]);
 
   // Group by brand for card view
   const grouped = useMemo(() => {
     const map = new Map<string, Model[]>();
-    for (const model of filtered) {
+    for (const model of pageRows) {
       const brand = model.brand || t("ui.models.unbranded");
       if (!map.has(brand)) map.set(brand, []);
       map.get(brand)!.push(model);
     }
     return Array.from(map.entries());
-  }, [filtered, t]);
+  }, [filtered, page, t]);
 
   const summary = useMemo(() => {
     const available = models.filter((m) => m.status === "available").length;
@@ -163,18 +162,10 @@ export default function Models() {
     return { available, preview, sites };
   }, [models]);
 
-  const uniqueAccountCount = useMemo(() => {
-    const accounts = new Set<string>();
-    models.forEach((m) => {
-      for (const o of m.siteOverrides) {
-        accounts.add(`${o.siteName}`);
-      }
-    });
-    return accounts.size;
-  }, [models]);
+  const uniqueAccountCount = useMemo(() => countAccounts(models), [models]);
 
   const fmtLatency = (ms: number | null) => ms == null ? "—" : ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`;
-  const fmtSuccess = (r: number | null) => r == null ? "—" : `${(r * 100).toFixed(1)}%`;
+  const fmtSuccess = formatSuccessRate;
 
   return (
     <div className="space-y-8">
@@ -185,10 +176,11 @@ export default function Models() {
         actions={
           <button
             type="button"
-            onClick={() => { showToast(refreshing ? "Refreshing…" : t("ui.models.refresh_ok")); reload(true); }}
+            onClick={() => reload(true)}
+            disabled={refreshing}
             className="flex h-9 items-center gap-1.5 rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel)]/50 px-4 font-mono text-xs tracking-wider text-[color:var(--color-fg)] hover:border-[color:var(--color-border-bright)]"
           >
-            <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} /> {refreshing ? "REFRESHING…" : t("ui.models.refresh")}
+            <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} /> {refreshing ? l("Loading…", "載入中…", "加载中…") : t("ui.models.refresh")}
           </button>
         }
       />
@@ -232,7 +224,7 @@ export default function Models() {
                 type="button"
                 onClick={() => setViewMode(viewMode === "card" ? "table" : "card")}
                 className="flex h-8 items-center gap-1.5 rounded-lg border border-[color:var(--color-border)] px-2.5 font-mono text-[10px] tracking-wider text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]"
-                aria-label={`Switch to ${viewMode === "card" ? t("ui.models.view_table") : t("ui.models.view_card")}`}
+                aria-label={viewMode === "card" ? t("ui.models.view_table") : t("ui.models.view_card")}
               >
                 {viewMode === "card" ? <TableIcon size={13} /> : <LayoutGrid size={13} />}
                 {viewMode === "card" ? t("ui.models.view_table") : t("ui.models.view_card")}
@@ -250,6 +242,10 @@ export default function Models() {
             className="flex-1"
           />
           <div className="flex flex-wrap items-center gap-2">
+            <select aria-label={l("Brand", "品牌")} value={brandFilter} onChange={(e) => setBrandFilter(e.target.value)} className="h-9 rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)] px-3 text-xs">
+              <option value="all">{l("All brands", "全部品牌")}</option>
+              {brandsList.map((b) => <option key={b} value={b}>{b || t("ui.models.unbranded")}</option>)}
+            </select>
             <select
               aria-label={t("ui.models.filter_provider")}
               value={provider}
@@ -320,25 +316,26 @@ export default function Models() {
                     <th className="px-4 py-3 font-mono text-[10px] tracking-widest text-[color:var(--color-muted)]">{t("ui.models.col_accounts")}</th>
                     <th className="px-4 py-3 font-mono text-[10px] tracking-widest text-[color:var(--color-muted)]">{t("ui.models.col_success")}</th>
                     <th className="px-4 py-3 font-mono text-[10px] tracking-widest text-[color:var(--color-muted)]">{t("ui.models.col_latency")}</th>
-                    <th className="px-4 py-3 font-mono text-[10px] tracking-widest text-[color:var(--color-muted)]">INPUT/1M</th>
-                    <th className="px-4 py-3 font-mono text-[10px] tracking-widest text-[color:var(--color-muted)]">OUTPUT/1M</th>
+                    <th className="px-4 py-3 font-mono text-[10px] tracking-widest text-[color:var(--color-muted)]">{t("ui.models.input_1m")}</th>
+                    <th className="px-4 py-3 font-mono text-[10px] tracking-widest text-[color:var(--color-muted)]">{t("ui.models.output_1m")}</th>
                     <th className="px-4 py-3" />
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((model) => (
-                    <tr key={model.id} className="border-b border-[color:var(--color-border)]/60 last:border-0">
+                  {pageRows.map((model) => (
+                    <tr key={model.id} data-model-name={model.name} tabIndex={-1} className="border-b border-[color:var(--color-border)]/60 last:border-0">
                       <td className="px-4 py-3">
                         <div className="font-medium text-[color:var(--color-fg)]">{model.name}</div>
                         <div className="font-mono text-[10px] text-[color:var(--color-muted)]">{model.brand} · {model.family}</div>
                         {model.description && <div className="mt-0.5 text-[10px] leading-4 text-[color:var(--color-muted)] line-clamp-1">{model.description}</div>}
+                        <ModelMetadata model={model} />
                       </td>
-                      <td className="px-4 py-3"><span className={`chip chip-${STATUS_TONES[model.status]}`}>{model.statusLabel}</span></td>
+                      <td className="px-4 py-3"><span className={`chip chip-${STATUS_TONES[model.status]}`}>{model.status === "available" ? t("ui.models.status_available") : model.status === "preview" ? t("ui.models.preview") : t("ui.status.deprecated")}</span></td>
                       <td className="px-4 py-3"><span className="font-mono text-xs text-[color:var(--color-fg)]">{model.accountCount}</span></td>
-                      <td className="px-4 py-3"><span className={`font-mono text-xs ${model.successRate != null && model.successRate < 0.95 ? "text-[color:var(--color-rose)]" : "text-[color:var(--color-fg)]"}`}>{fmtSuccess(model.successRate)}</span></td>
+                      <td className="px-4 py-3"><span className={`font-mono text-xs ${model.successRate != null && model.successRate < 95 ? "text-[color:var(--color-rose)]" : "text-[color:var(--color-fg)]"}`}>{fmtSuccess(model.successRate)}</span></td>
                       <td className="px-4 py-3"><span className="font-mono text-xs text-[color:var(--color-muted)]">{fmtLatency(model.avgLatency)}</span></td>
-                      <td className="px-4 py-3"><span className="font-mono text-xs text-[color:var(--color-fg)]">${model.inputPricePerMillion.toFixed(2)}</span></td>
-                      <td className="px-4 py-3"><span className="font-mono text-xs text-[color:var(--color-fg)]">${model.outputPricePerMillion.toFixed(2)}</span></td>
+                      <td className="px-4 py-3"><span className="font-mono text-xs text-[color:var(--color-fg)]">{formatPrice(model.inputPricePerMillion)}</span></td>
+                      <td className="px-4 py-3"><span className="font-mono text-xs text-[color:var(--color-fg)]">{formatPrice(model.outputPricePerMillion)}</span></td>
                       <td className="px-4 py-3">
                         <button
                           type="button"
@@ -359,11 +356,16 @@ export default function Models() {
         {/* Mobile card fallback for table mode */}
         {viewMode === "table" && (
           <div className="space-y-3 lg:hidden">
-            {filtered.map((model) => (
+            {pageRows.map((model) => (
               <ModelCard key={model.id} model={model} t={t} showToast={showToast} fmtLatency={fmtLatency} fmtSuccess={fmtSuccess} />
             ))}
           </div>
         )}
+        <div className="flex items-center justify-between text-xs">
+          <button type="button" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>{l("Previous", "上一頁", "上一页")}</button>
+          <span>{page} / {pages} · {filtered.length}</span>
+          <button type="button" disabled={page >= pages} onClick={() => setPage((p) => p + 1)}>{l("Next", "下一頁", "下一页")}</button>
+        </div>
       </section>
     </div>
   );
@@ -383,7 +385,7 @@ function ModelCard({
   fmtSuccess: (r: number | null) => string;
 }) {
   return (
-    <div className="card p-4">
+    <div className="card p-4" data-model-name={model.name} tabIndex={-1}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="font-display text-xl tracking-tight text-[color:var(--color-fg)]">{model.name}</h3>
@@ -391,7 +393,7 @@ function ModelCard({
             {model.provider} · {model.family}
           </div>
         </div>
-        <span className={`chip chip-${STATUS_TONES[model.status]}`}>{model.statusLabel}</span>
+        <span className={`chip chip-${STATUS_TONES[model.status]}`}>{model.status === "available" ? t("ui.models.status_available") : model.status === "preview" ? t("ui.models.preview") : t("ui.status.deprecated")}</span>
       </div>
 
       <div className="mt-3 flex flex-wrap gap-1.5">
@@ -414,15 +416,15 @@ function ModelCard({
       <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)]/50 p-2.5 text-xs">
         <div>
           <span className="font-mono text-[9px] tracking-widest uppercase text-[color:var(--color-muted)]">{t("ui.models.input_1m")}</span>
-          <div className="mt-0.5 font-mono text-[color:var(--color-fg)]">${model.inputPricePerMillion.toFixed(2)}</div>
+          <div className="mt-0.5 font-mono text-[color:var(--color-fg)]">{formatPrice(model.inputPricePerMillion)}</div>
         </div>
         <div>
           <span className="font-mono text-[9px] tracking-widest uppercase text-[color:var(--color-muted)]">{t("ui.models.output_1m")}</span>
-          <div className="mt-0.5 font-mono text-[color:var(--color-fg)]">${model.outputPricePerMillion.toFixed(2)}</div>
+          <div className="mt-0.5 font-mono text-[color:var(--color-fg)]">{formatPrice(model.outputPricePerMillion)}</div>
         </div>
         <div>
           <span className="font-mono text-[9px] tracking-widest uppercase text-[color:var(--color-muted)]">{t("ui.models.context")}</span>
-          <div className="mt-0.5 font-mono text-[color:var(--color-fg)]">{(model.contextWindow / 1000).toFixed(0)}k</div>
+          <div className="mt-0.5 font-mono text-[color:var(--color-fg)]">{model.contextWindow == null ? "—" : `${(model.contextWindow / 1000).toFixed(0)}k`}</div>
         </div>
         <div>
           <span className="font-mono text-[9px] tracking-widest uppercase text-[color:var(--color-muted)]">{t("ui.models.accounts")}</span>
@@ -453,13 +455,14 @@ function ModelCard({
                   <span className={`h-1.5 w-1.5 rounded-full ${site.enabled ? "bg-[color:var(--color-lime)]" : "bg-[color:var(--color-muted)]"}`} />
                   {site.siteName}
                 </span>
-                <span className="font-mono text-[color:var(--color-muted)]">${site.inputPricePerMillion.toFixed(2)} / ${site.outputPricePerMillion.toFixed(2)}</span>
+                <span className="font-mono text-[color:var(--color-muted)]">{formatPrice(site.inputPricePerMillion)} / {formatPrice(site.outputPricePerMillion)}</span>
               </div>
             ))}
           </div>
         </div>
       )}
 
+      <ModelMetadata model={model} />
       <div className="mt-3 flex justify-end">
         <button
           type="button"

@@ -1,0 +1,2 @@
+export const PARITY_ACTION_CLASS = 'rounded-lg border border-[color:var(--color-border)] px-3.5 py-1.5 font-mono text-[11px] tracking-wider text-[color:var(--color-muted)] transition-colors hover:text-[color:var(--color-fg)] hover:border-[color:var(--color-border-bright)] disabled:opacity-40';
+export const PARITY_SELECT_CLASS = 'h-9 w-full rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)] px-3 font-mono text-xs text-[color:var(--color-fg)] outline-none focus:border-[color:var(--color-lime)]/50';

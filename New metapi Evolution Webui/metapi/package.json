@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test src/app/routes.test.ts src/data/prototype.test.ts",
+    "test": "node ../../node_modules/tsx/dist/cli.mjs ../../scripts/dev/test-evolution-ui.ts",
     "typecheck": "tsc --ignoreConfig --noEmit --jsx react-jsx --module esnext --moduleResolution bundler --target es2022 --types vite/client src/main.tsx"
   },
   "devDependencies": {

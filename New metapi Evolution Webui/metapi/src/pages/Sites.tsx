@@ -1,4 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from 'react-router-dom';
+import SiteModelsChooser from './sites/SiteModelsChooser';
+import { useManagementText } from '../lib/managementParityText';
+import { batchOutcome, buildOrderUpdates, sortManagementRows, type BatchResponse } from '../lib/managementParity';
+import { apiPost } from '../lib/client';
 import {
   CheckCircle2,
   ExternalLink,
@@ -39,6 +44,9 @@ const STATUS_TONES: Record<SiteStatus, string> = {
 
 export default function Sites() {
   const t = useUiText();
+  const l = useManagementText();
+  const [createdSite, setCreatedSite] = useState<Site | null>(null);
+  const [disabledLoaded, setDisabledLoaded] = useState(false);
   const { showToast } = useToast();
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,7 +55,7 @@ export default function Sites() {
     let cancelled = false;
     fetchSites()
       .then((data) => { if (!cancelled) setSites(data); })
-      .catch(() => { if (!cancelled) showToast("Failed to load sites."); })
+      .catch(() => { if (!cancelled) showToast(t("ui.sites.err_load")); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [showToast]);
@@ -88,7 +96,7 @@ export default function Sites() {
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
-    return sites.filter((s) => {
+    return sortManagementRows(sites).filter((s) => {
       const matchSearch =
         !q ||
         s.name.toLowerCase().includes(q) ||
@@ -141,19 +149,19 @@ export default function Sites() {
     });
   };
 
-  const runBatch = async (action: "enable" | "disable" | "delete") => {
+  const runBatch = async (action: "enable" | "disable" | "delete" | 'enableSystemProxy' | 'disableSystemProxy') => {
     const ids = Array.from(batchIds);
     if (!ids.length) return;
     if (action === "delete" && !window.confirm(`Delete ${ids.length} site(s)? This cannot be undone.`)) return;
     setBatchBusy((b) => ({ ...b, [action]: true }));
     try {
-      await batchUpdateSites({ ids, action });
-      showToast(`${action === "delete" ? "Deleted" : `${action === "enable" ? "Enabled" : "Disabled"}`} ${ids.length} site(s).`);
-      setBatchIds(new Set());
+      const outcome = batchOutcome(await apiPost<BatchResponse>('/api/sites/batch', { ids, action }));
+      showToast(`${l('success')}: ${outcome.succeeded}; ${l('failed')}: ${outcome.failedIds.length}${outcome.messages.length ? ` — ${outcome.messages.join('; ')}` : ''}`);
+      setBatchIds(new Set(outcome.failedIds));
       const data = await fetchSites();
       setSites(data);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Batch operation failed.");
+      showToast(err instanceof Error ? err.message : t("ui.routes.batch_op_failed"));
     } finally {
       setBatchBusy((b) => ({ ...b, [action]: false }));
     }
@@ -191,10 +199,11 @@ export default function Sites() {
   // and an empty input clears the old list.
   useEffect(() => {
     let cancelled = false;
+    setDisabledLoaded(false);
     if (drawerMode === "edit" && drawer?.id) {
       fetchSiteDisabledModels(drawer.id)
-        .then((models) => { if (!cancelled) setForm((prev) => ({ ...prev, disabledModels: (models ?? []).join(", ") })); })
-        .catch(() => { /* keep form as-is */ });
+        .then((models) => { if (!cancelled) { setForm((prev) => ({ ...prev, disabledModels: (models ?? []).join(", ") })); setDisabledLoaded(true); } })
+        .catch((err) => { if (!cancelled) showToast(err instanceof Error ? err.message : l('loadFailed')); });
     } else if (drawerMode === "create") {
       setForm((prev) => ({ ...prev, disabledModels: "" }));
     }
@@ -211,9 +220,9 @@ export default function Sites() {
       } else if (info?.name) {
         setForm((prev) => ({ ...prev, name: prev.name || info.name || "" }));
       }
-      showToast("Site detected.");
+      showToast(t("ui.sites.detected"));
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Detection failed.");
+      showToast(err instanceof Error ? err.message : t("ui.sites.detection_failed"));
     }
   };
 
@@ -225,19 +234,20 @@ export default function Sites() {
     setSaving(true);
     try {
       if (drawerMode === "create") {
-        await createSite(buildSitePayload(true));
+        const created = await createSite(buildSitePayload(true));
+        setCreatedSite(created);
       } else if (drawer?.id) {
         await updateSite(drawer.id, buildSitePayload(false));
         // Always persist disabled-models so an empty input clears the old list.
         const models = form.disabledModels.split(",").map((m) => m.trim()).filter(Boolean);
-        await updateSiteDisabledModels(drawer.id, models);
+        if (disabledLoaded) await updateSiteDisabledModels(drawer.id, models);
       }
       showToast(drawerMode === "create" ? t("ui.sites.created") : t("ui.sites.saved"));
       setDrawer(null);
       const data = await fetchSites();
       setSites(data);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Save failed.");
+      showToast(err instanceof Error ? err.message : t("ui.toast.save_failed"));
     } finally {
       setSaving(false);
     }
@@ -248,12 +258,12 @@ export default function Sites() {
     if (!window.confirm(`Delete site "${form.name}"? This cannot be undone.`)) return;
     try {
       await deleteSite(drawer.id);
-      showToast("Site deleted.");
+      showToast(t("ui.sites.deleted"));
       setDrawer(null);
       const data = await fetchSites();
       setSites(data);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Delete failed.");
+      showToast(err instanceof Error ? err.message : t("ui.toast.delete_failed"));
     }
   };
 
@@ -263,7 +273,7 @@ export default function Sites() {
       await probeSiteNow(drawer.id, { scope: "single" });
       showToast(t("ui.sites.probe_ok", { name: form.name }));
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Probe failed.");
+      showToast(err instanceof Error ? err.message : t("ui.monitor.probe_failed"));
     }
   };
 
@@ -285,6 +295,7 @@ export default function Sites() {
         }
       />
 
+      {createdSite && <div className="card flex flex-wrap gap-3 p-4"><span>{createdSite.name}</span><Link to={`/app/accounts?create=1&siteId=${createdSite.id}`}>{l('addAccount')}</Link><button onClick={() => setCreatedSite(null)}>{l('cancel')}</button></div>}
       {/* Stats */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatCard label={t("ui.sites.filter.all")} value={statusCounts.all ?? 0} icon={<Server size={16} />} />
@@ -322,16 +333,17 @@ export default function Sites() {
           <span className="chip chip-lime">{batchIds.size} {t("ui.sites.selected")}</span>
           <button type="button" onClick={() => runBatch("enable")} disabled={batchBusy.enable}
             className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-panel)]/50 px-2.5 py-1.5 font-mono text-[10px] tracking-wider text-[color:var(--color-fg)] hover:border-[color:var(--color-border-bright)] disabled:opacity-40">
-            {batchBusy.enable ? "…" : "ENABLE"}
+            {batchBusy.enable ? "…" : t("ui.common.enable")}
           </button>
           <button type="button" onClick={() => runBatch("disable")} disabled={batchBusy.disable}
             className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-panel)]/50 px-2.5 py-1.5 font-mono text-[10px] tracking-wider text-[color:var(--color-fg)] hover:border-[color:var(--color-border-bright)] disabled:opacity-40">
-            {batchBusy.disable ? "…" : "DISABLE"}
+            {batchBusy.disable ? "…" : t("ui.common.disable")}
           </button>
           <button type="button" onClick={() => runBatch("delete")} disabled={batchBusy.delete}
             className="rounded-md border border-[color:var(--color-rose)]/40 px-2.5 py-1.5 font-mono text-[10px] tracking-wider text-[color:var(--color-rose)] hover:bg-[color:var(--color-rose)]/10 disabled:opacity-40">
-            {batchBusy.delete ? "…" : "DELETE"}
+            {batchBusy.delete ? "…" : t("ui.common.delete")}
           </button>
+          {(['enableSystemProxy', 'disableSystemProxy'] as const).map(action => <button key={action} disabled={Object.values(batchBusy).some(Boolean)} onClick={() => runBatch(action)} className="rounded border px-3 py-2">{l(action === 'enableSystemProxy' ? 'systemProxyOn' : 'systemProxyOff')}</button>)}
           <button type="button" onClick={() => setBatchIds(new Set())}
             className="ml-auto rounded-md border border-[color:var(--color-border)] px-2.5 py-1.5 font-mono text-[10px] tracking-wider text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]">
             CLEAR
@@ -347,10 +359,8 @@ export default function Sites() {
           {filtered.map((site) => {
             const adapterColor = ADAPTER_COLORS[site.adapter] || "#c8ff2e";
             return (
-              <button
+              <article
                 key={site.id}
-                type="button"
-                onClick={() => openEdit(site)}
                 className="card group relative overflow-hidden p-5 text-left transition-all hover:border-[color:var(--color-border-bright)]"
               >
                 <div className="absolute left-0 right-0 top-0 h-0.5" style={{ background: `linear-gradient(90deg, ${adapterColor}, transparent)` }} />
@@ -417,7 +427,8 @@ export default function Sites() {
                   <span className="truncate font-mono text-[10px] text-[color:var(--color-muted)]">{site.url}</span>
                   <Pencil size={12} className="shrink-0 text-[color:var(--color-muted)] opacity-0 transition-opacity group-hover:opacity-100" />
                 </div>
-              </button>
+                <div className="mt-3 flex flex-wrap gap-3"><button onClick={() => openEdit(site)}>{l('edit')}</button><button disabled={saving} onClick={async () => { setSaving(true); try { await updateSite(site.id, { isPinned: !site.isPinned }); setSites(await fetchSites()); } catch(e) { showToast(e instanceof Error ? e.message : l('saveFailed')); } finally { setSaving(false); } }}>{l('pin')}</button>{(['up', 'down'] as const).map(direction => <button key={direction} disabled={saving} onClick={async () => { setSaving(true); try { await Promise.all(buildOrderUpdates(sites, site.id, direction).map(update => updateSite(update.id, { sortOrder: update.sortOrder }))); setSites(await fetchSites()); } catch(e) { showToast(e instanceof Error ? e.message : l('saveFailed')); } finally { setSaving(false); } }}>{l(direction)}</button>)}</div>
+              </article>
             );
           })}
         </div>
@@ -596,6 +607,7 @@ export default function Sites() {
                   </label>
                 </div>
 
+                {drawerMode === 'edit' && drawer.id && disabledLoaded && <SiteModelsChooser key={drawer.id} siteId={drawer.id} value={form.disabledModels} onChange={disabledModels => setForm(prev => ({ ...prev, disabledModels }))} />}
                 <label className="block">
                   <span className="mb-1 block font-mono text-[10px] tracking-[0.16em] text-[color:var(--color-muted)]">{t("ui.sites.adv_disabled_models")}</span>
                   <input
@@ -641,7 +653,7 @@ export default function Sites() {
                       onClick={handleDelete}
                       className="rounded-lg border border-[color:var(--color-rose)]/40 px-3 py-1.5 font-mono text-[10px] tracking-wider text-[color:var(--color-rose)] hover:bg-[color:var(--color-rose)]/10"
                     >
-                      DELETE
+                      {t("ui.common.delete")}
                     </button>
                   </>
                 )}

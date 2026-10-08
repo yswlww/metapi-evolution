@@ -1,317 +1,103 @@
-import { useEffect, useMemo, useState } from "react";
-import { ScrollText } from "lucide-react";
-import { PROGRAM_EVENTS, type ProgramEvent, type ProgramEventStatus } from "../data/prototype";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ScrollText, RefreshCw } from "lucide-react";
 import PageHeader from "../components/PageHeader";
-import {
-  EmptyState,
-  SearchField,
-  SectionTitle,
-  StatCard,
-} from "../components/PrototypeUI";
+import { EmptyState, SearchField, SectionTitle, StatCard } from "../components/PrototypeUI";
 import { useUiText } from "../i18n/useUiText";
 import { useToast } from "../components/Toast";
-import {
-  DATA_MODE,
-  fetchEvents,
-  markEventRead,
-  markAllEventsRead,
-  clearEvents,
-} from "../lib/source";
+import { markEventRead, markAllEventsRead, clearEvents } from "../lib/source";
+import { fetchEventPage, fetchUnreadCount } from "./observability/api";
+import { mapEvent, appendEventPage, type ProgramEvent, type EventResult } from "./observability/events";
+import { useObservationLabels } from "./observability/labels";
 
-const TYPE_OPTIONS: ("all" | ProgramEvent["type"])[] = [
-  "all",
-  "oauth",
-  "key",
-  "announcement",
-  "system",
-  "export",
-];
-
-const STATUS_OPTIONS: ("all" | ProgramEventStatus)[] = [
-  "all",
-  "success",
-  "warning",
-  "failure",
-  "info",
-];
-
-const STATUS_TONES: Record<ProgramEventStatus, string> = {
-  success: "lime",
-  warning: "amber",
-  failure: "rose",
-  info: "cyan",
-};
-
-// Backend event row shape.
-interface BackendEvent {
-  id: number;
-  type: string;
-  level?: string;
-  title: string;
-  message?: string;
-  read: boolean;
-  createdAt?: string;
-}
-
-function mapBackendEvent(raw: BackendEvent): ProgramEvent {
-  const status = raw.level === "error" || raw.level === "failure"
-    ? "failure" as const
-    : raw.level === "warning" ? "warning" as const
-    : raw.level === "info" ? "info" as const
-    : "info" as const;
-  const type = (["oauth", "key", "announcement", "system", "export"] as const).includes(raw.type as ProgramEvent["type"])
-    ? (raw.type as ProgramEvent["type"])
-    : "system";
-  return {
-    id: String(raw.id),
-    type,
-    status,
-    statusLabel: status === "failure" ? "Failure" : status === "warning" ? "Warning" : status === "info" ? "Info" : "Success",
-    title: raw.title,
-    detail: raw.message ?? "",
-    occurredAt: raw.createdAt ?? "",
-    read: Boolean(raw.read),
-  };
-}
-
+const PAGE_SIZE = 50;
+const TYPES = ["all", "checkin", "balance", "token", "proxy", "status", "site_notice", "oauth", "key", "system", "export"];
+const RESULTS: EventResult[] = ["success", "warning", "failure", "info", "skipped", "running"];
+const TONES: Record<EventResult, string> = { success: "lime", warning: "amber", failure: "rose", info: "cyan", skipped: "amber", running: "cyan" };
 export default function ProgramLogs() {
-  const t = useUiText();
-  const { showToast } = useToast();
-  const [query, setQuery] = useState("");
-  const [typeFilter, setTypeFilter] = useState<"all" | ProgramEvent["type"]>("all");
-  const [statusFilter, setStatusFilter] = useState<"all" | ProgramEventStatus>("all");
-  const [events, setEvents] = useState<ProgramEvent[]>(() => [...PROGRAM_EVENTS]);
-  const [feedback, setFeedback] = useState<string | null>(null);
-  const [visibleCount, setVisibleCount] = useState(5);
+  const t = useUiText(); const l = useObservationLabels(); const { showToast } = useToast();
+  const [events, setEvents] = useState<ProgramEvent[]>([]);
+  const [query, setQuery] = useState(""); const [typeFilter, setTypeFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all"); const [onlyUnread, setOnlyUnread] = useState(false);
+  const [unread, setUnread] = useState<number | null>(null); const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false); const [loading, setLoading] = useState(false); const [mutating, setMutating] = useState(false);
+  const sequence = useRef(0);
+  const statusLabel = (s: EventResult) => s === "skipped" ? l("Skipped", "已跳過", "已跳过") : s === "running" ? l("Running", "進行中", "进行中") : s === "success" ? t("ui.proxylogs.success") : t(`ui.events.level_${s}`);
+  const typeLabel = (type: string) => ({ checkin: l("Check-in", "簽到", "签到"), balance: l("Balance", "餘額", "余额"), token: l("Token", "令牌"), proxy: l("Proxy", "代理"), status: l("Status", "狀態", "状态"), site_notice: t("ui.ann.title") }[type] ?? type);
 
-  const reload = async () => {
-    if (DATA_MODE === "prototype") return;
+  const reload = async (append = false) => {
+    const id = ++sequence.current; const nextOffset = append ? offset : 0; setLoading(true);
     try {
-      const data = await fetchEvents(50);
-      setEvents((data as BackendEvent[]).map(mapBackendEvent));
-    } catch (err) {
-      setEvents([]);
-      showToast(err instanceof Error ? err.message : "Failed to load events.");
-    }
+      const [rows, count] = await Promise.all([fetchEventPage({ offset: nextOffset, limit: PAGE_SIZE, type: typeFilter, unread: onlyUnread }), fetchUnreadCount()]);
+      if (id !== sequence.current) return;
+      const safeRows = Array.isArray(rows) ? rows : [];
+      setEvents((prev) => append ? appendEventPage(prev, safeRows.map(mapEvent)) : safeRows.map(mapEvent));
+      // Offset counts raw server rows, never deduplicated or locally filtered rows.
+      setOffset(nextOffset + safeRows.length); setHasMore(safeRows.length === PAGE_SIZE); setUnread(count.count);
+    } catch (err) { if (id === sequence.current) showToast(err instanceof Error ? err.message : t("ui.events.err_load")); }
+    finally { if (id === sequence.current) setLoading(false); }
   };
-
-  useEffect(() => { reload(); }, []);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return events.filter((event) => {
-      const matchesQuery =
-        q.length === 0 ||
-        [event.title, event.detail, event.type].join(" ").toLowerCase().includes(q);
-      const matchesType = typeFilter === "all" || event.type === typeFilter;
-      const matchesStatus = statusFilter === "all" || event.status === statusFilter;
-      return matchesQuery && matchesType && matchesStatus;
-    });
-  }, [events, query, typeFilter, statusFilter]);
-
-  const unread = events.filter((e) => !e.read).length;
-
-  const flash = (msg: string) => {
-    setFeedback(msg);
-    window.setTimeout(() => setFeedback(null), 2500);
+  useEffect(() => { setEvents([]); setOffset(0); setHasMore(false); reload(); return () => { sequence.current++; }; }, [typeFilter, onlyUnread]);
+  const filtered = useMemo(() => events.filter((e) => (statusFilter === "all" || e.status === statusFilter) && (!query.trim() || `${e.title} ${e.detail} ${e.type}`.toLowerCase().includes(query.trim().toLowerCase()))), [events, query, statusFilter]);
+  const refreshUnread = async () => {
+    try { setUnread((await fetchUnreadCount()).count); }
+    catch (err) { setUnread(null); showToast(err instanceof Error ? err.message : t("ui.events.err_load")); }
   };
-
   const markRead = async (id: string) => {
+    setMutating(true);
     try {
       await markEventRead(Number(id));
-      setEvents((prev) => prev.map((e) => (e.id === id ? { ...e, read: true } : e)));
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Mark read failed.");
-    }
+      setEvents((prev) => onlyUnread ? prev.filter((event) => event.id !== id) : prev.map((event) => event.id === id ? { ...event, read: true } : event));
+      // Removing a row from the server unread set shifts all subsequent raw offsets.
+      if (onlyUnread) setOffset((value) => Math.max(0, value - 1));
+      await refreshUnread();
+    } catch (err) { showToast(err instanceof Error ? err.message : t("ui.events.mark_read_failed")); } finally { setMutating(false); }
   };
-
-  const markAllRead = async () => {
+  const markAll = async () => {
+    setMutating(true);
     try {
       await markAllEventsRead();
-      setEvents((prev) => prev.map((e) => ({ ...e, read: true })));
-      flash(t("ui.events.read_ok"));
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Mark all failed.");
-    }
+      setEvents((prev) => onlyUnread ? [] : prev.map((event) => ({ ...event, read: true })));
+      if (onlyUnread) { setOffset(0); setHasMore(false); }
+      await refreshUnread(); showToast(t("ui.events.read_ok"));
+    } catch (err) { showToast(err instanceof Error ? err.message : t("ui.events.mark_all_failed")); } finally { setMutating(false); }
   };
-
   const clearAll = async () => {
-    try {
-      await clearEvents();
-      setEvents([]);
-      flash(t("ui.events.clear_ok"));
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Clear failed.");
-    }
+    if (!window.confirm(l("Clear all program events?", "清除全部程式事件？", "清除全部程序事件？"))) return;
+    setMutating(true);
+    try { await clearEvents(); setEvents([]); setOffset(0); setHasMore(false); await refreshUnread(); showToast(t("ui.events.clear_ok")); } catch (err) { showToast(err instanceof Error ? err.message : t("ui.events.clear_failed")); } finally { setMutating(false); }
   };
-
-  return (
-    <div className="space-y-8">
-      <PageHeader
-        eyebrow={t("ui.events.eyebrow")}
-        title={t("ui.events.title")}
-        description={t("ui.events.desc")}
-        actions={
-          <>
-            <button
-              type="button"
-              onClick={markAllRead}
-              disabled={unread === 0}
-              className="h-9 rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel)]/50 px-4 font-mono text-xs tracking-wider text-[color:var(--color-fg)] hover:border-[color:var(--color-border-bright)] disabled:opacity-40"
-            >
-              {t("ui.events.mark_all_read")}
-            </button>
-            <button
-              type="button"
-              onClick={clearAll}
-              disabled={events.length === 0}
-              className="h-9 rounded-lg border border-[color:var(--color-rose)]/40 px-4 font-mono text-xs tracking-wider text-[color:var(--color-rose)] hover:bg-[color:var(--color-rose)]/10 disabled:opacity-40"
-            >
-              {t("ui.events.clear_all")}
-            </button>
-          </>
-        }
-      />
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          label={t("ui.events.total")}
-          value={events.length}
-          icon={<ScrollText size={16} />}
-        />
-        <StatCard
-          label={t("ui.events.unread")}
-          value={unread}
-          trend={{ label: unread > 0 ? t("ui.events.needs_review") : t("ui.events.all_read"), tone: unread > 0 ? "amber" : "lime" }}
-          icon={<ScrollText size={16} />}
-        />
-        <StatCard
-          label={t("ui.events.warnings")}
-          value={events.filter((e) => e.status === "warning").length}
-          trend={{ label: t("ui.events.attention"), tone: events.some((e) => e.status === "warning") ? "amber" : "muted" }}
-          icon={<ScrollText size={16} />}
-        />
-        <StatCard
-          label={t("ui.events.failures")}
-          value={events.filter((e) => e.status === "failure").length}
-          trend={{ label: events.some((e) => e.status === "failure") ? t("ui.events.investigate") : t("ui.events.clear"), tone: events.some((e) => e.status === "failure") ? "rose" : "lime" }}
-          icon={<ScrollText size={16} />}
-        />
-      </div>
-
-      {feedback && (
-        <div className="rounded-lg border border-[color:var(--color-lime)]/30 bg-[color:var(--color-lime)]/10 px-4 py-3 font-mono text-xs tracking-wider text-[color:var(--color-lime)]">
-          {feedback}
-        </div>
-      )}
-
-      <section className="space-y-4">
-        <SectionTitle
-          title={t("ui.events.log")}
-          description={t("ui.events.log_desc")}
-          eyebrow={t("ui.events.log")}
-          actions={<span className="chip chip-lime">{t("ui.common.rows", { n: filtered.length })}</span>}
-        />
-        <div className="flex flex-col gap-3 rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-panel)]/40 p-3 sm:flex-row sm:items-center">
-          <SearchField
-            label={t("ui.events.search_ph")}
-            placeholder={t("ui.events.search_ph")}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="flex-1"
-          />
-          <div className="flex flex-wrap gap-2">
-            <select
-              aria-label={t("ui.events.filter_type")}
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value as "all" | ProgramEvent["type"])}
-              className="h-9 rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)] px-3 font-mono text-xs text-[color:var(--color-fg)] outline-none focus:border-[color:var(--color-lime)]/50"
-            >
-              {TYPE_OPTIONS.map((tt) => (
-                <option key={tt} value={tt}>
-                  {tt === "all" ? t("ui.events.all_types") : tt}
-                </option>
-              ))}
-            </select>
-            <select
-              aria-label={t("ui.events.filter_status")}
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as "all" | ProgramEventStatus)}
-              className="h-9 rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)] px-3 font-mono text-xs text-[color:var(--color-fg)] outline-none focus:border-[color:var(--color-lime)]/50"
-            >
-              {STATUS_OPTIONS.map((ss) => (
-                <option key={ss} value={ss}>
-                  {ss === "all" ? t("ui.events.all_statuses") : ss}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {filtered.length === 0 ? (
-          <EmptyState
-            title={t("ui.events.empty_title")}
-            description={t("ui.events.empty_desc")}
-            icon={<ScrollText size={18} />}
-          />
-        ) : (
-          <div className="space-y-2">
-            {filtered.slice(0, visibleCount).map((event) => (
-              <article
-                key={event.id}
-                className={`card flex flex-col gap-2 p-4 sm:flex-row sm:items-start sm:gap-4 ${
-                  event.read ? "" : "ring-1 ring-inset ring-[color:var(--color-lime)]/30"
-                }`}
-              >
-                <div className="flex shrink-0 items-center gap-2 sm:w-32">
-                  <span className={`chip chip-${STATUS_TONES[event.status]}`}>
-                    {event.statusLabel}
-                  </span>
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="font-display text-lg tracking-tight text-[color:var(--color-fg)]">
-                      {event.title}
-                    </h3>
-                    <span className="rounded border border-[color:var(--color-border)] px-1.5 py-0.5 font-mono text-[9px] tracking-wider text-[color:var(--color-muted)]">
-                      {event.type}
-                    </span>
-                    {!event.read && (
-                      <span className="chip chip-lime">{t("ui.events.unread_tag")}</span>
-                    )}
-                  </div>
-                  <p className="mt-1 text-sm leading-5 text-[color:var(--color-muted)]">
-                    {event.detail}
-                  </p>
-                  <div className="mt-2 font-mono text-[10px] tracking-wide text-[color:var(--color-muted)]">
-                    {new Date(event.occurredAt).toLocaleString()}
-                  </div>
-                </div>
-                {!event.read && (
-                  <button
-                    type="button"
-                    onClick={() => markRead(event.id)}
-                    className="shrink-0 self-start rounded-md border border-[color:var(--color-border)] px-2.5 py-1 font-mono text-[10px] tracking-wider text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]"
-                  >
-                    {t("ui.events.read")}
-                  </button>
-                )}
-              </article>
-            ))}
-            {visibleCount < filtered.length && (
-              <div className="flex justify-center py-4">
-                <button
-                  type="button"
-                  onClick={() => setVisibleCount((prev) => Math.min(prev + 20, filtered.length))}
-                  className="rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel)]/50 px-5 py-2 font-mono text-xs tracking-wider text-[color:var(--color-muted)] hover:border-[color:var(--color-border-bright)] hover:text-[color:var(--color-fg)] transition-colors"
-                >
-                  {t("ui.events.load_more")} ({filtered.length - visibleCount})
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-      </section>
+  return <div className="space-y-8">
+    <PageHeader eyebrow={t("ui.events.eyebrow")} title={t("ui.events.title")} description={t("ui.events.desc")} actions={<>
+      <button type="button" className="chip" disabled={loading || mutating} onClick={() => reload()}><RefreshCw size={12} /> {l("Refresh", "刷新")}</button>
+      <button type="button" className="chip" disabled={mutating || loading || unread === 0 || unread === null} onClick={markAll}>{t("ui.events.mark_all_read")}</button>
+      <button type="button" className="chip chip-rose" disabled={mutating || loading} onClick={clearAll}>{t("ui.events.clear_all")}</button>
+    </>} />
+    <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+      <StatCard label={l("Loaded events", "已載入事件", "已加载事件")} value={events.length} icon={<ScrollText size={16} />} />
+      <StatCard label={t("ui.events.unread")} value={unread ?? "—"} detail={l("All server events", "全部伺服器事件", "全部服务器事件")} />
+      <StatCard label={t("ui.events.warnings")} value={events.filter((e) => e.status === "warning").length} detail={l("Loaded events only", "僅已載入事件", "仅已加载事件")} />
+      <StatCard label={t("ui.events.failures")} value={events.filter((e) => e.status === "failure").length} detail={l("Loaded events only", "僅已載入事件", "仅已加载事件")} />
     </div>
-  );
+    <section className="space-y-4">
+      <SectionTitle title={t("ui.events.log")} description={t("ui.events.log_desc")} actions={<span className="chip">{filtered.length} / {events.length}</span>} />
+      <div className="card flex flex-wrap items-center gap-3 p-3">
+        <SearchField label={t("ui.events.search_ph")} placeholder={t("ui.events.search_ph")} value={query} onChange={(e) => setQuery(e.target.value)} className="min-w-48 flex-1" />
+        <select aria-label={t("ui.events.filter_type")} disabled={mutating} value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)] p-2 text-xs">
+          {TYPES.map((type) => <option key={type} value={type}>{type === "all" ? t("ui.events.all_types") : typeLabel(type)}</option>)}
+        </select>
+        <select aria-label={t("ui.events.filter_status")} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="rounded border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)] p-2 text-xs">
+          <option value="all">{t("ui.events.all_statuses")}</option>{RESULTS.map((s) => <option key={s} value={s}>{statusLabel(s)}</option>)}
+        </select>
+        <label className="flex items-center gap-2 text-xs"><input type="checkbox" disabled={mutating} checked={onlyUnread} onChange={(e) => setOnlyUnread(e.target.checked)} />{l("Unread only", "僅未讀", "仅未读")}</label>
+      </div>
+      <p className="text-xs text-[color:var(--color-muted)]">{l("Search and result filters apply to loaded events; type and unread filters apply on the server. Load more to search older events.", "搜尋與結果篩選僅作用於已載入事件；類型與未讀由伺服器篩選。載入更多可搜尋較舊事件。", "搜索与结果筛选仅作用于已加载事件；类型与未读由服务器筛选。加载更多可搜索较旧事件。")}</p>
+      {filtered.length === 0 && !loading ? <EmptyState title={t("ui.events.empty_title")} description={t("ui.events.empty_desc")} /> : filtered.map((e) => <article key={e.id} className={`card flex flex-col gap-3 p-4 sm:flex-row ${e.read ? "" : "ring-1 ring-[color:var(--color-lime)]/30"}`}>
+        <span className={`chip chip-${TONES[e.status]} self-start`}>{statusLabel(e.status)}</span>
+        <div className="min-w-0 flex-1"><h3 className="text-lg">{e.title}</h3><span className="text-xs text-[color:var(--color-muted)]">{typeLabel(e.type)}</span><p className="whitespace-pre-wrap text-sm">{e.detail}</p><time className="text-xs text-[color:var(--color-muted)]">{e.occurredAt ? new Date(e.occurredAt).toLocaleString() : "—"}</time></div>
+        {!e.read && <button type="button" disabled={mutating || loading} className="chip self-start" onClick={() => markRead(e.id)}>{t("ui.events.read")}</button>}
+      </article>)}
+      {loading && <p role="status">{l("Loading…", "載入中…", "加载中…")}</p>}
+      {hasMore && <button type="button" disabled={loading || mutating} className="chip" onClick={() => reload(true)}>{t("ui.events.load_more")}</button>}
+    </section>
+  </div>;
 }

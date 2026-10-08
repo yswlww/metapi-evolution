@@ -1,442 +1,133 @@
-import { useEffect, useState } from "react";
-import {
-  Database,
-  Globe,
-  Key,
-  Radio,
-  RefreshCw,
-  Shield,
-  SlidersHorizontal,
-  Terminal,
-  Trash2,
-  Zap,
-} from "lucide-react";
-import { useUiText } from "../../i18n/useUiText";
-import { useToast } from "../../components/Toast";
-import { Toggle, TextInput, TextArea } from "../../components/EditDrawer";
-import {
-  testSystemProxy,
-  fetchRuntimeSettings,
-  updateRuntimeSettings,
-  clearRuntimeCache,
-  clearUsageData,
-  migrateExternalDatabase,
-  testExternalDatabaseConnection,
-  factoryReset,
-} from "../../lib/source";
+import { useEffect, useState, type ReactNode } from 'react';
+import { Field, TextInput, TextArea, Toggle } from '../../components/EditDrawer';
+import { useUiText } from '../../i18n/useUiText';
+import { useToast } from '../../components/Toast';
+import { testSystemProxy, fetchRuntimeSettings, updateRuntimeSettings, clearRuntimeCache, clearUsageData, factoryReset } from '../../lib/source';
+import { finiteNumber, integerNumber, ROUTING_PRESETS, resolveRoutingProfilePreset, settingsDirty } from '../../lib/settingsParity';
+import { runModelProbe } from '../../lib/settingsParityApi';
+import { useLocalSettingsText } from './localSettingsText';
+import { PARITY_ACTION_CLASS, PARITY_SELECT_CLASS } from '../../lib/settingsParityStyles';
+import PayloadRulesEditor from './PayloadRulesEditor';
+import DatabaseSettings from './DatabaseSettings';
 
-function Section({
-  title,
-  desc,
-  children,
-}: {
-  title: string;
-  desc?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="card p-5">
-      <div className="font-mono text-[11px] tracking-[0.2em] uppercase text-[color:var(--color-lime)]">
-        {title}
-      </div>
-      {desc && <p className="mt-1 text-xs leading-5 text-[color:var(--color-muted)]">{desc}</p>}
-      <div className="mt-4">{children}</div>
-    </div>
-  );
+const numberKeys = ['proxySessionChannelConcurrencyLimit', 'proxySessionChannelQueueWaitMs', 'routingFallbackUnitCost', 'proxyFirstByteTimeoutSec', 'tokenRouterFailureCooldownMaxSec'];
+const arrayKeys = ['proxyErrorKeywords', 'globalBlockedBrands', 'globalAllowedModels'];
+const saveKeys = ['systemProxyUrl', 'proxyEmptyContentFailEnabled', 'codexUpstreamWebsocketEnabled', 'responsesCompactFallbackToResponsesEnabled', 'modelAvailabilityProbeEnabled', 'routingWeights', ...numberKeys, ...arrayKeys];
+function Section({title, desc, children}: {title: string; desc?: string; children: ReactNode}) {
+  return <section className="card p-5"><h2 className="font-mono text-[11px] tracking-[0.2em] uppercase text-[color:var(--color-lime)]">{title}</h2>{desc && <p className="mt-1 text-xs leading-5 text-[color:var(--color-muted)]">{desc}</p>}<div className="mt-4 space-y-3">{children}</div></section>;
 }
-
-function ActionBtn({
-  label,
-  tone = "default",
-  onClick,
-  disabled,
-}: {
-  label: string;
-  tone?: "default" | "danger";
-  onClick: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={`rounded-lg border px-3.5 py-1.5 font-mono text-[11px] tracking-wider transition-colors disabled:opacity-40 ${
-        tone === "danger"
-          ? "border-[color:var(--color-rose)]/40 text-[color:var(--color-rose)] hover:bg-[color:var(--color-rose)]/10"
-          : "border-[color:var(--color-border)] text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)] hover:border-[color:var(--color-border-bright)]"
-      }`}
-    >
-      {label}
-    </button>
-  );
-}
-
-export default function SettingsAdvanced() {
-  const t = useUiText();
-  const { showToast } = useToast();
-
-  // System proxy
-  const [systemProxy, setSystemProxy] = useState("");
-  // Proxy failure rules
-  const [proxyErrorKeywords, setProxyErrorKeywords] = useState("");
-  const [emptyContentFail, setEmptyContentFail] = useState(true);
-  // Payload rules (JSON)
-  const [payloadRules, setPayloadRules] = useState("");
-  // Codex transport
-  const [codexWebsocket, setCodexWebsocket] = useState(true);
-  const [responsesFallback, setResponsesFallback] = useState(true);
-  const [channelConcurrency, setChannelConcurrency] = useState("4");
-  // Batch probe
-  const [batchProbeEnabled, setBatchProbeEnabled] = useState(false);
-  // PROXY_TOKEN
-  const [proxyTokenValue, setProxyTokenValue] = useState("");
-  // Route strategy
-  const [routePreset, setRoutePreset] = useState("balanced");
-  const [fallbackUnitCost, setFallbackUnitCost] = useState("0.001");
-  const [firstByteTimeout, setFirstByteTimeout] = useState("30");
-  const [routeCooldown, setRouteCooldown] = useState("60");
-  // Blocklists
-  const [blockedBrands, setBlockedBrands] = useState("");
-  const [allowedModels, setAllowedModels] = useState("");
-  // DB migration
-  const [dbDialect, setDbDialect] = useState("sqlite");
-  const [dbConnection, setDbConnection] = useState("");
+export default function SettingsAdvanced({runtime, onSaved, onDirtyChange}: {runtime?: Record<string, unknown>; onSaved?: (settings: Record<string, unknown>) => void; onDirtyChange?: (dirty: boolean) => void}) {
+  const t = useUiText(); const local = useLocalSettingsText(); const {showToast} = useToast();
+  const [draft, setDraft] = useState<Record<string, unknown> | null>(null);
+  const [saved, setSaved] = useState<Record<string, unknown> | null>(null);
+  const [payloadRules, setPayloadRules] = useState('{}'); const [savedPayload, setSavedPayload] = useState('{}');
+  const [proxyTokenValue, setProxyTokenValue] = useState('');
+  const [payloadEditorRevision, setPayloadEditorRevision] = useState(0);
   const [factoryResetConfirm, setFactoryResetConfirm] = useState(false);
-
-  // Load real runtime values so the form reflects the live gateway instead of
-  // shipping hardcoded example values back on the next save.
-  useEffect(() => {
-    let cancelled = false;
-    fetchRuntimeSettings()
-      .then((data) => {
-        if (cancelled) return;
-        const s = data as Record<string, unknown>;
-        if (typeof s.systemProxyUrl === "string") setSystemProxy(s.systemProxyUrl);
-        if (s.payloadRules) {
-          try { setPayloadRules(JSON.stringify(s.payloadRules, null, 2)); } catch { /* keep */ }
-        }
-        if (typeof s.codexUpstreamWebsocketEnabled === "boolean") setCodexWebsocket(s.codexUpstreamWebsocketEnabled);
-        if (typeof s.responsesCompactFallbackToResponsesEnabled === "boolean") setResponsesFallback(s.responsesCompactFallbackToResponsesEnabled);
-        if (typeof s.proxySessionChannelConcurrencyLimit === "number") setChannelConcurrency(String(s.proxySessionChannelConcurrencyLimit));
-        if (typeof s.modelAvailabilityProbeEnabled === "boolean") setBatchProbeEnabled(s.modelAvailabilityProbeEnabled);
-        if (typeof s.routingFallbackUnitCost === "number") setFallbackUnitCost(String(s.routingFallbackUnitCost));
-        if (typeof s.proxyFirstByteTimeoutSec === "number" && s.proxyFirstByteTimeoutSec > 0) setFirstByteTimeout(String(s.proxyFirstByteTimeoutSec));
-        if (typeof s.tokenRouterFailureCooldownMaxSec === "number") setRouteCooldown(String(s.tokenRouterFailureCooldownMaxSec));
-        if (Array.isArray(s.proxyErrorKeywords)) setProxyErrorKeywords((s.proxyErrorKeywords as string[]).join(", "));
-        if (Array.isArray(s.globalBlockedBrands)) setBlockedBrands((s.globalBlockedBrands as string[]).join(", "));
-        if (Array.isArray(s.globalAllowedModels)) setAllowedModels((s.globalAllowedModels as string[]).join(", "));
-      })
-      .catch(() => { /* keep defaults */ });
-    return () => { cancelled = true; };
-  }, []);
-
-  // ── Real backend actions ─────────────────────────────────────────────
-  const [busy, setBusy] = useState<Record<string, boolean>>({});
-  const run = async (key: string, fn: () => Promise<unknown>, okMsg: string) => {
-    setBusy((b) => ({ ...b, [key]: true }));
+  const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const apply = (settings: Record<string, unknown>) => {
+    const form = Object.fromEntries(saveKeys.map(key => [key, arrayKeys.includes(key) ? (Array.isArray(settings[key]) ? (settings[key] as string[]).join(', ') : '') : settings[key]]));
+    setDraft(form); setSaved(structuredClone(form));
+    const payload = JSON.stringify(settings.payloadRules ?? {}, null, 2); setPayloadRules(payload); setSavedPayload(payload); setProxyTokenValue(''); setPayloadEditorRevision(value => value + 1);
+  };
+  useEffect(() => {if (runtime) {apply(runtime); return;} let active = true; fetchRuntimeSettings().then(settings => {if (active) apply(settings as Record<string, unknown>);}).catch(error => {if (active) setError(error instanceof Error ? error.message : t('ui.settings.err_load'));}); return () => {active = false;};}, [runtime]);
+  const run = async (action: () => Promise<unknown>, message: string) => {
+    setBusy(true); setError('');
+    try {await action(); showToast(message);} catch (error) {setError(error instanceof Error ? error.message : t('ui.adv.err_op'));}
+    finally {setBusy(false);}
+  };
+  const patch = (key: string, value: unknown) => setDraft(previous => ({...previous, [key]: value}));
+  const save = () => {
+    if (!draft) return;
+    let payload: Record<string, unknown>;
     try {
-      await fn();
-      showToast(okMsg);
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Operation failed.");
-    } finally {
-      setBusy((b) => ({ ...b, [key]: false }));
-    }
+      const rules = JSON.parse(payloadRules.trim() || '{}');
+      if (!rules || typeof rules !== 'object' || Array.isArray(rules)) throw new Error(t('ui.adv.payload_rules_json'));
+      payload = {...draft, payloadRules: rules, proxyEmptyContentFailEnabled: draft.proxyEmptyContentFailEnabled};
+      for (const key of numberKeys) payload[key] = key === 'routingFallbackUnitCost' ? finiteNumber(draft[key], Number.MIN_VALUE) : integerNumber(draft[key], key === 'proxySessionChannelConcurrencyLimit' || key === 'tokenRouterFailureCooldownMaxSec' ? 1 : 0);
+      for (const key of arrayKeys) payload[key] = String(draft[key] ?? '').split(',').map(item => item.trim()).filter(Boolean);
+      if (proxyTokenValue.trim()) payload.proxyToken = proxyTokenValue.trim();
+    } catch {setError(local('Invalid number or payload JSON.', '數值或 payload JSON 無效。', '数值或 payload JSON 无效。')); return;}
+    if (draft.modelAvailabilityProbeEnabled === true && saved?.modelAvailabilityProbeEnabled !== true && !window.confirm(local('Enabling probes sends requests to upstreams and may incur charges. Continue?', '啟用探測會傳送上游請求，可能產生費用。是否繼續？', '启用探测会发送上游请求，可能产生费用。是否继续？'))) return;
+    void run(async () => {await updateRuntimeSettings(payload); const next = await fetchRuntimeSettings() as Record<string, unknown>; apply(next); onSaved?.(next);}, t('ui.settings.saved'));
   };
-
-  const handleProxyTest = () =>
-    run("probe", () => testSystemProxy({ url: systemProxy || undefined }), t("ui.settings.adv_proxy_tested"));
-
-  const handleSavePayload = () => {
-    let parsed: unknown;
-    try {
-      parsed = payloadRules.trim() ? JSON.parse(payloadRules) : {};
-    } catch {
-      showToast("Payload rules must be valid JSON.");
-      return;
-    }
-    run("payload", () => updateRuntimeSettings({ payloadRules: parsed }), t("ui.settings.saved"));
-  };
-
-  const handleSaveAdvanced = () =>
-    run("save", () => updateRuntimeSettings({
-      systemProxyUrl: systemProxy || undefined,
-      proxyErrorKeywords: proxyErrorKeywords.split(",").map((s) => s.trim()).filter(Boolean),
-      codexUpstreamWebsocketEnabled: codexWebsocket,
-      responsesCompactFallbackToResponsesEnabled: responsesFallback,
-      proxySessionChannelConcurrencyLimit: Number(channelConcurrency) || 2,
-      modelAvailabilityProbeEnabled: batchProbeEnabled,
-      routingFallbackUnitCost: Number(fallbackUnitCost) || 0.001,
-      proxyFirstByteTimeoutSec: Number(firstByteTimeout) || 0,
-      tokenRouterFailureCooldownMaxSec: Number(routeCooldown) || 60,
-      // Blocklists use the backend field names; only send non-empty lists.
-      ...(blockedBrands.trim() ? { globalBlockedBrands: blockedBrands.split(",").map((s) => s.trim()).filter(Boolean) } : {}),
-      ...(allowedModels.trim() ? { globalAllowedModels: allowedModels.split(",").map((s) => s.trim()).filter(Boolean) } : {}),
-      // Proxy token — only rotate when the field is non-empty.
-      ...(proxyTokenValue.trim() ? { proxyToken: proxyTokenValue.trim() } : {}),
-    }), t("ui.settings.saved"));
-
-  const handleRegenerateToken = () =>
-    run("regen", () => updateRuntimeSettings({
-      proxyToken: `sk-${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 8)}`,
-    }), t("ui.settings.adv_regenerated"));
-
-  const handleDbTest = () => {
-    if (dbDialect === "sqlite") {
-      // SQLite is the built-in database — there is no test-connection API for
-      // it, so do not claim a remote connection test succeeded.
-      showToast("SQLite is the built-in database.");
-      return;
-    }
-    if (!dbConnection.trim()) {
-      showToast("Connection string is required.");
-      return;
-    }
-    run("dbtest", () => testExternalDatabaseConnection({
-      dialect: dbDialect as "mysql" | "postgres",
-      connectionString: dbConnection.trim(),
-    }), t("ui.settings.adv_conn_ok"));
-  };
-
-  const handleDbMigrate = () => {
-    if (dbDialect === "sqlite") return;
-    if (!window.confirm(t("ui.settings.adv_migrate_confirm"))) return;
-    run("dbmigrate", () => migrateExternalDatabase({
-      dialect: dbDialect as "mysql" | "postgres",
-      connectionString: dbConnection,
-      overwrite: false,
-    }), t("ui.settings.adv_migrated"));
-  };
-
-  const handleClearCache = () => {
-    if (!window.confirm(t("ui.settings.adv_clear_cache_confirm"))) return;
-    run("cache", () => clearRuntimeCache(), t("ui.settings.saved"));
-  };
-
-  const handleClearUsage = () => {
-    if (!window.confirm(t("ui.settings.adv_clear_usage_confirm"))) return;
-    run("clear", () => clearUsageData(), t("ui.settings.saved"));
-  };
-
-  const handleFactoryReset = () => {
-    if (!window.confirm(t("ui.settings.adv_factory_confirm"))) { setFactoryResetConfirm(false); return; }
-    setFactoryResetConfirm(false);
-    run("reset", () => factoryReset(), t("ui.settings.adv_factory_done"));
-  };
-
-  return (
-    <div className="space-y-5">
-      {/* System proxy */}
-      <Section title={t("ui.settings.adv_proxy_title")} desc={t("ui.settings.adv_proxy_desc")}>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <TextInput
-            value={systemProxy}
-            onChange={(e) => setSystemProxy(e.target.value)}
-            placeholder="http://proxy.internal:8080"
-            className="flex-1"
-          />
-          <ActionBtn label={t("ui.settings.adv_test")} onClick={handleProxyTest} disabled={busy.probe} />
-        </div>
+  const cancel = () => {if (saved) setDraft(structuredClone(saved)); setPayloadRules(savedPayload); setProxyTokenValue(''); setPayloadEditorRevision(value => value + 1); setError('');};
+  const input = (label: string, key: string, type = 'text') => <Field label={label}><TextInput type={type} value={String(draft?.[key] ?? '')} onChange={event => patch(key, event.target.value)} /></Field>;
+  const toggle = (label: string, key: string) => <Field label={label}><Toggle checked={draft?.[key] === true} onChange={value => patch(key, value)} /></Field>;
+  const dirty = settingsDirty(draft, saved) || payloadRules !== savedPayload || !!proxyTokenValue;
+  useEffect(() => {onDirtyChange?.(dirty);}, [dirty, onDirtyChange]);
+  const preset = draft?.routingWeights ? resolveRoutingProfilePreset(draft.routingWeights as typeof ROUTING_PRESETS.balanced) : 'custom';
+  return <div className="space-y-5">
+    {error && <p role="alert">{error}</p>}
+    {!draft ? <button
+ className={PARITY_ACTION_CLASS}
+onClick={() => run(async () => apply(await fetchRuntimeSettings() as Record<string, unknown>), t('ui.settings.saved'))}>{local('Reload settings', '重新載入設定', '重新加载设置')}</button> : <fieldset disabled={busy} className="space-y-5 min-w-0">
+      <Section title={t('ui.settings.adv_proxy_title')} desc={t('ui.settings.adv_proxy_desc')}>
+        {input(t('ui.settings.adv_proxy_title'), 'systemProxyUrl')}
+        <button
+ className={PARITY_ACTION_CLASS}
+disabled={busy} onClick={() => run(() => testSystemProxy({proxyUrl: String(draft.systemProxyUrl ?? '')}), t('ui.settings.adv_proxy_tested'))}>{t('ui.settings.adv_test')}</button>
       </Section>
-
-      {/* Proxy failure rules */}
-      <Section title={t("ui.settings.adv_fail_title")} desc={t("ui.settings.adv_fail_desc")}>
-        <TextArea
-          value={proxyErrorKeywords}
-          onChange={(e) => setProxyErrorKeywords(e.target.value)}
-          rows={2}
-          className="mb-3"
-        />
-        <div className="flex items-center justify-between rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)]/50 p-3">
-          <span className="font-mono text-[10px] tracking-wider text-[color:var(--color-muted)]">
-            {t("ui.settings.adv_empty_content")}
-          </span>
-          <Toggle checked={emptyContentFail} onChange={setEmptyContentFail} />
-        </div>
+      <Section title={t('ui.settings.adv_fail_title')} desc={t('ui.settings.adv_fail_desc')}>
+        <TextArea value={String(draft.proxyErrorKeywords ?? '')} onChange={event => patch('proxyErrorKeywords', event.target.value)} rows={2} />
+        {toggle(t('ui.settings.adv_empty_content'), 'proxyEmptyContentFailEnabled')}
       </Section>
-
-      {/* Payload rules */}
-      <Section title={t("ui.settings.adv_payload_title")} desc={t("ui.settings.adv_payload_desc")}>
-        <TextArea
-          value={payloadRules}
-          onChange={(e) => setPayloadRules(e.target.value)}
-          rows={5}
-          className="font-mono"
-        />
-        <div className="mt-2 flex gap-2">
-          <ActionBtn label={t("ui.settings.adv_save")} onClick={handleSavePayload} disabled={busy.payload} />
-        </div>
+      <Section title={t('ui.settings.adv_payload_title')} desc={t('ui.settings.adv_payload_desc')}><PayloadRulesEditor key={payloadEditorRevision} value={payloadRules} onChange={setPayloadRules} /></Section>
+      <Section title={t('ui.settings.adv_codex_title')} desc={t('ui.settings.adv_codex_desc')}>
+        {toggle(t('ui.settings.adv_websocket'), 'codexUpstreamWebsocketEnabled')}
+        {toggle(t('ui.settings.adv_responses_fallback'), 'responsesCompactFallbackToResponsesEnabled')}
+        {input(t('ui.settings.adv_concurrency'), 'proxySessionChannelConcurrencyLimit', 'number')}
+        {input(local('Queue wait (milliseconds, 0 disables waiting)', '排隊等待（毫秒，0 停用等待）', '排队等待（毫秒，0 禁用等待）'), 'proxySessionChannelQueueWaitMs', 'number')}
       </Section>
-
-      {/* Codex transport */}
-      <Section title={t("ui.settings.adv_codex_title")} desc={t("ui.settings.adv_codex_desc")}>
-        <div className="space-y-3">
-          <div className="flex items-center justify-between rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)]/50 p-3">
-            <span className="font-mono text-[10px] tracking-wider text-[color:var(--color-muted)]">
-              {t("ui.settings.adv_websocket")}
-            </span>
-            <Toggle checked={codexWebsocket} onChange={setCodexWebsocket} />
-          </div>
-          <div className="flex items-center justify-between rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)]/50 p-3">
-            <span className="font-mono text-[10px] tracking-wider text-[color:var(--color-muted)]">
-              {t("ui.settings.adv_responses_fallback")}
-            </span>
-            <Toggle checked={responsesFallback} onChange={setResponsesFallback} />
-          </div>
-          <div className="flex items-center justify-between rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)]/50 p-3">
-            <span className="font-mono text-[10px] tracking-wider text-[color:var(--color-muted)]">
-              {t("ui.settings.adv_concurrency")}
-            </span>
-            <input
-              type="number"
-              min={1}
-              value={channelConcurrency}
-              onChange={(e) => setChannelConcurrency(e.target.value)}
-              className="h-8 w-20 rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel)] px-2 font-mono text-xs text-[color:var(--color-fg)] outline-none focus:border-[color:var(--color-lime)]/50"
-            />
-          </div>
-        </div>
-        <div className="mt-3">
-          <ActionBtn label={t("ui.settings.adv_save")} onClick={handleSaveAdvanced} disabled={busy.save} />
-        </div>
+      <Section title={t('ui.settings.adv_probe_title')} desc={t('ui.settings.adv_probe_desc')}>
+        {toggle(t('ui.settings.adv_probe_enabled'), 'modelAvailabilityProbeEnabled')}
+        <button
+ className={PARITY_ACTION_CLASS}
+disabled={busy || saved?.modelAvailabilityProbeEnabled !== true} onClick={() => {
+          if (!window.confirm(local('Probe all models now? Upstream requests may incur charges.', '立即探測所有模型？上游請求可能產生費用。', '立即探测所有模型？上游请求可能产生费用。'))) return;
+          void run(runModelProbe, local('Model availability probe queued.', '模型可用性探測已排程。', '模型可用性探测已排队。'));
+        }}>{t('ui.settings.adv_probe_run')}</button>
       </Section>
-
-      {/* Batch model probe */}
-      <Section title={t("ui.settings.adv_probe_title")} desc={t("ui.settings.adv_probe_desc")}>
-        <div className="flex items-center justify-between rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)]/50 p-3">
-          <span className="font-mono text-[10px] tracking-wider text-[color:var(--color-muted)]">
-            {t("ui.settings.adv_probe_enabled")}
-          </span>
-          <Toggle checked={batchProbeEnabled} onChange={setBatchProbeEnabled} />
-        </div>
-        {batchProbeEnabled && (
-          <div className="mt-2">
-            <ActionBtn label={t("ui.settings.adv_probe_run")} onClick={handleProxyTest} disabled={busy.probe} />
-          </div>
-        )}
+      <Section title={t('ui.settings.adv_proxy_token')} desc={t('ui.settings.adv_proxy_token_desc')}>
+        <TextInput type="password" value={proxyTokenValue} onChange={event => setProxyTokenValue(event.target.value)} />
+        <button
+ className={PARITY_ACTION_CLASS}
+disabled={busy} onClick={() => {const bytes = crypto.getRandomValues(new Uint8Array(24)); setProxyTokenValue('sk-' + Array.from(bytes, value => value.toString(16).padStart(2, '0')).join(''));}}>{t('ui.settings.adv_regenerate')}</button>
       </Section>
-
-      {/* PROXY_TOKEN */}
-      <Section title={t("ui.settings.adv_proxy_token")} desc={t("ui.settings.adv_proxy_token_desc")}>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <TextInput value={proxyTokenValue} onChange={(e) => setProxyTokenValue(e.target.value)} className="flex-1 font-mono" />
-          <ActionBtn
-            label={t("ui.settings.adv_regenerate")}
-            onClick={handleRegenerateToken}
-            disabled={busy.regen}
-          />
-        </div>
+      <Section title={t('ui.settings.adv_route_strategy')} desc={t('ui.settings.adv_route_strategy_desc')}>
+        <Field label={t('ui.settings.adv_preset')}><select
+ className={PARITY_SELECT_CLASS}
+value={preset} onChange={event => {if (event.target.value !== 'custom') patch('routingWeights', {...ROUTING_PRESETS[event.target.value as keyof typeof ROUTING_PRESETS]});}}>
+          <option value="custom">{local('Custom', '自訂', '自定义')}</option><option value="balanced">{t('ui.status.balanced')}</option>
+          <option value="cost">{local('Cost first', '成本優先', '成本优先')}</option><option value="stable">{local('Stability first', '穩定優先', '稳定优先')}</option>
+        </select></Field>
+        {input(t('ui.settings.adv_fallback_cost'), 'routingFallbackUnitCost', 'number')}
+        {input(t('ui.settings.adv_first_byte'), 'proxyFirstByteTimeoutSec', 'number')}
+        {input(local('Failure cooldown (seconds)', '失敗冷卻（秒）', '失败冷却（秒）'), 'tokenRouterFailureCooldownMaxSec', 'number')}
       </Section>
-
-      {/* Route strategy */}
-      <Section title={t("ui.settings.adv_route_strategy")} desc={t("ui.settings.adv_route_strategy_desc")}>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <label className="block">
-            <span className="mb-1 block font-mono text-[10px] tracking-[0.16em] text-[color:var(--color-muted)]">
-              {t("ui.settings.adv_preset")}
-            </span>
-            <select
-              value={routePreset}
-              onChange={(e) => setRoutePreset(e.target.value)}
-              className="h-9 w-full rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)] px-3 font-mono text-xs text-[color:var(--color-fg)] outline-none focus:border-[color:var(--color-lime)]/50"
-            >
-              <option value="balanced">{t("ui.status.balanced")}</option>
-              <option value="cost">Cost-first</option>
-              <option value="speed">Speed-first</option>
-              <option value="reliability">Reliability-first</option>
-            </select>
-          </label>
-          <label className="block">
-            <span className="mb-1 block font-mono text-[10px] tracking-[0.16em] text-[color:var(--color-muted)]">
-              {t("ui.settings.adv_fallback_cost")}
-            </span>
-            <input
-              value={fallbackUnitCost}
-              onChange={(e) => setFallbackUnitCost(e.target.value)}
-              className="h-9 w-full rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)] px-3 font-mono text-xs text-[color:var(--color-fg)] outline-none focus:border-[color:var(--color-lime)]/50"
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1 block font-mono text-[10px] tracking-[0.16em] text-[color:var(--color-muted)]">
-              {t("ui.settings.adv_first_byte")}
-            </span>
-            <input
-              value={firstByteTimeout}
-              onChange={(e) => setFirstByteTimeout(e.target.value)}
-              className="h-9 w-full rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)] px-3 font-mono text-xs text-[color:var(--color-fg)] outline-none focus:border-[color:var(--color-lime)]/50"
-            />
-          </label>
-        </div>
+      <Section title={t('ui.settings.adv_blocklist')} desc={t('ui.settings.adv_blocklist_desc')}>
+        {input(t('ui.settings.adv_blocked_brands'), 'globalBlockedBrands')}{input(t('ui.settings.adv_allowed_models'), 'globalAllowedModels')}
       </Section>
-
-      {/* Blocklists */}
-      <Section title={t("ui.settings.adv_blocklist")} desc={t("ui.settings.adv_blocklist_desc")}>
-        <div className="space-y-3">
-          <label className="block">
-            <span className="mb-1 block font-mono text-[10px] tracking-[0.16em] text-[color:var(--color-muted)]">
-              {t("ui.settings.adv_blocked_brands")}
-            </span>
-            <TextInput value={blockedBrands} onChange={(e) => setBlockedBrands(e.target.value)} placeholder="openai, anthropic" />
-          </label>
-          <label className="block">
-            <span className="mb-1 block font-mono text-[10px] tracking-[0.16em] text-[color:var(--color-muted)]">
-              {t("ui.settings.adv_allowed_models")}
-            </span>
-            <TextInput value={allowedModels} onChange={(e) => setAllowedModels(e.target.value)} placeholder="gpt-5, claude-*" />
-          </label>
-        </div>
-      </Section>
-
-      {/* DB migration */}
-      <Section title={t("ui.settings.adv_db_title")} desc={t("ui.settings.adv_db_desc")}>
-        <div className="space-y-3">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[160px_1fr]">
-            <select
-              value={dbDialect}
-              onChange={(e) => setDbDialect(e.target.value)}
-              className="h-9 rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)] px-3 font-mono text-xs text-[color:var(--color-fg)] outline-none focus:border-[color:var(--color-lime)]/50"
-            >
-              <option value="sqlite">{t("ui.settings.adv_sqlite")}</option>
-              <option value="mysql">{t("ui.settings.adv_mysql")}</option>
-              <option value="postgres">{t("ui.settings.adv_postgres")}</option>
-            </select>
-            <TextInput
-              value={dbConnection}
-              onChange={(e) => setDbConnection(e.target.value)}
-              placeholder="postgres://user:pass@host:5432/metapi"
-              className="font-mono"
-            />
-          </div>
-          <div className="flex gap-2">
-            <ActionBtn label={t("ui.settings.adv_test_conn")} onClick={handleDbTest} disabled={busy.dbtest} />
-            <ActionBtn label={t("ui.settings.adv_migrate")} onClick={handleDbMigrate} disabled={busy.dbmigrate} />
-          </div>
-        </div>
-      </Section>
-
-      {/* Factory reset */}
-      <Section title={t("ui.settings.adv_factory_title")} desc={t("ui.settings.adv_factory_desc")}>
-        <div className="mb-3 flex gap-2">
-          <ActionBtn label={t("ui.settings.adv_clear_cache")} onClick={handleClearCache} disabled={busy.cache} />
-          <ActionBtn label={t("ui.settings.adv_clear_usage")} tone="danger" onClick={handleClearUsage} disabled={busy.clear} />
-        </div>
-        {factoryResetConfirm ? (
-          <div className="flex flex-col gap-3 rounded-lg border border-[color:var(--color-rose)]/40 bg-[color:var(--color-rose)]/10 p-4">
-            <span className="font-mono text-[10px] tracking-wider text-[color:var(--color-rose)]">
-              {t("ui.settings.adv_factory_confirm")}
-            </span>
-            <div className="flex gap-2">
-              <ActionBtn label={t("ui.common.cancel")} onClick={() => setFactoryResetConfirm(false)} />
-              <ActionBtn label={t("ui.settings.adv_factory_reset")} tone="danger"
-                onClick={handleFactoryReset}
-                disabled={busy.reset} />
-            </div>
-          </div>
-        ) : (
-          <ActionBtn label={t("ui.settings.adv_factory_reset")} tone="danger" onClick={() => setFactoryResetConfirm(true)} />
-        )}
-      </Section>
-    </div>
-  );
+      <div className="card p-4 flex flex-wrap gap-3"><button
+ className={PARITY_ACTION_CLASS}
+disabled={busy || !dirty} onClick={save}>{t('ui.common.save')}</button><button
+ className={PARITY_ACTION_CLASS}
+disabled={busy || !dirty} onClick={cancel}>{t('ui.common.cancel')}</button>{dirty && <span>{local('Unsaved changes', '尚未儲存變更', '尚未保存更改')}</span>}</div>
+    </fieldset>}
+    <DatabaseSettings />
+    <Section title={t('ui.settings.adv_factory_title')} desc={t('ui.settings.adv_factory_desc')}>
+      <div className="flex flex-wrap gap-3">
+        <button
+ className={PARITY_ACTION_CLASS}
+disabled={busy} onClick={() => {if (window.confirm(t('ui.settings.adv_clear_cache_confirm'))) void run(clearRuntimeCache, t('ui.settings.saved'));}}>{t('ui.settings.adv_clear_cache')}</button>
+        <button
+ className={PARITY_ACTION_CLASS}
+disabled={busy} onClick={() => {if (window.confirm(t('ui.settings.adv_clear_usage_confirm'))) void run(clearUsageData, t('ui.settings.saved'));}}>{t('ui.settings.adv_clear_usage')}</button>
+        <button
+ className={PARITY_ACTION_CLASS}
+disabled={busy} onClick={() => setFactoryResetConfirm(true)}>{t('ui.settings.adv_factory_reset')}</button>
+        {factoryResetConfirm && <div className="rounded-lg border border-[color:var(--color-rose)]/40 bg-[color:var(--color-rose)]/10 p-4 space-y-3"><p>{t('ui.settings.adv_factory_confirm')}</p><button className={PARITY_ACTION_CLASS} disabled={busy} onClick={() => setFactoryResetConfirm(false)}>{t('ui.common.cancel')}</button><button className={PARITY_ACTION_CLASS} disabled={busy} onClick={() => {if (window.confirm(t('ui.settings.adv_factory_confirm'))) {setFactoryResetConfirm(false); void run(factoryReset, t('ui.settings.adv_factory_done'));}}}>{t('ui.settings.adv_factory_reset')}</button></div>}
+      </div>
+    </Section>
+  </div>;
 }

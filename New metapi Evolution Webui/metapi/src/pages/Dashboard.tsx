@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import ModelAnalysis from "./observability/ModelAnalysis";
+import { fetchDashboardAnalysis } from "./observability/api";
+import { useObservationLabels } from "./observability/labels";
+import type { ModelUsage, DashboardAnalysis, SiteTrend } from "./observability/dashboard";
 import { Clock, DollarSign, Route, TrendingUp, Zap, Activity, Gauge, Boxes } from "lucide-react";
 import PageHeader from "../components/PageHeader";
 import { SectionTitle, StatCard } from "../components/PrototypeUI";
@@ -8,10 +12,16 @@ import { fetchDashboardFeed, fetchModelBySite, probeSiteNow, type DashboardFeed 
 
 export default function Dashboard() {
   const t = useUiText();
+  const l = useObservationLabels();
+  const [analysisDays, setAnalysisDays] = useState(7);
+  const [analysisSite, setAnalysisSite] = useState("");
+  const [analysisEpoch, setAnalysisEpoch] = useState(0);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisDetails, setAnalysisDetails] = useState<DashboardAnalysis | null>(null);
   const { showToast } = useToast();
   const [feed, setFeed] = useState<DashboardFeed | null>(null);
   const [loading, setLoading] = useState(true);
-  const [modelAnalysis, setModelAnalysis] = useState<any[]>([]);
+  const [modelAnalysis, setModelAnalysis] = useState<ModelUsage[]>([]);
   const [speedBusy, setSpeedBusy] = useState<number | null>(null);
 
   const load = useCallback(async () => {
@@ -19,7 +29,7 @@ export default function Dashboard() {
       const data = await fetchDashboardFeed();
       setFeed(data);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Failed to load dashboard.");
+      showToast(err instanceof Error ? err.message : t("ui.dash.err_load"));
     } finally {
       setLoading(false);
     }
@@ -27,21 +37,23 @@ export default function Dashboard() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Model usage analysis (per-site model request distribution).
   useEffect(() => {
-    fetchModelBySite({ days: 7 })
-      .then((models) => setModelAnalysis(models as any[]))
-      .catch(() => setModelAnalysis([]));
-  }, []);
+    let active = true; setAnalysisLoading(true); setModelAnalysis([]); setAnalysisDetails(null);
+    Promise.all([fetchModelBySite({ days: analysisDays, ...(analysisSite ? { siteId: Number(analysisSite) } : {}) }), analysisDays === 7 && !analysisSite ? fetchDashboardAnalysis(analysisEpoch > 0) : Promise.resolve(null)])
+      .then(([models, details]) => { if (active) { setModelAnalysis(models as ModelUsage[]); setAnalysisDetails(details?.modelAnalysis ?? null); } })
+      .catch((err) => { if (active) showToast(err instanceof Error ? err.message : t("ui.dash.err_load")); })
+      .finally(() => { if (active) setAnalysisLoading(false); });
+    return () => { active = false; };
+  }, [analysisDays, analysisSite, analysisEpoch]);
 
   const handleSpeedTest = async (siteId?: number) => {
     if (!siteId) return;
     setSpeedBusy(siteId);
     try {
       await probeSiteNow(siteId, { scope: "single" });
-      showToast("Speed test queued for site.");
+      showToast(t("ui.dash.speed_test_queued"));
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Speed test failed.");
+      showToast(err instanceof Error ? err.message : t("ui.dash.speed_test_failed"));
     } finally {
       setSpeedBusy(null);
     }
@@ -49,7 +61,7 @@ export default function Dashboard() {
 
   const kpi = feed?.summary ?? { totalBalance: 0, todaySpend: 0, todayReward: 0, avgLatency: 0, requestsPerMinute: 0, activeAccounts: 0, totalAccounts: 0, activeRoutes: 0, totalRoutes: 0 };
   const siteAvailability = feed?.siteAvailability ?? [];
-  const siteTrend = feed?.siteTrend ?? [];
+  const siteTrend = (feed?.siteTrend ?? []) as unknown as SiteTrend[];
   const siteDistribution = feed?.siteDistribution ?? [];
 
   const totalAccountBalance = useMemo(
@@ -60,13 +72,13 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Control"
+        eyebrow={t("ui.dash.eyebrow_control")}
         title={t("ui.dash.dashboard")}
         description={t("ui.dash.dashboard_desc")}
         actions={
-          <button type="button" onClick={() => { setLoading(true); load(); }}
+          <button type="button" onClick={() => { setLoading(true); setAnalysisEpoch((n) => n + 1); load(); }}
             className="flex h-9 items-center gap-2 rounded-lg bg-[color:var(--color-lime)] px-4 font-mono text-xs font-bold tracking-wider text-[color:var(--color-ink)] hover:opacity-90">
-            <RefreshCw size={13} /> REFRESH ALL
+            <RefreshCw size={13} /> {l("Refresh all", "全部刷新")}
           </button>
         }
       />
@@ -76,9 +88,9 @@ export default function Dashboard() {
       ) : (
         <>
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <StatCard label={t("ui.dash.total_balance")} value={`$${(kpi.totalBalance ?? totalAccountBalance).toLocaleString()}`} trend={{ label: `+$${(kpi.todaySpend ?? 0).toFixed(2)} today`, tone: "lime" }} icon={<DollarSign size={16} />} />
-            <StatCard label={t("ui.dash.active_routes")} value={kpi.activeRoutes ?? 0} trend={{ label: "routing", tone: "lime" }} icon={<Route size={16} />} />
-            <StatCard label={t("ui.dash.avg_latency")} value={kpi.avgLatency ? `${kpi.avgLatency}ms` : "—"} trend={{ label: "across channels", tone: "cyan" }} icon={<Clock size={16} />} />
+            <StatCard label={t("ui.dash.total_balance")} value={`$${(kpi.totalBalance ?? totalAccountBalance).toLocaleString()}`} trend={{ label: `$${(kpi.todaySpend ?? 0).toFixed(2)} ${l("spent today", "今日消耗")}`, tone: "muted" }} icon={<DollarSign size={16} />} />
+            <StatCard label={t("ui.dash.active_routes")} value={kpi.activeRoutes ?? 0} trend={{ label: l("Routing", "路由中"), tone: "lime" }} icon={<Route size={16} />} />
+            <StatCard label={l("P50 latency", "P50 延遲", "P50 延迟")} value={kpi.avgLatency ? `${kpi.avgLatency}ms` : "—"} trend={{ label: l("Across channels", "跨頻道", "跨频道"), tone: "cyan" }} icon={<Clock size={16} />} />
             <StatCard label={t("ui.dash.accounts_card")} value={`${kpi.activeAccounts ?? 0}/${kpi.totalAccounts ?? 0}`} trend={{ label: t("ui.dash.active_total"), tone: "lime" }} icon={<Activity size={16} />} />
           </div>
 
@@ -87,7 +99,7 @@ export default function Dashboard() {
             <SectionTitle
               title={t("ui.dash.site_observability")}
               description={t("ui.dash.obs_desc")}
-              eyebrow="Sites"
+              eyebrow={t("ui.accounts.sites_label")}
             />
             <div className="card overflow-hidden">
               {siteAvailability.length === 0 ? (
@@ -100,7 +112,7 @@ export default function Dashboard() {
                         <th className="px-4 py-3 font-mono text-[10px] tracking-widest text-[color:var(--color-muted)]">{t("ui.dash.site")}</th>
                         <th className="px-4 py-3 font-mono text-[10px] tracking-widest text-[color:var(--color-muted)]">{t("ui.dash.availability")}</th>
                         <th className="px-4 py-3 font-mono text-[10px] tracking-widest text-[color:var(--color-muted)]">{t("ui.dash.avg_latency")}</th>
-                        <th className="px-4 py-3 font-mono text-[10px] tracking-widest text-[color:var(--color-muted)]">24H REQUESTS</th>
+                        <th className="px-4 py-3 font-mono text-[10px] tracking-widest text-[color:var(--color-muted)]">{l("24h requests", "24 小時請求", "24 小时请求")}</th>
                         <th className="px-4 py-3 font-mono text-[10px] tracking-widest text-[color:var(--color-muted)]">{t("ui.dash.speed_test")}</th>
                       </tr>
                     </thead>
@@ -135,7 +147,7 @@ export default function Dashboard() {
 
           {/* Site distribution */}
           <section className="space-y-4">
-            <SectionTitle title={t("ui.dash.site_distribution")} description={t("ui.dash.dist_desc")} eyebrow="Sites" />
+            <SectionTitle title={t("ui.dash.site_distribution")} description={t("ui.dash.dist_desc")} eyebrow={t("ui.accounts.sites_label")} />
             <div className="card overflow-hidden">
               {siteDistribution.length === 0 ? (
                 <div className="p-6 text-sm text-[color:var(--color-muted)]">{t("ui.dash.no_dist_data")}</div>
@@ -169,65 +181,28 @@ export default function Dashboard() {
           {/* Model analysis */}
           <section className="space-y-4">
             <SectionTitle title={t("ui.dash.model_analysis")} description={t("ui.dash.model_analysis_desc")} eyebrow={t("ui.dash.models_eyebrow")} />
-            <div className="card overflow-hidden">
-              {modelAnalysis.length === 0 ? (
-                <div className="p-6 text-sm text-[color:var(--color-muted)]">{t("ui.dash.no_model_data")}</div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-[color:var(--color-border)]">
-                        <th className="px-4 py-3 font-mono text-[10px] tracking-widest text-[color:var(--color-muted)]">{t("ui.dash.model")}</th>
-                        <th className="px-4 py-3 font-mono text-[10px] tracking-widest text-[color:var(--color-muted)]">{t("ui.dash.requests")}</th>
-                        <th className="px-4 py-3 font-mono text-[10px] tracking-widest text-[color:var(--color-muted)]">{t("ui.dash.spend")}</th>
-                        <th className="px-4 py-3 font-mono text-[10px] tracking-widest text-[color:var(--color-muted)]">{t("ui.dash.tokens")}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {modelAnalysis.map((m: any, i: number) => (
-                        <tr key={`${m.model}-${i}`} className="border-b border-[color:var(--color-border)]/50 last:border-0 hover:bg-white/[0.02]">
-                          <td className="px-4 py-3 font-medium text-[color:var(--color-fg)]">{m.model ?? "—"}</td>
-                          <td className="px-4 py-3 font-mono text-[color:var(--color-fg)]">{(m.calls ?? 0).toLocaleString()}</td>
-                          <td className="px-4 py-3 font-mono text-[color:var(--color-fg)]">${(m.spend ?? 0).toFixed(2)}</td>
-                          <td className="px-4 py-3 font-mono text-[color:var(--color-muted)]">{(m.tokens ?? 0).toLocaleString()}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+            <div className="card flex flex-wrap items-center gap-3 p-3">
+              <label className="text-xs">{l("Analysis range", "分析時段", "分析时段")} <select value={analysisDays} onChange={(e) => setAnalysisDays(Number(e.target.value))} className="rounded bg-[color:var(--color-panel-2)] p-2">{[1, 7, 14, 30, 90].map((days) => <option key={days} value={days}>{days} {l("days", "天")}</option>)}</select></label>
+              <label className="text-xs">{t("ui.dash.site")} <select value={analysisSite} onChange={(e) => setAnalysisSite(e.target.value)} className="rounded bg-[color:var(--color-panel-2)] p-2"><option value="">{l("All sites", "全部站點", "全部站点")}</option>{siteDistribution.filter((s) => s.siteId != null).map((s) => <option key={s.siteId} value={s.siteId}>{s.siteName}</option>)}</select></label>
+              <button type="button" className="chip" disabled={analysisLoading} onClick={() => setAnalysisEpoch((n) => n + 1)}>{l("Refresh analysis", "刷新分析")}</button>
             </div>
+            {analysisLoading ? <p role="status">{l("Loading analysis…", "載入分析中…", "加载分析中…")}</p> : <ModelAnalysis rows={modelAnalysis} details={analysisDetails} defaultScope={analysisDays === 7 && !analysisSite} />}
           </section>
 
           {/* Site trend */}
           <section className="space-y-4">
-            <SectionTitle title={t("ui.dash.site_trend")} description={t("ui.dash.site_trend_desc")} eyebrow={t("ui.dash.trends_eyebrow")} />
+            <SectionTitle title={t("ui.dash.site_trend")} description={l("7-day per-site spend and request counts", "7 日各站點消耗與請求數", "7 日各站点消耗与请求数")} eyebrow={t("ui.dash.trends_eyebrow")} />
             <div className="card p-4">
               {siteTrend.length === 0 ? (
                 <div className="py-4 text-sm text-[color:var(--color-muted)]">{t("ui.dash.no_trend_data")}</div>
               ) : (
-                <div className="flex items-end gap-2 overflow-x-auto pb-2">
-                  {siteTrend.map((day, i) => (
-                    <div key={i} className="flex min-w-[70px] flex-col items-center gap-1.5">
-                      <span className="font-mono text-[9px] text-[color:var(--color-rose)]">↓{day.fail ?? 0}</span>
-                      <div className="flex items-end gap-0.5">
-                        <div className="w-6 rounded-t bg-[color:var(--color-lime)]/70" style={{ height: `${Math.min(48, ((day.ok ?? 0) / 60000) * 48)}px` }} />
-                        <div className="w-2 rounded-t bg-[color:var(--color-rose)]/60" style={{ height: `${Math.min(48, ((day.fail ?? 0) / 500) * 48)}px` }} />
-                      </div>
-                      <span className="font-mono text-[8px] text-[color:var(--color-muted)]">{day.day ?? day.date ?? ""}</span>
-                    </div>
-                  ))}
-                </div>
+                <div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr><th className="p-2">{l("Date", "日期")}</th><th className="p-2">{t("ui.dash.site")}</th><th className="p-2">{t("ui.dash.spend")} (USD)</th><th className="p-2">{t("ui.dash.requests")}</th></tr></thead><tbody>{siteTrend.flatMap((day) => Object.entries(day.sites ?? {}).map(([site, stats]) => <tr key={`${day.date}-${site}`}><td className="p-2">{day.date}</td><td className="p-2">{site}</td><td className="p-2">${stats.spend.toFixed(6)}</td><td className="p-2">{stats.calls.toLocaleString()}</td></tr>))}</tbody></table></div>
               )}
-              <div className="mt-3 flex items-center gap-4 border-t border-[color:var(--color-border)] pt-3 font-mono text-[10px] text-[color:var(--color-muted)]">
-                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-[color:var(--color-lime)]/70" /> success</span>
-                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-[color:var(--color-rose)]/60" /> failures</span>
-              </div>
             </div>
           </section>
           {/* Recent events */}
           <section className="space-y-4">
-            <SectionTitle title={t("ui.dash.recent_events")} description={t("ui.dash.latest_events")} eyebrow="Events" />
+            <SectionTitle title={t("ui.dash.recent_events")} description={t("ui.dash.latest_events")} eyebrow={t("ui.dash.eyebrow_events")} />
             <div className="space-y-2">
               {(feed?.events ?? []).length === 0 ? (
                 <div className="card p-4 text-sm text-[color:var(--color-muted)]">{t("ui.dash.no_events")}</div>

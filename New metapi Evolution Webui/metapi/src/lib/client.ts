@@ -3,14 +3,16 @@
  * Attaches Bearer token from localStorage; clears session on 401/403.
  */
 
-const AUTH_KEY = "metapi-auth-token";
+import { clearSession, readSession } from "./session";
+import { ADMIN_AUTH_FAILURE_HEADER, shouldClearAdminSession } from "../../../../src/server/shared/adminAuthFailure.js";
 
 export function getStoredToken(): string | null {
-  try { return localStorage.getItem(AUTH_KEY); } catch { return null; }
+  try { return readSession(localStorage); } catch { return null; }
 }
 
 export function clearStoredToken(): void {
-  try { localStorage.removeItem(AUTH_KEY); } catch { /* ignore */ }
+  try { clearSession(localStorage); } catch { /* ignore */ }
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("metapi-session-cleared"));
 }
 
 function extractError(res: Response): Promise<string> {
@@ -31,10 +33,12 @@ function extractError(res: Response): Promise<string> {
 async function authFetch(
   url: string,
   options: RequestInit & { timeoutMs?: number } = {},
+  throwOnAuthFailure = true,
 ): Promise<Response> {
   const { timeoutMs = 30_000, ...fetchOptions } = options;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
+  const signal = fetchOptions.signal ? AbortSignal.any([fetchOptions.signal, controller.signal]) : controller.signal;
 
   const token = getStoredToken();
   const headers = new Headers(fetchOptions.headers ?? {});
@@ -44,17 +48,17 @@ async function authFetch(
   }
 
   try {
-    const res = await fetch(url, { ...fetchOptions, signal: controller.signal, headers });
-    if (res.status === 401 || res.status === 403) {
+    const res = await fetch(url, { ...fetchOptions, signal, headers });
+    if (shouldClearAdminSession(url, res.status, res.headers.get(ADMIN_AUTH_FAILURE_HEADER))) {
       clearStoredToken();
-      if (typeof window !== "undefined" && typeof window.location?.reload === "function") {
-        window.location.reload();
+      if (throwOnAuthFailure) {
+        if (typeof window !== "undefined" && typeof window.location?.reload === "function") window.location.reload();
+        throw new Error("Session expired — please sign in again.");
       }
-      throw new Error("Session expired — please sign in again.");
     }
     return res;
   } catch (err: unknown) {
-    if (err instanceof Error && err.name === "AbortError") {
+    if (controller.signal.aborted && !fetchOptions.signal?.aborted) {
       throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s.`);
     }
     throw err;
@@ -64,6 +68,14 @@ async function authFetch(
 }
 
 export type ApiRequestOptions = RequestInit & { timeoutMs?: number };
+
+export async function apiResponse(url: string, options: ApiRequestOptions = {}): Promise<Response> {
+  if (!getStoredToken()) {
+    clearStoredToken();
+    throw new Error("Session expired — please sign in again.");
+  }
+  return authFetch(url, options, false);
+}
 
 export async function apiGet<T = unknown>(url: string, options: ApiRequestOptions = {}): Promise<T> {
   const res = await authFetch(url, { ...options, method: "GET" });

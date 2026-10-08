@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
+import { mapAnnouncement, type AnnouncementRow } from "./observability/announcements";
+import { fetchAnnouncementPage } from "./observability/api";
+import { useObservationLabels } from "./observability/labels";
+import AnnouncementContent from "./observability/AnnouncementContent";
+import { readFocusAnnouncementId } from "../../../../src/web/pages/helpers/navigationFocus";
 import { Megaphone, RefreshCw, ShieldAlert, Wrench } from "lucide-react";
 import { ANNOUNCEMENTS, type AnnouncementLevel } from "../data/prototype";
 import PageHeader from "../components/PageHeader";
@@ -12,13 +18,14 @@ import { useUiText } from "../i18n/useUiText";
 import { useToast } from "../components/Toast";
 import {
   DATA_MODE,
-  fetchAnnouncements,
   markSiteAnnouncementRead,
   markAllSiteAnnouncementsRead,
   clearSiteAnnouncements,
   syncSiteAnnouncements,
 } from "../lib/source";
 
+const FOCUS_BATCH_SIZE = 500;
+const FOCUS_SCAN_LIMIT = 5000;
 const LEVEL_OPTIONS: ("all" | AnnouncementLevel)[] = [
   "all",
   "release",
@@ -34,54 +41,52 @@ const LEVEL_TONES: Record<AnnouncementLevel, string> = {
   info: "cyan",
 };
 
-// Backend announcement row shape.
-interface BackendAnnouncement {
-  id: number;
-  title: string;
-  summary?: string;
-  message?: string;
-  level?: string;
-  source?: string;
-  read: boolean;
-  createdAt?: string;
-  publishedAt?: string;
-}
-
-function mapBackendAnnouncement(raw: BackendAnnouncement): (typeof ANNOUNCEMENTS)[number] {
-  const level = (["release", "maintenance", "security", "info"] as const).includes(raw.level as AnnouncementLevel)
-    ? (raw.level as AnnouncementLevel)
-    : "info";
-  return {
-    id: String(raw.id),
-    title: raw.title,
-    summary: raw.summary ?? raw.message ?? "",
-    source: raw.source ?? "",
-    level,
-    read: Boolean(raw.read),
-    publishedAt: raw.publishedAt ?? raw.createdAt ?? "",
-  };
-}
 
 export default function SiteAnnouncements() {
   const t = useUiText();
+  const l = useObservationLabels();
+  const location = useLocation();
+  const focusId = readFocusAnnouncementId(location.search);
+  const sequence = useRef(0);
+  const [loading, setLoading] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [focusStatus, setFocusStatus] = useState<"searching" | "found" | "bounded" | "not-found" | "error" | null>(null);
   const { showToast } = useToast();
   const [query, setQuery] = useState("");
   const [level, setLevel] = useState<"all" | AnnouncementLevel>("all");
-  const [announcements, setAnnouncements] = useState(() => ANNOUNCEMENTS);
+  const [announcements, setAnnouncements] = useState<AnnouncementRow[]>(() => DATA_MODE === "prototype" ? [...ANNOUNCEMENTS] : []);
   const [feedback, setFeedback] = useState<string | null>(null);
 
-  const reload = async () => {
+  const reload = async (append = false) => {
     if (DATA_MODE === "prototype") return;
+    const id = ++sequence.current; setLoading(true); setFocusStatus(focusId ? "searching" : null);
     try {
-      const data = await fetchAnnouncements();
-      setAnnouncements((data as BackendAnnouncement[]).map(mapBackendAnnouncement));
+      let nextOffset = append ? offset : 0;
+      const rows: AnnouncementRow[] = [];
+      const limit = focusId ? FOCUS_BATCH_SIZE : 50;
+      let more = false;
+      do {
+        const data = await fetchAnnouncementPage(nextOffset, limit);
+        if (id !== sequence.current) return;
+        rows.push(...data.map(mapAnnouncement)); nextOffset += data.length; more = data.length === limit;
+        // No direct-id API exists. Bound automatic full-table-read endpoint requests to ten.
+      } while (!append && focusId && more && rows.length < FOCUS_SCAN_LIMIT && !rows.some((a) => a.id === String(focusId)));
+      const combined = append ? [...new Map([...announcements, ...rows].map((a) => [a.id, a])).values()] : rows;
+      setAnnouncements(combined);
+      setOffset(nextOffset); setHasMore(more);
+      if (focusId) setFocusStatus(combined.some((a) => a.id === String(focusId)) ? "found" : more ? "bounded" : "not-found");
     } catch (err) {
-      setAnnouncements([]);
-      showToast(err instanceof Error ? err.message : "Failed to load announcements.");
-    }
+      if (id === sequence.current) { setFocusStatus(focusId ? "error" : null); showToast(err instanceof Error ? err.message : t("ui.anno.err_load")); }
+    } finally { if (id === sequence.current) setLoading(false); }
   };
 
-  useEffect(() => { reload(); }, []);
+  useEffect(() => { setQuery(""); setLevel("all"); reload(); return () => { sequence.current++; }; }, [focusId]);
+  useEffect(() => {
+    if (!focusId || !announcements.some((a) => a.id === String(focusId))) return;
+    const node = document.getElementById(`announcement-${focusId}`);
+    node?.scrollIntoView({ block: "center", behavior: "smooth" }); node?.focus({ preventScroll: true });
+  }, [focusId, announcements]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -106,21 +111,19 @@ export default function SiteAnnouncements() {
   const markRead = async (id: string) => {
     try {
       await markSiteAnnouncementRead(Number(id));
-      setAnnouncements((prev) =>
-        prev.map((a) => (a.id === id ? { ...a, read: true } : a)),
-      );
+      await reload();
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Mark read failed.");
+      showToast(err instanceof Error ? err.message : t("ui.events.mark_read_failed"));
     }
   };
 
   const markAllRead = async () => {
     try {
       await markAllSiteAnnouncementsRead();
-      setAnnouncements((prev) => prev.map((a) => ({ ...a, read: true })));
+      await reload();
       flash(t("ui.ann.marked_ok"));
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Mark all failed.");
+      showToast(err instanceof Error ? err.message : t("ui.events.mark_all_failed"));
     }
   };
 
@@ -130,17 +133,18 @@ export default function SiteAnnouncements() {
       flash(t("ui.ann.sync_ok"));
       await reload();
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Sync failed.");
+      showToast(err instanceof Error ? err.message : t("ui.toast.sync_failed"));
     }
   };
 
   const clearAll = async () => {
+    if (!window.confirm(l("Clear all site announcements?", "清除全部站點公告？", "清除全部站点公告？"))) return;
     try {
       await clearSiteAnnouncements();
-      setAnnouncements([]);
+      setAnnouncements([]); setOffset(0); setHasMore(false); setFocusStatus(focusId ? "not-found" : null);
       flash(t("ui.ann.clear_ok"));
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Clear failed.");
+      showToast(err instanceof Error ? err.message : t("ui.events.clear_failed"));
     }
   };
 
@@ -188,17 +192,17 @@ export default function SiteAnnouncements() {
           icon={<Megaphone size={16} />}
         />
         <StatCard
-          label={t("ui.ann.release")}
-          value={byLevel("release")}
+          label={l("Loaded announcements", "已載入公告", "已加载公告")}
+          value={announcements.length}
           icon={<Megaphone size={16} />}
         />
         <StatCard
-          label={t("ui.ann.maintenance")}
+          label={t("ui.events.level_warning")}
           value={byLevel("maintenance")}
           icon={<Wrench size={16} />}
         />
         <StatCard
-          label={t("ui.ann.security")}
+          label={t("ui.events.level_failure")}
           value={byLevel("security")}
           trend={{ label: byLevel("security") > 0 ? t("ui.ann.review_recommended") : t("ui.ann.clear"), tone: byLevel("security") > 0 ? "rose" : "lime" }}
           icon={<ShieldAlert size={16} />}
@@ -211,6 +215,9 @@ export default function SiteAnnouncements() {
         </div>
       )}
 
+      {focusStatus === "bounded" && <p role="status" className="rounded border border-[color:var(--color-amber)]/40 p-3 text-sm">{l(`Automatic focused lookup paused after ${FOCUS_SCAN_LIMIT} rows. Focused announcement not found yet; load more to continue.`, `自動定位已在 ${FOCUS_SCAN_LIMIT} 筆後暫停。尚未找到目標公告；可載入更多繼續查找。`, `自动定位已在 ${FOCUS_SCAN_LIMIT} 条后暂停。尚未找到目标公告；可加载更多继续查找。`)} {l("Loaded", "已載入", "已加载")}: {offset}</p>}
+      {focusStatus === "not-found" && <p role="status" className="text-sm">{l("Focused announcement was not found in the server results.", "伺服器結果中未找到目標公告。", "服务器结果中未找到目标公告。")}</p>}
+      {focusStatus === "error" && <div role="alert" className="space-y-2 text-sm"><p>{l("Focused lookup could not finish; this does not mean the announcement is missing.", "公告定位未能完成；這不代表公告不存在。", "公告定位未能完成；这不代表公告不存在。")}</p><button type="button" disabled={loading} className="chip" onClick={() => reload()}>{l("Retry focused lookup", "重試公告定位", "重试公告定位")}</button></div>}
       <section className="space-y-4">
         <SectionTitle
           title={t("ui.ann.feed")}
@@ -234,7 +241,7 @@ export default function SiteAnnouncements() {
           >
             {LEVEL_OPTIONS.map((lvl) => (
               <option key={lvl} value={lvl}>
-                {lvl === "all" ? t("ui.ann.all_levels") : lvl}
+                {lvl === "all" ? t("ui.ann.all_levels") : lvl === "maintenance" ? t("ui.events.level_warning") : lvl === "security" ? t("ui.events.level_failure") : lvl === "info" ? t("ui.events.level_info") : t("ui.ann.release")}
               </option>
             ))}
           </select>
@@ -251,13 +258,15 @@ export default function SiteAnnouncements() {
             {filtered.map((announcement) => (
               <article
                 key={announcement.id}
-                className={`card p-4 ${announcement.read ? "" : "ring-1 ring-inset ring-[color:var(--color-lime)]/30"}`}
+                id={`announcement-${announcement.id}`}
+                tabIndex={-1}
+                className={`card p-4 ${focusId === Number(announcement.id) ? "ring-2 ring-[color:var(--color-cyan)]" : announcement.read ? "" : "ring-1 ring-inset ring-[color:var(--color-lime)]/30"}`}
               >
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className={`chip chip-${LEVEL_TONES[announcement.level]}`}>
-                        {announcement.level}
+                        {announcement.severity === "warning" ? t("ui.events.level_warning") : announcement.severity === "error" ? t("ui.events.level_failure") : announcement.level === "info" ? t("ui.events.level_info") : t(`ui.ann.${announcement.level}`)}
                       </span>
                       {!announcement.read && (
                         <span className="chip chip-lime">{t("ui.ann.unread_tag")}</span>
@@ -266,12 +275,14 @@ export default function SiteAnnouncements() {
                     <h3 className="mt-2 font-display text-xl tracking-tight text-[color:var(--color-fg)]">
                       {announcement.title}
                     </h3>
-                    <p className="mt-1.5 max-w-3xl text-sm leading-6 text-[color:var(--color-muted)]">
-                      {announcement.summary}
-                    </p>
+                    <div className="mt-1.5 max-w-3xl overflow-x-auto text-sm leading-6 text-[color:var(--color-muted)] [&_img]:max-w-full [&_a]:underline [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5 [&_pre]:overflow-auto">
+                      <AnnouncementContent content={announcement.summary} />
+                    </div>
                     <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[10px] tracking-wide text-[color:var(--color-muted)]">
                       <span>{announcement.source}</span>
-                      <span>{new Date(announcement.publishedAt).toLocaleString()}</span>
+                      <span>{l("First seen", "首次發現", "首次发现")}: {announcement.publishedAt || "—"}</span>
+                      {announcement.readAt && <span>{l("Read at", "已讀時間", "已读时间")}: {announcement.readAt}</span>}
+                      {announcement.lastSeenAt && <span>{l("Last seen", "最後發現", "最后发现")}: {announcement.lastSeenAt}</span>}
                     </div>
                   </div>
                   {!announcement.read && (
@@ -288,6 +299,9 @@ export default function SiteAnnouncements() {
             ))}
           </div>
         )}
+        <p className="text-xs text-[color:var(--color-muted)]">{l("Counts and search cover loaded announcements.", "統計與搜尋僅包含已載入公告。", "统计与搜索仅包含已加载公告。")}</p>
+        {loading && <p role="status">{l("Loading…", "載入中…", "加载中…")}</p>}
+        {hasMore && <button type="button" disabled={loading} className="chip" onClick={() => reload(true)}>{t("ui.events.load_more")}</button>}
       </section>
     </div>
   );

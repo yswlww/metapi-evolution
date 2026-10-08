@@ -1,4 +1,5 @@
 import { clearAuthSession, getAuthToken } from "./authSession.js";
+import { ADMIN_AUTH_FAILURE_HEADER, shouldClearAdminSession } from "../server/shared/adminAuthFailure.js";
 
 type BufferLike = {
   from(data: ArrayBuffer): { toString(encoding: "base64"): string };
@@ -96,24 +97,13 @@ async function fetchAuthenticatedResponse(
     signal: externalSignal,
     ...fetchOptions
   } = options;
+  const token = requireAuthToken();
   const controller = new AbortController();
   let timeoutHandle: ReturnType<typeof setTimeout> | null = setTimeout(() => {
     controller.abort();
   }, timeoutMs);
-  let cleanupExternalSignal = () => {};
+  const signal = externalSignal ? AbortSignal.any([externalSignal, controller.signal]) : controller.signal;
 
-  if (externalSignal) {
-    if (externalSignal.aborted) {
-      controller.abort();
-    } else {
-      const abortHandler = () => controller.abort();
-      externalSignal.addEventListener("abort", abortHandler, { once: true });
-      cleanupExternalSignal = () =>
-        externalSignal.removeEventListener("abort", abortHandler);
-    }
-  }
-
-  const token = requireAuthToken();
   const headers = new Headers(fetchOptions.headers ?? {});
   headers.set("Authorization", `Bearer ${token}`);
   if (fetchOptions.body && !headers.has("Content-Type")) {
@@ -123,10 +113,10 @@ async function fetchAuthenticatedResponse(
   try {
     const res = await fetch(url, {
       ...fetchOptions,
-      signal: controller.signal,
+      signal,
       headers,
     });
-    if (res.status === 401 || res.status === 403) {
+    if (shouldClearAdminSession(url, res.status, res.headers.get(ADMIN_AUTH_FAILURE_HEADER))) {
       const hadToken = !!getAuthToken(localStorage);
       clearAuthSession(localStorage);
       if (
@@ -152,7 +142,6 @@ async function fetchAuthenticatedResponse(
       clearTimeout(timeoutHandle);
       timeoutHandle = null;
     }
-    cleanupExternalSignal();
   }
 }
 

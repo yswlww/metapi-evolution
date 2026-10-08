@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { oauthApi, parseNativeOAuthJson, collectRouteUnits, type AuthorizationSession } from './oauth/oauthApi';
+import { AuthorizationPanel, OAuthModelsDrawer } from './oauth/OAuthPanels';
+import { useOAuthText } from './oauth/useOAuthText';
 import { KeyRound, RefreshCw, Server, ShieldCheck, Users } from "lucide-react";
 import {
   OAUTH_CONNECTIONS,
@@ -24,16 +27,10 @@ import { EditDrawer, Field, Select, TextInput } from "../components/EditDrawer";
 import { useUiText } from "../i18n/useUiText";
 import {
   DATA_MODE,
-  fetchOAuthData,
-  startOAuthProvider,
-  submitOAuthManualCallback,
   refreshOAuthConnectionQuota,
-  rebindOAuthConnection,
   updateOAuthConnectionProxy,
   deleteOAuthConnection,
-  createOAuthRouteUnit,
   deleteOAuthRouteUnit,
-  importOAuthConnections,
 } from "../lib/source";
 
 const STATUS_OPTIONS: ("all" | OAuthConnectionStatus)[] = [
@@ -68,6 +65,8 @@ function byteCount(value: number, unit: string): number {
   return Math.round(value);
 }
 
+type OAuthFeedback = string | { key: string; params?: Record<string, string | number> };
+
 type DrawerIntent =
   | { mode: "create"; providerId?: string }
   | { mode: "rebind"; connectionId: string }
@@ -81,7 +80,7 @@ export interface RouteUnitDraft {
   modelFamily: string;
   region: string;
   strategy: "round_robin" | "stick_until_unavailable";
-  status: "healthy" | "degraded" | "disabled";
+  status: "healthy" | "degraded" | "disabled" | "unknown";
   statusLabel: string;
   memberConnectionIds: string[];
   requestsPerMinute: number;
@@ -91,15 +90,18 @@ export interface RouteUnitDraft {
 
 export default function OAuthManagement() {
   const t = useUiText();
+  const text = useOAuthText();
+  const [modelsAccount, setModelsAccount] = useState<{ id: number; name: string } | null>(null);
   const [filters, setFilters] = useState<OAuthConnectionFilters>({
     query: "",
     providerId: "all",
     status: "all",
   });
   const [drawer, setDrawer] = useState<DrawerIntent | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<OAuthFeedback | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [routeUnits, setRouteUnits] = useState<RouteUnitDraft[]>([]);
+  const [editingUnit, setEditingUnit] = useState<RouteUnitDraft | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   // Quota window toggle: backend snapshots expose fiveHour / sevenDay windows.
   const [quotaWindow, setQuotaWindow] = useState<"fiveHour" | "sevenDay">("sevenDay");
@@ -132,43 +134,50 @@ export default function OAuthManagement() {
   const [liveProviders, setLiveProviders] = useState<typeof OAUTH_PROVIDERS | null>(null);
   const [liveConnections, setLiveConnections] = useState<typeof OAUTH_CONNECTIONS | null>(null);
   const [oauthLoaded, setOauthLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const reload = async () => {
     if (DATA_MODE === "prototype") return;
     try {
-      const data = await fetchOAuthData();
+      const data = await oauthApi.data();
+      setLoadError(null);
       // Map backend provider rows to the prototype display shape.
       const providers = (data.providers ?? []).map((p: any, i: number) => ({
         id: p.provider ?? String(i),
-        name: p.label ?? p.provider ?? "Unknown",
+        name: p.label ?? p.provider ?? "",
         description: p.platform ?? "",
         authorizationType: "oauth",
-        status: p.enabled === false ? ("disabled" as const) : ("available" as const),
-        statusLabel: p.enabled === false ? "Disabled" : "Available",
+        status: p.enabled === false ? ("maintenance" as const) : ("available" as const),
+        enabled: p.enabled !== false,
+        statusLabel: "",
         connected: false,
         requiresProjectId: Boolean(p.requiresProjectId),
       }));
       const connections = (data.connections ?? []).map((c: any) => ({
         id: String(c.id ?? c.accountId ?? ""),
-        accountEmail: c.username ?? c.accountName ?? c.oauthAccountKey ?? "",
-        accountName: c.username ?? c.accountName ?? "Account",
-        providerId: c.provider ?? c.oauthProvider ?? "",
-        status: (c.status ?? "active") as OAuthConnectionStatus,
+        accountEmail: c.email ?? c.username ?? c.accountKey ?? "",
+        accountName: c.username ?? c.email ?? c.accountKey ?? "",
+        providerId: c.provider ?? "",
+        status: (c.status === "healthy" ? "active" : c.status === "abnormal" ? "attention" : c.status ?? "active") as OAuthConnectionStatus,
+        statusLabel: "",
+        createdAt: c.createdAt ?? "",
         // Preserve the full backend quota snapshot (windows.fiveHour /
         // windows.sevenDay) so resolveQuota() can render the selected window.
         quota: (c.quota as any) ?? { used: 0, limit: 0, unit: "tokens" as const, renewsAt: "" },
         lastRefreshedAt: c.quota?.lastSyncAt ?? c.lastRefreshedAt ?? "",
-        siteUrl: "",
-        projectId: c.oauthProjectId ?? "",
-        useSystemProxy: false,
-        proxyUrl: null,
-        routeUnitIds: [],
+        siteUrl: c.site?.url ?? "",
+        siteId: c.siteId,
+        projectId: c.projectId ?? "",
+        useSystemProxy: Boolean(c.useSystemProxy),
+        proxyUrl: c.proxyUrl ?? null,
+        routeUnitIds: c.routeUnit ? [String(c.routeUnit.id)] : [],
         scopes: [],
       }));
-      setLiveProviders(providers.length ? (providers as typeof OAUTH_PROVIDERS) : null);
-      setLiveConnections(connections.length ? (connections as typeof OAUTH_CONNECTIONS) : null);
-    } catch {
-      // keep fallback data; no fake rows on error
+      setRouteUnits(collectRouteUnits(data.connections ?? []));
+      setLiveProviders(providers as typeof OAUTH_PROVIDERS);
+      setLiveConnections(connections as typeof OAUTH_CONNECTIONS);
+    } catch (failure) {
+      setLoadError(failure instanceof Error ? failure.message : 'error');
     } finally {
       setOauthLoaded(true);
     }
@@ -178,8 +187,8 @@ export default function OAuthManagement() {
 
   // Resolved sources: in API mode use live API data (even when empty — never
   // fall back to fake rows); in prototype mode use the snapshot data.
-  const OAUTH_PROVIDERS_SRC = DATA_MODE === "prototype" ? OAUTH_PROVIDERS : (liveProviders ?? []);
-  const OAUTH_CONNECTIONS_SRC = DATA_MODE === "prototype" ? OAUTH_CONNECTIONS : (liveConnections ?? []);
+  const OAUTH_PROVIDERS_SRC = DATA_MODE === "prototype" ? OAUTH_PROVIDERS : (liveProviders ?? []).map(provider => ({ ...provider, statusLabel: t((provider as any).enabled === false ? 'ui.oauth.status_disabled' : 'ui.oauth.status_available') }));
+  const OAUTH_CONNECTIONS_SRC = DATA_MODE === "prototype" ? OAUTH_CONNECTIONS : (liveConnections ?? []).map(connection => ({ ...connection, statusLabel: connection.status === 'active' || connection.status === 'attention' ? text(connection.status) : t(`ui.status.${connection.status}`) }));
 
   // Route units: in API mode start empty (backend route units come from the
   // oauth route-unit endpoints, which we do not list yet); in prototype mode
@@ -214,7 +223,7 @@ export default function OAuthManagement() {
 
   const mergeSelectedIntoRouteUnit = async () => {
     if (selectedIds.size < 2) {
-      flash(t("ui.oauth.merge_need_two"));
+      flash({ key: "ui.oauth.merge_need_two" });
       return;
     }
     // Only numeric ids map to real backend account ids; prototype string ids
@@ -223,51 +232,30 @@ export default function OAuthManagement() {
       .map(Number)
       .filter((n) => Number.isFinite(n) && n > 0);
     if (numericIds.length < 2) {
-      flash(t("ui.oauth.merge_need_two"));
+      flash({ key: "ui.oauth.merge_need_two" });
       return;
     }
     try {
-      await createOAuthRouteUnit({
-        accountIds: numericIds,
-        name: `Merged pool (${numericIds.length})`,
-        strategy: "round_robin",
-      });
-      setRouteUnits((prev) => [
-        {
-          id: `route-merged-${Date.now()}`,
-          name: `Merged pool (${numericIds.length})`,
-          modelFamily: "mixed",
-          region: "global",
-          strategy: "round_robin",
-          status: "healthy",
-          statusLabel: "Healthy",
-          memberConnectionIds: numericIds.map(String),
-          requestsPerMinute: 0,
-          dailyUsed: 0,
-          dailyLimit: 0,
-        },
-        ...prev,
-      ]);
-      flash(t("ui.oauth.batch_merged", { n: numericIds.length }));
+      await oauthApi.createUnit({ accountIds: numericIds, name: `${text('pool')} (${numericIds.length})`, strategy: "round_robin" });
+      flash({ key: "ui.oauth.batch_merged", params: { n: numericIds.length } });
       setSelectedIds(new Set());
       await reload();
     } catch (err) {
-      flash(err instanceof Error ? err.message : "Merge failed.");
+      flash(err instanceof Error ? err.message : { key: "ui.oauth.merge_failed" });
     }
   };
 
   const splitRouteUnit = async (id: string) => {
     try {
-      // Only user-created route units (prefixed route-) are deletable here.
-      const numericId = Number(id.replace("route-merged-", "").replace("route-created-", ""));
+      const numericId = Number(id);
       if (Number.isFinite(numericId) && numericId > 0) {
         await deleteOAuthRouteUnit(numericId);
       }
       setRouteUnits((prev) => prev.filter((ru) => ru.id !== id));
-      flash(t("ui.oauth.ru_split_ok"));
+      flash({ key: "ui.oauth.ru_split_ok" });
       await reload();
     } catch (err) {
-      flash(err instanceof Error ? err.message : "Split failed.");
+      flash(err instanceof Error ? err.message : { key: "ui.oauth.split_failed" });
     }
   };
 
@@ -276,10 +264,10 @@ export default function OAuthManagement() {
       buildOAuthConnectionViewModels(
         OAUTH_CONNECTIONS_SRC,
         OAUTH_PROVIDERS_SRC,
-        OAUTH_ROUTE_UNITS,
+        DATA_MODE === 'prototype' ? OAUTH_ROUTE_UNITS : [],
         filters,
-      ),
-    [filters, OAUTH_CONNECTIONS_SRC, OAUTH_PROVIDERS_SRC],
+      ).map(connection => DATA_MODE === 'prototype' ? connection : ({ ...connection, routeUnits: allRouteUnits.filter(unit => unit.memberConnectionIds.includes(connection.id)) })),
+    [filters, OAUTH_CONNECTIONS_SRC, OAUTH_PROVIDERS_SRC, allRouteUnits],
   );
 
   const summary = useMemo(() => {
@@ -290,7 +278,7 @@ export default function OAuthManagement() {
     return { active, attention, providers, routeUnits };
   }, [OAUTH_CONNECTIONS_SRC, OAUTH_PROVIDERS_SRC, allRouteUnits]);
 
-  const flash = (message: string) => {
+  const flash = (message: OAuthFeedback) => {
     setFeedback(message);
     window.setTimeout(() => setFeedback(null), 2500);
   };
@@ -350,9 +338,10 @@ export default function OAuthManagement() {
         />
       </div>
 
+      {loadError && <p role="alert">{loadError === 'error' ? text('error') : loadError}</p>}
       {feedback && (
         <div className="rounded-lg border border-[color:var(--color-lime)]/30 bg-[color:var(--color-lime)]/10 px-4 py-3 font-mono text-xs tracking-wider text-[color:var(--color-lime)]">
-          {feedback}
+          {typeof feedback === 'string' ? feedback : t(feedback.key, feedback.params)}
         </div>
       )}
 
@@ -435,7 +424,7 @@ export default function OAuthManagement() {
             <button
               type="button"
               onClick={() => {
-                flash(t("ui.oauth.batch_refreshed", { n: selectedIds.size }));
+                flash({ key: "ui.oauth.batch_refreshed", params: { n: selectedIds.size } });
                 setSelectedIds(new Set());
               }}
               className="rounded-md border border-[color:var(--color-border)] px-2.5 py-1.5 font-mono text-[10px] tracking-wider text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]"
@@ -594,10 +583,10 @@ export default function OAuthManagement() {
                                     await refreshOAuthConnectionQuota(accountId);
                                   }
                                   setRefreshKey((k) => k + 1);
-                                  flash(t("ui.oauth.quota_refresh_ok", { name: connection.accountName }));
+                                  flash({ key: "ui.oauth.quota_refresh_ok", params: { name: connection.accountName } });
                                   await reload();
                                 } catch (err) {
-                                  flash(err instanceof Error ? err.message : "Quota refresh failed.");
+                                  flash(err instanceof Error ? err.message : { key: "ui.oauth.quota_refresh_failed" });
                                 }
                               }}
                               className="rounded-md border border-[color:var(--color-border)] px-2 py-1 font-mono text-[9px] tracking-wider text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]"
@@ -606,6 +595,10 @@ export default function OAuthManagement() {
                             </button>
                             <button
                               type="button"
+                              disabled={DATA_MODE === 'prototype'} onClick={() => setModelsAccount({ id: Number(connection.id), name: connection.accountName })}
+                              className="rounded-md border px-2 py-1 text-xs"
+                            >{text('models')}</button>
+                            <button type="button"
                               onClick={() => setDrawer({ mode: "rebind", connectionId: connection.id })}
                               className="rounded-md border border-[color:var(--color-border)] px-2 py-1 font-mono text-[9px] tracking-wider text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]"
                             >
@@ -664,10 +657,10 @@ export default function OAuthManagement() {
                             await refreshOAuthConnectionQuota(accountId);
                           }
                           setRefreshKey((k) => k + 1);
-                          flash(t("ui.oauth.quota_refresh_ok", { name: connection.accountName }));
+                          flash({ key: "ui.oauth.quota_refresh_ok", params: { name: connection.accountName } });
                           await reload();
                         } catch (err) {
-                          flash(err instanceof Error ? err.message : "Quota refresh failed.");
+                          flash(err instanceof Error ? err.message : { key: "ui.oauth.quota_refresh_failed" });
                         }
                       }}
                       className="rounded-md border border-[color:var(--color-border)] px-2.5 py-1 font-mono text-[10px] tracking-wider text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]"
@@ -676,17 +669,20 @@ export default function OAuthManagement() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setDrawer({ mode: "rebind", connectionId: connection.id })}
+                      disabled={DATA_MODE === 'prototype'} onClick={() => setModelsAccount({ id: Number(connection.id), name: connection.accountName })}
+                      className="rounded-md border px-2 py-1 text-xs"
+                    >{text('models')}</button>
+                    <button type="button" onClick={() => setDrawer({ mode: "rebind", connectionId: connection.id })}
                       className="rounded-md border border-[color:var(--color-border)] px-2.5 py-1 font-mono text-[10px] tracking-wider text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]"
                     >
-                      REBIND
+                      {t('ui.oauth.rebind')}
                     </button>
                     <button
                       type="button"
                       onClick={() => setDrawer({ mode: "proxy", connectionId: connection.id })}
                       className="rounded-md border border-[color:var(--color-border)] px-2.5 py-1 font-mono text-[10px] tracking-wider text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]"
                     >
-                      PROXY
+                      {t('ui.oauth.proxy')}
                     </button>
                   </div>
                 </div>
@@ -709,7 +705,7 @@ export default function OAuthManagement() {
               </span>
               <button
                 type="button"
-                onClick={() => setDrawer({ mode: "route-unit" })}
+                onClick={() => { setEditingUnit(null); setDrawer({ mode: "route-unit" }); }}
                 className="flex h-8 items-center gap-1.5 rounded-lg bg-[color:var(--color-lime)] px-3 font-mono text-[10px] font-bold tracking-wider text-[color:var(--color-ink)] hover:opacity-90"
               >
                 <span className="text-xs leading-none">+</span> {t("ui.oauth.new_route_unit")}
@@ -721,35 +717,36 @@ export default function OAuthManagement() {
           {allRouteUnits.map((routeUnit) => {
             const percent = Math.min(100, Math.round((routeUnit.dailyUsed / (routeUnit.dailyLimit || 1)) * 100));
             const tone = ROUTE_STATUS_TONES[routeUnit.status] ?? "muted";
-            const memberConnection = OAUTH_CONNECTIONS.find((c) => routeUnit.memberConnectionIds.includes(c.id));
+            const memberConnection = OAUTH_CONNECTIONS_SRC.find((c) => routeUnit.memberConnectionIds.includes(c.id));
             return (
               <div key={routeUnit.id} className="card p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h3 className="font-display text-xl tracking-tight">{routeUnit.name}</h3>
                     <div className="mt-1 font-mono text-[10px] tracking-wider text-[color:var(--color-muted)] uppercase">
-                      {routeUnit.modelFamily} · {routeUnit.region} · {routeUnit.strategy === "stick_until_unavailable" ? "sticky" : "round-robin"}
+                      {routeUnit.modelFamily} · {routeUnit.region} · {routeUnit.strategy === "stick_until_unavailable" ? t('ui.oauth.ru_sticky') : t('ui.oauth.ru_round_robin')}
                     </div>
                   </div>
-                  <span className={`chip chip-${tone}`}>{routeUnit.statusLabel}</span>
+                  <span className={`chip chip-${tone}`}>{routeUnit.statusLabel || t('ui.oauth.status_unknown')}</span>
                 </div>
-                <div className="mt-4">
+                {DATA_MODE === 'prototype' && <div className="mt-4">
                   <ProgressBar
                     label={t("ui.oauth.daily_requests")}
                     value={percent}
                     valueLabel={`${Math.round(routeUnit.dailyUsed)} / ${Math.round(routeUnit.dailyLimit)}`}
                     tone={percent >= 90 ? "rose" : percent >= 70 ? "amber" : "lime"}
                   />
-                </div>
+                </div>}
                 <div className="mt-4 flex items-center justify-between">
                   <span className="font-mono text-[10px] tracking-wide text-[color:var(--color-muted)]">
-                    {routeUnit.requestsPerMinute} req/min
+                    {DATA_MODE === 'prototype' ? `${routeUnit.requestsPerMinute} req/min` : t('ui.oauth.selected_count', { n: routeUnit.memberConnectionIds.length })}
                   </span>
                   <div className="flex items-center gap-2">
                     <span className="font-mono text-[10px] tracking-wide text-[color:var(--color-muted)]">
-                      {memberConnection?.accountName ?? "Unattached"}
+                      {memberConnection?.accountName ?? t("ui.oauth.status_unattached")}
                     </span>
-                    {routeUnit.id.startsWith("route-") && (
+                    {DATA_MODE === 'api' && <button type="button" className="rounded-md border px-2 py-1 text-xs" onClick={() => { setEditingUnit(routeUnit); setDrawer({ mode: 'route-unit' }); }}>{text('edit')}</button>}
+                    {DATA_MODE === "api" && (
                       <button
                         type="button"
                         onClick={() => splitRouteUnit(routeUnit.id)}
@@ -766,20 +763,23 @@ export default function OAuthManagement() {
         </div>
       </section>
 
+      {modelsAccount && <OAuthModelsDrawer accountId={modelsAccount.id} name={modelsAccount.name} onClose={() => setModelsAccount(null)} onRefresh={reload} />}
       {drawer?.mode === "route-unit" && (
         <RouteUnitDrawer
           onClose={() => setDrawer(null)}
           onFlash={flash}
-          onCreate={(unit) => setRouteUnits((prev) => [
-            { id: `route-created-${prev.length + 1}`, ...unit },
-            ...prev,
-          ])}
+          connections={OAUTH_CONNECTIONS_SRC}
+          unit={editingUnit}
+          onCreate={() => { void reload(); }}
         />
       )}
       {drawer && drawer.mode !== "route-unit" && (
         <ConnectionDrawer
           key={drawer.mode === "create" || drawer.mode === "import" ? drawer.mode : drawer.connectionId}
           intent={drawer}
+          providers={OAUTH_PROVIDERS_SRC}
+          connections={OAUTH_CONNECTIONS_SRC}
+          onReload={reload}
           onClose={() => setDrawer(null)}
           onFlash={flash}
         />
@@ -792,27 +792,44 @@ function ConnectionDrawer({
   intent,
   onClose,
   onFlash,
+  providers,
+  connections,
+  onReload,
 }: {
   intent: DrawerIntent;
+  providers: typeof OAUTH_PROVIDERS;
+  connections: typeof OAUTH_CONNECTIONS;
+  onReload: () => Promise<void>;
   onClose: () => void;
   onFlash: (message: string) => void;
 }) {
   const t = useUiText();
+  const text = useOAuthText();
+  const [providerId, setProviderId] = useState(intent.mode === 'create' ? intent.providerId ?? '' : '');
+  const [session, setSession] = useState<AuthorizationSession | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<any>(null);
   const connection =
     intent.mode === "rebind" || intent.mode === "proxy"
-      ? OAUTH_CONNECTIONS.find((c) => c.id === intent.connectionId)
+      ? connections.find((c) => c.id === intent.connectionId)
       : undefined;
 
-  const [siteUrl, setSiteUrl] = useState<string>(connection?.siteUrl ?? "");
   const [projectId, setProjectId] = useState<string>(connection?.projectId ?? "");
   const [proxyMode, setProxyMode] = useState<"system" | "custom" | "none">(
     connection?.useSystemProxy ? "system" : connection?.proxyUrl ? "custom" : "none",
   );
   const [proxyUrl, setProxyUrl] = useState<string>(connection?.proxyUrl ?? "");
   const [importText, setImportText] = useState<string>("");
-  const [importPreview, setImportPreview] = useState<
-    { providerLabel: string; email: string; valid: boolean; error?: string }[]
-  >([]);
+  const [importFiles, setImportFiles] = useState<{ name: string; data: Record<string, unknown> | null }[]>([]);
+  const importPreview = useMemo(() => {
+    if (importFiles.length) return importFiles.map(file => ({ providerLabel: String(file.data?.type ?? ''), email: file.name, valid: file.data !== null }));
+    if (!importText.trim()) return [];
+    try {
+      const data = parseNativeOAuthJson(importText);
+      return [{ providerLabel: String(data.type ?? data.provider ?? ''), email: String(data.email ?? data.account_id ?? ''), valid: true }];
+    } catch { return [{ providerLabel: '', email: '', valid: false }]; }
+  }, [importText, importFiles]);
 
   const titles: Record<DrawerIntent["mode"], string> = {
     create: t("ui.oauth.create_drawer"),
@@ -829,6 +846,7 @@ function ConnectionDrawer({
     "route-unit": t("ui.oauth.ru_create_eyebrow"),
   };
 
+  if (session) return <AuthorizationPanel session={session} onClose={onClose} onComplete={onReload} />;
   return (
     <EditDrawer
       open
@@ -851,44 +869,38 @@ function ConnectionDrawer({
           </button>
           <button
             type="button"
+            disabled={busy || (proxyMode === 'custom' && !proxyUrl.trim()) || (intent.mode === 'create' && !providerId) || (intent.mode === 'import' && (importPreview.length === 0 || importPreview.some(item => !item.valid)))}
             onClick={async () => {
+              setBusy(true); setError(null);
               const connectionId = connection ? Number(connection.id) : NaN;
               const proxyPayload = {
-                proxyUrl: proxyMode === "custom" ? proxyUrl : proxyMode === "none" ? null : undefined,
+                proxyUrl: proxyMode === "custom" ? proxyUrl.trim() : null,
                 useSystemProxy: proxyMode === "system",
               };
               try {
+                if (DATA_MODE === 'prototype') { setError('prototype'); return; }
                 if (intent.mode === "create") {
-                  await startOAuthProvider(intent.providerId ?? "", {
-                    projectId: projectId || undefined,
-                    proxyUrl: proxyPayload.proxyUrl,
-                    useSystemProxy: proxyPayload.useSystemProxy,
-                  });
-                  onFlash(t("ui.oauth.create_ok", { provider: intent.providerId ?? "default provider" }));
+                  const result = await oauthApi.start(providerId, { projectId: projectId.trim() || undefined, ...proxyPayload });
+                  if (!result.state) throw new Error('error');
+                  setSession(result);
                 } else if (intent.mode === "import") {
-                  await importOAuthConnections({
-                    connections: (importPreview.filter((i) => i.valid).map((i) => i.email)),
-                  });
-                  onFlash(t("ui.oauth.import_ok"));
+                  const result = importFiles.length
+                    ? await oauthApi.importBatch(importFiles.map(file => file.data!), proxyPayload)
+                    : await oauthApi.import(parseNativeOAuthJson(importText), proxyPayload);
+                  setImportResult(result);
+                  await onReload();
                 } else if (intent.mode === "rebind" && Number.isFinite(connectionId)) {
-                  await rebindOAuthConnection(connectionId, {
-                    projectId: projectId || undefined,
-                    proxyUrl: proxyPayload.proxyUrl,
-                    useSystemProxy: proxyPayload.useSystemProxy,
-                  });
-                  onFlash(t("ui.oauth.rebind_ok", { email: connection?.accountEmail ?? "" }));
+                  const result = await oauthApi.rebind(connectionId, proxyPayload);
+                  if (!result.state) throw new Error('error');
+                  setSession(result);
                 } else if (intent.mode === "proxy" && Number.isFinite(connectionId)) {
                   await updateOAuthConnectionProxy(connectionId, proxyPayload);
-                  onFlash(t("ui.oauth.proxy_ok", { email: connection?.accountEmail ?? "" }));
-                } else {
-                  // Prototype connection ids are not numeric; still confirm the
-                  // action locally so the drawer closes cleanly.
-                  onFlash(t("ui.oauth.proxy_ok", { email: connection?.accountEmail ?? "" }));
-                }
+                  await onReload();
+                  onClose();
+                } else { setError('error'); }
               } catch (err) {
-                onFlash(err instanceof Error ? err.message : "Operation failed.");
-              }
-              onClose();
+                setError(err instanceof Error ? err.message : 'error');
+              } finally { setBusy(false); }
             }}
             className="h-9 rounded-lg bg-[color:var(--color-lime)] px-4 font-mono text-[11px] font-bold tracking-wider text-[color:var(--color-ink)] hover:opacity-90"
           >
@@ -897,34 +909,29 @@ function ConnectionDrawer({
         </>
       }
     >
+      {error && <p role="alert">{error === 'prototype' ? text('prototype') : error === 'error' ? text('error') : error}</p>}
+      {importResult && <div role="status"><p>{text('imported')}: {importResult.imported} · {text('skipped')}: {importResult.skipped} · {text('failures')}: {importResult.failed}</p>{importResult.items?.map((item: any, i: number) => <p key={i}>{item.name} · {item.status === 'failed' ? text('failures') : item.status === 'skipped' ? text('skipped') : text('imported')}{item.message ? ` · ${item.message}` : ''}</p>)}</div>}
       {intent.mode === "create" && (
         <>
           <Field label={t("ui.oauth.provider_field")}>
-            <Select defaultValue={intent.providerId ?? ""}>
+            <Select value={providerId} onChange={e => setProviderId(e.target.value)}>
               <option value="" disabled>
                 {t("ui.oauth.choose_provider")}
               </option>
-              {OAUTH_PROVIDERS.map((provider) => (
-                <option key={provider.id} value={provider.id}>
+              {providers.map((provider) => (
+                <option disabled={(provider as any).enabled === false} key={provider.id} value={provider.id}>
                   {provider.name} — {provider.authorizationType}
                 </option>
               ))}
             </Select>
           </Field>
-          <Field label={t("ui.oauth.site_url")}>
-            <TextInput
-              value={siteUrl}
-              onChange={(e) => setSiteUrl(e.target.value)}
-              placeholder={t("ui.oauth.site_url_ph")}
-            />
-          </Field>
-          <Field label={t("ui.oauth.project_id")}>
+          {intent.mode === 'create' && <Field label={t("ui.oauth.project_id")}>
             <TextInput
               value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
               placeholder={t("ui.oauth.project_id_ph")}
             />
-          </Field>
+          </Field>}
           <ProxyFields
             t={t}
             proxyMode={proxyMode}
@@ -934,55 +941,36 @@ function ConnectionDrawer({
           />
           <Field label={t("ui.oauth.flow_label")}>
             <p className="rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)] px-3 py-3 text-xs leading-5 text-[color:var(--color-muted)]">
-              {t("ui.oauth.flow_explain")}
+              {text('flow')}
             </p>
           </Field>
         </>
       )}
       {intent.mode === "import" && (
         <>
-          <Field label={t("ui.oauth.paste_json")}>
+          <Field label={text('files')}>
+            <input type="file" multiple accept=".json,application/json" disabled={busy} onChange={async e => {
+              const files = Array.from(e.target.files ?? []);
+              setBusy(true); setImportText(''); setImportResult(null); setError(null);
+              try {
+                const parsed = await Promise.all(files.map(async file => {
+                  try { return { name: file.name, data: parseNativeOAuthJson(await file.text()) }; }
+                  catch { return { name: file.name, data: null }; }
+                }));
+                setImportFiles(parsed);
+              } finally { setBusy(false); }
+            }} />
+          </Field>
+          <Field label={text('native')}>
             <textarea
               rows={8}
               value={importText}
-              onChange={(e) => setImportText(e.target.value)}
-              placeholder={t("ui.oauth.paste_json_ph")}
+              disabled={busy}
+              onChange={(e) => { setImportText(e.target.value); setImportFiles([]); setImportResult(null); setError(null); }}
+              placeholder={'{"type":"codex","access_token":"…","refresh_token":"…"}'}
               className="w-full resize-none rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)] px-3 py-2 font-mono text-xs text-[color:var(--color-fg)] placeholder:text-[color:var(--color-muted)] outline-none focus:border-[color:var(--color-lime)]/50"
             />
           </Field>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                const raw = importText.trim();
-                if (!raw) {
-                  setImportPreview([{ providerLabel: "—", email: "", valid: false, error: t("ui.oauth.import_empty") }]);
-                  return;
-                }
-                try {
-                  const parsed = JSON.parse(raw);
-                  const list = Array.isArray(parsed) ? parsed : [parsed];
-                  const items = list.map((item: Record<string, unknown>) => {
-                    const provider = String(item?.providerId ?? item?.provider ?? item?.type ?? "").trim();
-                    const email = String(item?.accountEmail ?? item?.email ?? "").trim();
-                    const valid = Boolean(provider && (email || item?.access_token));
-                    return {
-                      providerLabel: provider || "unknown",
-                      email: email || String(item?.accountKey ?? "") || "—",
-                      valid,
-                      error: valid ? undefined : t("ui.oauth.import_invalid"),
-                    };
-                  });
-                  setImportPreview(items);
-                } catch {
-                  setImportPreview([{ providerLabel: "—", email: "", valid: false, error: t("ui.oauth.import_invalid") }]);
-                }
-              }}
-              className="h-9 rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel)]/50 px-4 font-mono text-xs tracking-wider text-[color:var(--color-fg)] hover:border-[color:var(--color-border-bright)]"
-            >
-              {t("ui.oauth.import_preview")}
-            </button>
-          </div>
           {importPreview.length > 0 && (
             <div className="mt-2 overflow-hidden rounded-lg border border-[color:var(--color-border)]">
               <div className="border-b border-[color:var(--color-border)] bg-[color:var(--color-panel-2)]/60 px-3 py-2 font-mono text-[10px] tracking-wider text-[color:var(--color-muted)]">
@@ -998,7 +986,7 @@ function ConnectionDrawer({
                     {item.valid ? (
                       <span className="chip chip-lime">{t("ui.oauth.import_ok_label")}</span>
                     ) : (
-                      <span className="chip chip-rose">{item.error ?? t("ui.oauth.import_invalid")}</span>
+                      <span className="chip chip-rose">{text('invalid')}</span>
                     )}
                   </div>
                 ))}
@@ -1007,24 +995,11 @@ function ConnectionDrawer({
           )}
         </>
       )}
+      {intent.mode === 'import' && <ProxyFields t={t} proxyMode={proxyMode} setProxyMode={setProxyMode} proxyUrl={proxyUrl} setProxyUrl={setProxyUrl} />}
       {(intent.mode === "rebind" || intent.mode === "proxy") && connection && (
         <>
           <Field label={t("ui.oauth.account_field")}>
             <TextInput readOnly value={connection.accountEmail} />
-          </Field>
-          <Field label={t("ui.oauth.site_url")}>
-            <TextInput
-              value={siteUrl}
-              onChange={(e) => setSiteUrl(e.target.value)}
-              placeholder={t("ui.oauth.site_url_ph")}
-            />
-          </Field>
-          <Field label={t("ui.oauth.project_id")}>
-            <TextInput
-              value={projectId}
-              onChange={(e) => setProjectId(e.target.value)}
-              placeholder={t("ui.oauth.project_id_ph")}
-            />
           </Field>
           <ProxyFields
             t={t}
@@ -1124,20 +1099,27 @@ function RouteUnitDrawer({
   onClose,
   onFlash,
   onCreate,
+  connections,
+  unit,
 }: {
+  unit: RouteUnitDraft | null;
+  connections: typeof OAUTH_CONNECTIONS;
   onClose: () => void;
-  onFlash: (msg: string) => void;
-  onCreate: (unit: Omit<RouteUnitDraft, "id">) => void;
+  onFlash: (msg: OAuthFeedback) => void;
+  onCreate: () => void;
 }) {
   const t = useUiText();
-  const [name, setName] = useState("");
-  const [strategy, setStrategy] = useState<"round_robin" | "stick_until_unavailable">("round_robin");
+  const text = useOAuthText();
+  const [memberIds, setMemberIds] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [name, setName] = useState(unit?.name ?? "");
+  const [strategy, setStrategy] = useState<"round_robin" | "stick_until_unavailable">(unit?.strategy ?? "round_robin");
 
   return (
     <EditDrawer
       open
       onClose={onClose}
-      title={t("ui.oauth.ru_create_drawer")}
+      title={unit ? text('edit') : t("ui.oauth.ru_create_drawer")}
       eyebrow={t("ui.oauth.ru_create_eyebrow")}
       footer={
         <>
@@ -1150,31 +1132,18 @@ function RouteUnitDrawer({
           </button>
           <button
             type="button"
-            disabled={!name.trim()}
+            disabled={busy || DATA_MODE === 'prototype' || !name.trim() || (!unit && memberIds.length < 2)}
             onClick={async () => {
+              setBusy(true);
               try {
-                await createOAuthRouteUnit({
-                  accountIds: [],
-                  name: name.trim(),
-                  strategy,
-                });
-                onCreate({
-                  name: name.trim(),
-                  modelFamily: "mixed",
-                  region: "global",
-                  strategy,
-                  status: "healthy",
-                  statusLabel: "Healthy",
-                  memberConnectionIds: [],
-                  requestsPerMinute: 0,
-                  dailyUsed: 0,
-                  dailyLimit: 0,
-                });
-                onFlash(t("ui.oauth.ru_created"));
+                if (unit) await oauthApi.updateUnit(Number(unit.id), { name: name.trim(), strategy });
+                else await oauthApi.createUnit({ accountIds: memberIds.map(Number), name: name.trim(), strategy });
+                onCreate();
+                onFlash({ key: "ui.oauth.ru_created" });
+                onClose();
               } catch (err) {
-                onFlash(err instanceof Error ? err.message : "Create failed.");
-              }
-              onClose();
+                onFlash(err instanceof Error ? err.message : { key: "ui.oauth.create_failed" });
+              } finally { setBusy(false); }
             }}
             className="h-9 rounded-lg bg-[color:var(--color-lime)] px-4 font-mono text-[11px] font-bold tracking-wider text-[color:var(--color-ink)] hover:opacity-90 disabled:opacity-40"
           >
@@ -1183,6 +1152,14 @@ function RouteUnitDrawer({
         </>
       }
     >
+      {!unit && <Field label={t('ui.oauth.connections')}>
+        {connections.filter(connection => Number.isInteger(Number(connection.id)) && !connection.routeUnitIds.length).map(connection => {
+          const first = connections.find(candidate => candidate.id === memberIds[0]);
+          const incompatible = first && (first.providerId !== connection.providerId || first.siteUrl !== connection.siteUrl);
+          return <label key={connection.id} className="flex gap-2 py-2 text-sm"><input type="checkbox" checked={memberIds.includes(connection.id)} disabled={Boolean(incompatible)} onChange={e => setMemberIds(ids => e.target.checked ? [...ids, connection.id] : ids.filter(id => id !== connection.id))} />{connection.accountEmail} · {connection.providerId}</label>;
+        })}
+        <p className="text-xs">{t('ui.oauth.merge_need_two')}</p>
+      </Field>}
       <Field label={t("ui.oauth.ru_name")}>
         <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder={t("ui.oauth.ru_name_ph")} />
       </Field>

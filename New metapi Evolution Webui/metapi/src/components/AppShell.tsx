@@ -30,6 +30,12 @@ import { useUiText } from "../i18n/useUiText";
 import type { Lang } from "../i18n/dicts";
 import NotificationBell from "./NotificationBell";
 import { search } from "../lib/source";
+import { searchDestination } from "../lib/searchDestination";
+
+function useShellText() {
+  const { lang } = useLang();
+  return (en: string, hant: string, hans = hant) => lang === "en" ? en : lang === "zh-Hant" ? hant : hans;
+}
 
 const ROUTE_ICONS: Record<AppRouteId, LucideIcon> = {
   dashboard: LayoutDashboard,
@@ -103,12 +109,14 @@ const LANG_NEXT: Record<Lang, { next: Lang; label: string; aria: string }> = {
 };
 
 function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => void }) {
-  const { theme, toggle } = useTheme();
+  const { theme, mode, toggle } = useTheme();
+  const text = useShellText();
   const { lang, setLang } = useLang();
   const t = useUiText();
   const location = useLocation();
   const navigate = useNavigate();
-  const current = APP_ROUTES.find((route) => location.pathname.startsWith(route.path));
+  const current = APP_ROUTES.find((route) => location.pathname === route.path);
+  const currentNav = NAV.flatMap((section) => section.items).find((item) => item.to === current?.path);
   const langNext = LANG_NEXT[lang] ?? LANG_NEXT.en;
   const [searchOpen, setSearchOpen] = useState(false);
 
@@ -118,7 +126,7 @@ function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => void }) {
         <span className="font-display text-xl tracking-tight">{t("ui.shell.brand")}</span>
         {current && (
           <span className="hidden font-mono text-[10px] tracking-wider text-[color:var(--color-muted)] md:inline">
-            / {current.title}
+            / {currentNav ? t(currentNav.labelKey) : current.title}
           </span>
         )}
         <div className="ml-auto flex items-center gap-2">
@@ -126,7 +134,7 @@ function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => void }) {
             <button
               type="button"
               onClick={onOpenMobileNav}
-              aria-label="Open navigation"
+              aria-label={text("Open navigation", "開啟導覽", "打开导航")}
               className="flex h-8 w-8 items-center justify-center rounded-lg border border-[color:var(--color-border)] text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)] lg:hidden"
             >
               <MenuIcon size={15} />
@@ -135,7 +143,7 @@ function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => void }) {
           <button
             type="button"
             onClick={() => setSearchOpen(true)}
-            aria-label="Search"
+            aria-label={text("Search", "搜尋", "搜索")}
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-[color:var(--color-border)] text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]"
           >
             <SearchIcon size={14} />
@@ -144,7 +152,7 @@ function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => void }) {
           <button
             type="button"
             onClick={() => setLang(langNext.next)}
-            aria-label={langNext.aria}
+            aria-label={text("Change language", "切換語言", "切换语言")}
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-[color:var(--color-border)] text-[10px] font-mono font-semibold text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]"
           >
             {langNext.label}
@@ -152,7 +160,8 @@ function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => void }) {
           <button
             type="button"
             onClick={toggle}
-            aria-label="Toggle theme"
+            aria-label={text("Change theme", "切換主題", "切换主题")}
+            title={`${text("Theme", "主題", "主题")}: ${mode === "system" ? text("System", "跟隨系統", "跟随系统") : mode === "light" ? text("Light", "亮色") : text("Dark", "暗色")}`}
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-[color:var(--color-border)] text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]"
           >
             {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
@@ -184,6 +193,8 @@ function MenuIcon({ size }: { size: number }) {
 }
 
 function SearchModal({ onClose, navigate }: { onClose: () => void; navigate: (to: string) => void }) {
+  const text = useShellText();
+  const [error, setError] = useState("");
   const [q, setQ] = useState("");
   const [results, setResults] = useState<{
     accounts: any[]; accountTokens: any[]; sites: any[]; checkinLogs: any[]; proxyLogs: any[]; models: any[];
@@ -192,23 +203,39 @@ function SearchModal({ onClose, navigate }: { onClose: () => void; navigate: (to
   const [searching, setSearching] = useState(false);
 
   useEffect(() => {
-    if (!q.trim()) { setResults({ accounts: [], accountTokens: [], sites: [], checkinLogs: [], proxyLogs: [], models: [] }); return; }
+    let cancelled = false;
+    setError("");
+    if (!q.trim()) {
+      setResults({ accounts: [], accountTokens: [], sites: [], checkinLogs: [], proxyLogs: [], models: [] });
+      setSearching(false);
+      return;
+    }
     setSearching(true);
     const timer = window.setTimeout(() => {
       search(q.trim())
-        .then((data) => setResults({
+        .then((data) => { if (!cancelled) setResults({
           accounts: (data as any)?.accounts ?? [],
           accountTokens: (data as any)?.accountTokens ?? [],
           sites: (data as any)?.sites ?? [],
           checkinLogs: (data as any)?.checkinLogs ?? [],
           proxyLogs: (data as any)?.proxyLogs ?? [],
           models: (data as any)?.models ?? [],
-        }))
-        .catch(() => setResults({ accounts: [], accountTokens: [], sites: [], checkinLogs: [], proxyLogs: [], models: [] }))
-        .finally(() => setSearching(false));
+        }); })
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          setResults({ accounts: [], accountTokens: [], sites: [], checkinLogs: [], proxyLogs: [], models: [] });
+          setError(err instanceof Error ? err.message : String(err));
+        })
+        .finally(() => { if (!cancelled) setSearching(false); });
     }, 250);
-    return () => window.clearTimeout(timer);
+    return () => { cancelled = true; window.clearTimeout(timer); };
   }, [q]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
 
   const go = (to: string) => { navigate(to); onClose(); };
   const hasAny = results.sites.length || results.accounts.length || results.accountTokens.length || results.checkinLogs.length || results.proxyLogs.length || results.models.length;
@@ -223,20 +250,20 @@ function SearchModal({ onClose, navigate }: { onClose: () => void; navigate: (to
             autoFocus
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search sites, accounts, models…"
+            placeholder={text("Search sites, accounts, models…", "搜尋站點、帳號、模型…", "搜索站点、账号、模型…")}
             className="flex-1 bg-transparent font-mono text-sm text-[color:var(--color-fg)] outline-none placeholder:text-[color:var(--color-muted)]"
           />
           <button type="button" onClick={onClose} className="text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]">ESC</button>
         </div>
         {searching ? (
-          <div className="py-6 text-center text-sm text-[color:var(--color-muted)]">Searching…</div>
+          <div className="py-6 text-center text-sm text-[color:var(--color-muted)]">{text("Searching…", "搜尋中…", "搜索中…")}</div>
         ) : q.trim() ? (
           <div className="max-h-[50vh] space-y-4 overflow-y-auto">
             {results.sites.length > 0 && (
               <div>
-                <div className="mb-1 font-mono text-[10px] tracking-[0.2em] text-[color:var(--color-muted)]">SITES</div>
+                <div className="mb-1 font-mono text-[10px] tracking-[0.2em] text-[color:var(--color-muted)]">{text("Sites", "站點", "站点")}</div>
                 {results.sites.map((s: any) => (
-                  <button key={s.id} type="button" onClick={() => go("/app/sites")}
+                  <button key={s.id} type="button" onClick={() => go(searchDestination("sites", s))}
                     className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-[color:var(--color-fg)] hover:bg-white/[0.04]">
                     <span className="font-medium">{s.name}</span>
                     <span className="ml-auto font-mono text-[10px] text-[color:var(--color-muted)]">{s.url}</span>
@@ -246,9 +273,9 @@ function SearchModal({ onClose, navigate }: { onClose: () => void; navigate: (to
             )}
             {results.accounts.length > 0 && (
               <div>
-                <div className="mb-1 font-mono text-[10px] tracking-[0.2em] text-[color:var(--color-muted)]">ACCOUNTS</div>
+                <div className="mb-1 font-mono text-[10px] tracking-[0.2em] text-[color:var(--color-muted)]">{text("Accounts", "帳號", "账号")}</div>
                 {results.accounts.map((a: any) => (
-                  <button key={a.id} type="button" onClick={() => go("/app/accounts")}
+                  <button key={a.id} type="button" onClick={() => go(searchDestination("accounts", a))}
                     className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-[color:var(--color-fg)] hover:bg-white/[0.04]">
                     <span className="font-medium">{a.username}</span>
                     <span className="ml-auto font-mono text-[10px] text-[color:var(--color-muted)]">{a.siteName ?? ""}</span>
@@ -258,9 +285,9 @@ function SearchModal({ onClose, navigate }: { onClose: () => void; navigate: (to
             )}
             {results.accountTokens.length > 0 && (
               <div>
-                <div className="mb-1 font-mono text-[10px] tracking-[0.2em] text-[color:var(--color-muted)]">ACCOUNT TOKENS</div>
+                <div className="mb-1 font-mono text-[10px] tracking-[0.2em] text-[color:var(--color-muted)]">{text("Account tokens", "帳號令牌", "账号令牌")}</div>
                 {results.accountTokens.map((a: any) => (
-                  <button key={a.id} type="button" onClick={() => go("/app/accounts")}
+                  <button key={a.id} type="button" onClick={() => go(searchDestination("accountTokens", a))}
                     className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-[color:var(--color-fg)] hover:bg-white/[0.04]">
                     <span className="font-medium">{a.name ?? a.tokenGroup ?? `token-${a.id}`}</span>
                     <span className="ml-auto font-mono text-[10px] text-[color:var(--color-muted)]">{a.accountName ?? ""}</span>
@@ -270,9 +297,9 @@ function SearchModal({ onClose, navigate }: { onClose: () => void; navigate: (to
             )}
             {results.checkinLogs.length > 0 && (
               <div>
-                <div className="mb-1 font-mono text-[10px] tracking-[0.2em] text-[color:var(--color-muted)]">CHECK-INS</div>
+                <div className="mb-1 font-mono text-[10px] tracking-[0.2em] text-[color:var(--color-muted)]">{text("Check-ins", "簽到", "签到")}</div>
                 {results.checkinLogs.map((c: any) => (
-                  <button key={c.id} type="button" onClick={() => go("/app/checkins")}
+                  <button key={c.id} type="button" onClick={() => go(searchDestination("checkinLogs", c))}
                     className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-[color:var(--color-fg)] hover:bg-white/[0.04]">
                     <span className="font-medium">{c.status ?? "check-in"}</span>
                     <span className="ml-auto font-mono text-[10px] text-[color:var(--color-muted)]">{c.createdAt ?? ""}</span>
@@ -282,9 +309,9 @@ function SearchModal({ onClose, navigate }: { onClose: () => void; navigate: (to
             )}
             {results.proxyLogs.length > 0 && (
               <div>
-                <div className="mb-1 font-mono text-[10px] tracking-[0.2em] text-[color:var(--color-muted)]">PROXY LOGS</div>
+                <div className="mb-1 font-mono text-[10px] tracking-[0.2em] text-[color:var(--color-muted)]">{text("Proxy logs", "使用日誌", "使用日志")}</div>
                 {results.proxyLogs.map((p: any) => (
-                  <button key={p.id} type="button" onClick={() => go("/app/proxy-logs")}
+                  <button key={p.id} type="button" onClick={() => go(searchDestination("proxyLogs", p))}
                     className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-[color:var(--color-fg)] hover:bg-white/[0.04]">
                     <span className="font-medium">{p.modelRequested ?? p.downstreamPath ?? `log-${p.id}`}</span>
                     <span className="ml-auto font-mono text-[10px] text-[color:var(--color-muted)]">{p.status ?? p.createdAt ?? ""}</span>
@@ -294,9 +321,9 @@ function SearchModal({ onClose, navigate }: { onClose: () => void; navigate: (to
             )}
             {results.models.length > 0 && (
               <div>
-                <div className="mb-1 font-mono text-[10px] tracking-[0.2em] text-[color:var(--color-muted)]">MODELS</div>
+                <div className="mb-1 font-mono text-[10px] tracking-[0.2em] text-[color:var(--color-muted)]">{text("Models", "模型")}</div>
                 {results.models.map((m: any) => (
-                  <button key={m.name} type="button" onClick={() => go("/app/models")}
+                  <button key={m.name} type="button" onClick={() => go(searchDestination("models", m))}
                     className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-[color:var(--color-fg)] hover:bg-white/[0.04]">
                     <span className="font-medium">{m.name}</span>
                   </button>
@@ -304,7 +331,7 @@ function SearchModal({ onClose, navigate }: { onClose: () => void; navigate: (to
               </div>
             )}
             {!hasAny && (
-              <div className="py-6 text-center text-sm text-[color:var(--color-muted)]">No results for "{q}"</div>
+              <div className="py-6 text-center text-sm text-[color:var(--color-muted)]">{error || `${text("No results for", "找不到結果", "找不到结果")} "${q}"`}</div>
             )}
           </div>
         ) : null}
@@ -337,6 +364,7 @@ function AppNavLink({ item, onNavigate }: { item: NavItem; onNavigate?: () => vo
 
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const t = useUiText();
+  const text = useShellText();
   const { logout } = useAuth();
   const navigate = useNavigate();
   const [online, setOnline] = useState<boolean | null>(null);
@@ -392,6 +420,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         </div>
       ))}
       <div className="mt-5 space-y-2 px-3">
+        <a href="/legacy/" className="block rounded-lg border border-[color:var(--color-border)] px-3 py-2 text-xs text-[color:var(--color-muted)]">{text("Reference interface", "舊版參照介面", "旧版参考界面")}</a>
         <div className="card p-3">
           <div className="flex items-center gap-2">
             <span className={`h-2 w-2 rounded-full ${online === false ? "bg-[color:var(--color-rose)]" : "bg-[color:var(--color-lime)]"} ${online === null ? "opacity-50" : ""}`} />
@@ -400,8 +429,8 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             </span>
           </div>
           <div className="mt-2 space-y-1 font-mono text-[9px] leading-relaxed text-[color:var(--color-muted)]">
-            <div>Metapi Evolution backend</div>
-            <div>{online === null ? "connecting…" : online === false ? "no response" : "connected"}</div>
+            <div>{text("Metapi Evolution backend", "Metapi Evolution 後端", "Metapi Evolution 后端")}</div>
+            <div>{online === null ? text("Connecting…", "連線中…", "连接中…") : online === false ? text("No response", "沒有回應", "没有响应") : text("Connected", "已連線", "已连接")}</div>
           </div>
         </div>
         <button
@@ -430,6 +459,7 @@ function LogOutIcon({ size }: { size: number }) {
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const text = useShellText();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   return (
@@ -442,7 +472,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       {/* Mobile drawer */}
       {mobileNavOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
-          <button type="button" aria-label="Close nav" onClick={() => setMobileNavOpen(false)}
+          <button type="button" aria-label={text("Close navigation", "關閉導覽", "关闭导航")} onClick={() => setMobileNavOpen(false)}
             className="absolute inset-0 bg-[color:var(--color-ink)]/70 backdrop-blur-sm" />
           <div className="relative z-10 h-full w-64 overflow-y-auto">
             <SidebarContent onNavigate={() => setMobileNavOpen(false)} />

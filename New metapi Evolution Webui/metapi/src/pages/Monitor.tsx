@@ -6,20 +6,13 @@ import { useUiText } from "../i18n/useUiText";
 import { useToast } from "../components/Toast";
 import { fetchMonitorOverview } from "../lib/source";
 
-interface MonitorOverview {
-  accounts: {
-    total: number;
-    healthy: number;
-    unhealthy: number;
-    problemItems: Array<{ id: number; username: string; siteName?: string; status: string; runtimeHealth?: { state?: string; reason?: string } }>;
-  };
-  sites: { total: number; active: number; disabled: number };
-  routes: { total: number; problemItems: Array<{ id: number; displayName?: string; modelPattern?: string; reason?: string }> };
-  traffic24h: { total: number; success: number; failed: number; successRate: number; averageLatencyMs: number | null } | null;
-}
+import { refreshAccountHealth } from "./observability/api";
+import { useObservationLabels } from "./observability/labels";
+import type { MonitorOverview } from "./observability/monitor";
 
 export default function Monitor() {
   const t = useUiText();
+  const l = useObservationLabels();
   const { showToast } = useToast();
   const [refreshing, setRefreshing] = useState(false);
   const [overview, setOverview] = useState<MonitorOverview | null>(null);
@@ -29,23 +22,22 @@ export default function Monitor() {
     try {
       const data = await fetchMonitorOverview(refresh);
       setOverview(data as MonitorOverview);
-    } catch (err) {
-      setOverview(null);
-      showToast(err instanceof Error ? err.message : "Failed to load monitor.");
     } finally {
       setLoading(false);
     }
-  }, [showToast]);
+  }, []);
 
-  useEffect(() => { reload(false); }, [reload]);
+  useEffect(() => { reload(false).catch((err) => showToast(err instanceof Error ? err.message : t("ui.monitor.err_load"))); }, [reload]);
 
   const probeAll = async () => {
     setRefreshing(true);
     try {
+      const result = await refreshAccountHealth();
+      if (result.success === false) throw new Error(result.message || t("ui.monitor.probe_failed"));
       await reload(true);
-      showToast("Probe completed.");
+      showToast(t("ui.monitor.probe_ok"));
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Probe failed.");
+      showToast(err instanceof Error ? err.message : t("ui.monitor.probe_failed"));
     } finally {
       setRefreshing(false);
     }
@@ -89,7 +81,7 @@ export default function Monitor() {
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <StatCard label={t("ui.monitor.sites")} value={summary.sites} detail={t("ui.monitor.active_count", { active: summary.activeSites, disabled: summary.disabledSites })} icon={<Activity size={16} />} />
-            <StatCard label={t("ui.monitor.healthy_accounts")} value={summary.healthyAccounts} detail={t("ui.monitor.total_count", { n: summary.totalAccounts })} trend={{ label: t("ui.monitor.operational"), tone: "lime" }} icon={<CheckCircle2 size={16} />} />
+            <StatCard label={t("ui.monitor.healthy_accounts")} value={summary.healthyAccounts} detail={`${t("ui.monitor.total_count", { n: summary.totalAccounts })} · ${l("Unknown", "未知")}: ${overview?.accounts?.unknown ?? 0} · ${l("Disabled", "停用")}: ${overview?.accounts?.disabled ?? 0} · ${l("Expired", "已過期", "已过期")}: ${overview?.accounts?.expired ?? 0}`} trend={{ label: t("ui.monitor.operational"), tone: "lime" }} icon={<CheckCircle2 size={16} />} />
             <StatCard label={t("ui.monitor.unhealthy")} value={summary.unhealthyAccounts} trend={{ label: summary.unhealthyAccounts > 0 ? t("ui.monitor.check_logs") : t("ui.monitor.none"), tone: summary.unhealthyAccounts > 0 ? "amber" : "lime" }} icon={<AlertTriangle size={16} />} />
             <StatCard label={t("ui.monitor.success_rate")} value={summary.successRate !== null ? `${summary.successRate.toFixed(1)}%` : "—"} trend={{ label: t("ui.monitor.traffic_24h"), tone: summary.successRate !== null && summary.successRate >= 95 ? "lime" : "amber" }} icon={<XCircle size={16} />} />
           </div>
@@ -135,8 +127,8 @@ export default function Monitor() {
                     summary.problemRoutes.map((route) => (
                       <div key={route.id} className="flex items-center justify-between rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)]/40 p-2.5">
                         <div className="min-w-0">
-                          <div className="truncate font-mono text-xs text-[color:var(--color-fg)]">{route.displayName ?? route.modelPattern ?? `route-${route.id}`}</div>
-                          <div className="truncate font-mono text-[10px] text-[color:var(--color-muted)]">{route.reason ?? ""}</div>
+                          <div className="truncate font-mono text-xs text-[color:var(--color-fg)]">{route.title || route.modelPattern || `route-${route.id}`}</div>
+                          <div className="truncate font-mono text-[10px] text-[color:var(--color-muted)]">{l("Channels", "頻道", "频道")}: {route.channelCount} · {l("Enabled", "啟用", "启用")}: {route.enabledChannelCount} · {l("Cooldown", "冷卻", "冷却")}: {route.cooldownChannelCount} · {l("Failed", "失敗", "失败")}: {route.failedChannelCount}</div>
                         </div>
                       </div>
                     ))
@@ -144,6 +136,14 @@ export default function Monitor() {
                 </div>
               </div>
             </div>
+          </section>
+          <section className="card space-y-3 p-4">
+            <SectionTitle title={l("Recent failed requests", "近期失敗請求", "近期失败请求")} description={l("Latest 10 failures in the past 24 hours", "過去 24 小時最新 10 筆失敗", "过去 24 小时最新 10 条失败")} />
+            <p className="text-xs">{l("Routes", "路由")}: {overview?.routes?.enabled ?? 0} / {overview?.routes?.total ?? 0} · {l("No enabled channels", "無啟用頻道", "无启用频道")}: {overview?.routes?.zeroEnabledChannels ?? 0} · {l("Cooldown channels", "冷卻頻道", "冷却频道")}: {overview?.routes?.cooldownChannels ?? 0}</p>
+            {(overview?.traffic24h?.recentFailures ?? []).length === 0 ? <p className="text-sm text-[color:var(--color-muted)]">{l("No recent failures", "沒有近期失敗", "没有近期失败")}</p> : overview?.traffic24h?.recentFailures.map((failure) => <article key={failure.id} className="rounded border border-[color:var(--color-border)] p-3 text-xs">
+              <p>{failure.modelRequested ?? failure.modelActual ?? "—"} · {failure.siteName ?? "—"} · {failure.accountUsername ?? "—"} · HTTP {failure.httpStatus ?? "—"}</p>
+              <p className="mt-1 whitespace-pre-wrap break-words">{failure.errorMessage || "—"}</p><time>{failure.createdAt || "—"}</time>
+            </article>)}
           </section>
         </>
       )}

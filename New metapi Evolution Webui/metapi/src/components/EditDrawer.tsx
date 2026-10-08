@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  createContext,
+  useContext,
   useEffect,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
@@ -9,6 +11,8 @@ import {
   type TextareaHTMLAttributes,
 } from "react";
 import { X } from "lucide-react";
+
+const FieldLabelContext = createContext<string | undefined>(undefined);
 
 export function EditDrawer({
   open,
@@ -105,7 +109,7 @@ export function Field({
   children: ReactNode;
 }) {
   return (
-    <label className="block mb-4">
+    <FieldLabelContext.Provider value={label}><label className="block mb-4">
       <div className="flex items-baseline justify-between mb-1.5">
         <span className="font-mono text-[10px] tracking-widest text-[color:var(--color-muted)]">
           {label}
@@ -117,7 +121,7 @@ export function Field({
         )}
       </div>
       {children}
-    </label>
+    </label></FieldLabelContext.Provider>
   );
 }
 
@@ -157,6 +161,7 @@ export function Toggle({
   onChange: (v: boolean) => void;
   label?: string;
 }) {
+  const fieldLabel = useContext(FieldLabelContext);
   return (
     <label className="flex items-center gap-3 cursor-pointer">
       {label && (
@@ -164,19 +169,17 @@ export function Toggle({
           {label}
         </span>
       )}
-      <span
-        onClick={() => onChange(!checked)}
-        className={`relative w-10 h-5 rounded-full transition-colors ${
-          checked
-            ? "bg-[color:var(--color-lime)]"
-            : "bg-[color:var(--color-border-bright)]"
-        }`}
-      >
-        <span
-          className={`absolute top-0.5 w-4 h-4 rounded-full bg-[color:var(--color-ink)] transition-transform ${
-            checked ? "translate-x-[22px]" : "translate-x-0.5"
-          }`}
+      <span className="relative h-5 w-10 shrink-0">
+        <input
+          type="checkbox"
+          checked={checked}
+          aria-label={label ?? fieldLabel}
+          onChange={(event) => onChange(event.target.checked)}
+          className="peer absolute inset-0 z-10 m-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
         />
+        <span className={`pointer-events-none absolute inset-0 rounded-full transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-[color:var(--color-lime)] ${checked ? "bg-[color:var(--color-lime)]" : "bg-[color:var(--color-border-bright)]"}`}>
+          <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-[color:var(--color-ink)] transition-transform ${checked ? "translate-x-[22px]" : "translate-x-0.5"}`} />
+        </span>
       </span>
     </label>
   );

@@ -1,567 +1,102 @@
-import { useEffect, useMemo, useState } from "react";
-import {
-  Activity,
-  Bell,
-  CheckCircle2,
-  CreditCard,
-  KeyRound,
-  Mail,
-  MessageSquare,
-  RefreshCw,
-  Save,
-  Server,
-  ShieldAlert,
-  ShieldCheck,
-  SlidersHorizontal,
-  Terminal,
-  Webhook,
-  X,
-} from "lucide-react";
-import PageHeader from "../components/PageHeader";
-import { EditDrawer, Field, Select, TextInput, Toggle } from "../components/EditDrawer";
-import { useUiText } from "../i18n/useUiText";
-import { useToast } from "../components/Toast";
-import SettingsAdvanced from "./settings/SettingsAdvanced";
-import { fetchRuntimeSettings, updateRuntimeSettings, testNotification } from "../lib/source";
+import { useEffect, useState } from 'react';
+import { Bell, Save, ShieldCheck, SlidersHorizontal, Terminal } from 'lucide-react';
+import PageHeader from '../components/PageHeader';
+import { Field, TextInput, Toggle } from '../components/EditDrawer';
+import { useUiText } from '../i18n/useUiText';
+import { useToast } from '../components/Toast';
+import SettingsAdvanced from './settings/SettingsAdvanced';
+import { useLocalSettingsText } from './settings/localSettingsText';
+import ChannelConfigDrawer from './notifications/ChannelConfigDrawer';
+import { NOTIFY_KINDS, NOTIFICATION_FIELDS, type NotifyKind } from '../lib/settingsParityNotifications';
+import { integerNumber, SettingsInputError, settingsDirty, mergeSettingsDraft } from '../lib/settingsParity';
+import { PARITY_SELECT_CLASS, PARITY_ACTION_CLASS } from '../lib/settingsParityStyles';
+import { fetchRuntimeSettings, updateRuntimeSettings, testNotification } from '../lib/source';
 
-type TabKey = "general" | "notify" | "security" | "advanced";
-
-type NotifyDraft = {
-  enabled: boolean;
-  url?: string;
-  key?: string;
-  token?: string;
-  chat_id?: string;
-  host?: string;
-  port?: string;
-  secure?: boolean;
-  user?: string;
-  pass?: string;
-  to?: string;
-  from?: string;
-};
-
-const NOTIFY_KINDS = ["webhook", "bark", "serverchan", "telegram", "smtp"] as const;
-type NotifyKind = (typeof NOTIFY_KINDS)[number];
-
-const NOTIFY_ICONS: Record<NotifyKind, React.ReactNode> = {
-  webhook: <Webhook size={16} />,
-  bark: <Bell size={16} />,
-  serverchan: <MessageSquare size={16} />,
-  telegram: <SendIcon />,
-  smtp: <Mail size={16} />,
-};
-
-function SendIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M22 2L11 13" /><path d="M22 2l-7 20-4-9-9-4 20-7z" />
-    </svg>
-  );
+type TabKey = 'general' | 'notify' | 'security' | 'advanced';
+const generalKeys = ['checkinCron', 'checkinScheduleMode', 'checkinIntervalHours', 'balanceRefreshCron', 'logCleanupCron', 'logCleanupRetentionDays', 'logCleanupUsageLogsEnabled', 'logCleanupProgramLogsEnabled', 'tokenRouterFailureCooldownMaxSec', 'routingWeights', 'adminIpAllowlist'];
+const notifyEnabledKeys = NOTIFY_KINDS.map(kind => NOTIFICATION_FIELDS[kind][0].key);
+function RowField({label, desc, value, onChange, suffix}: {label: string; desc?: string; value: string; onChange: (value: string) => void; suffix?: string}) {
+  return <div className="card p-4"><div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3"><div className="min-w-0"><div className="font-mono text-[10px] tracking-widest uppercase text-[color:var(--color-muted)]">{label}</div>{desc && <p className="mt-1 text-xs leading-5 text-[color:var(--color-muted)]">{desc}</p>}</div><div className="flex items-center gap-2">{suffix && <span className="font-mono text-xs text-[color:var(--color-muted)]">{suffix}</span>}<TextInput aria-label={label} value={value} onChange={event => onChange(event.target.value)} /></div></div></div>;
 }
-
-function NotifyCard({
-  kind,
-  label,
-  desc,
-  enabled,
-  onToggle,
-  onConfig,
-  onTest,
-  testing,
-}: {
-  kind: NotifyKind;
-  label: string;
-  desc: string;
-  enabled: boolean;
-  onToggle: (v: boolean) => void;
-  onConfig: () => void;
-  onTest: () => void;
-  testing: boolean;
-}) {
-  return (
-    <div className="card p-4 flex items-start gap-3">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)] text-[color:var(--color-lime)]">
-        {NOTIFY_ICONS[kind]}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="font-display text-lg tracking-tight text-[color:var(--color-fg)]">{label}</h3>
-          <Toggle checked={enabled} onChange={onToggle} />
-        </div>
-        <p className="mt-1 text-xs leading-5 text-[color:var(--color-muted)]">{desc}</p>
-        <div className="mt-3 flex items-center gap-2">
-          <button type="button" onClick={onConfig}
-            className="rounded-md border border-[color:var(--color-border)] px-2.5 py-1 font-mono text-[10px] tracking-wider text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]">
-            CONFIG
-          </button>
-          <button type="button" onClick={onTest} disabled={testing}
-            className="rounded-md bg-[color:var(--color-lime)] px-2.5 py-1 font-mono text-[10px] font-bold tracking-wider text-[color:var(--color-ink)] hover:opacity-90 disabled:opacity-50">
-            {testing ? "SENDING…" : "TEST"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function RowField({
-  label,
-  desc,
-  value,
-  onChange,
-  secret,
-  placeholder,
-  suffix,
-}: {
-  label: string;
-  desc?: string;
-  value: string;
-  onChange: (v: string) => void;
-  secret?: boolean;
-  placeholder?: string;
-  suffix?: string;
-}) {
-  return (
-    <div className="card p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="font-mono text-[10px] tracking-widest uppercase text-[color:var(--color-muted)]">{label}</div>
-          {desc && <p className="mt-1 text-xs leading-5 text-[color:var(--color-muted)]">{desc}</p>}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {suffix && <span className="font-mono text-xs text-[color:var(--color-muted)]">{suffix}</span>}
-          <input
-            type={secret ? "password" : "text"}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder={placeholder}
-            className="h-9 w-56 rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)] px-3 font-mono text-xs text-[color:var(--color-fg)] placeholder:text-[color:var(--color-muted)] outline-none focus:border-[color:var(--color-lime)]/50"
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function WeightSlider({
-  label,
-  desc,
-  value,
-  onChange,
-}: {
-  label: string;
-  desc: string;
-  value: number;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <div className="card p-4">
-      <div className="flex items-center justify-between">
-        <div className="font-mono text-[10px] tracking-widest uppercase text-[color:var(--color-muted)]">{label}</div>
-        <span className="font-mono text-sm text-[color:var(--color-lime)]">{value}</span>
-      </div>
-      {desc && <p className="mt-1 text-xs leading-5 text-[color:var(--color-muted)]">{desc}</p>}
-      <input
-        type="range"
-        min={0}
-        max={100}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="mt-3 w-full accent-[color:var(--color-lime)]"
-      />
-    </div>
-  );
-}
-
 export default function SettingsPage() {
-  const t = useUiText();
-  const { showToast } = useToast();
-  const [tab, setTab] = useState<TabKey>("general");
-
-  // General
-  const [checkinCron, setCheckinCron] = useState("0 8 * * *");
-  const [balanceCron, setBalanceCron] = useState("0 */6 * * *");
-  // Log cleanup settings (runtime-backed).
-  const [logCleanupCron, setLogCleanupCron] = useState("0 6 * * *");
-  const [logCleanupRetentionDays, setLogCleanupRetentionDays] = useState("30");
-  const [logCleanupUsageLogsEnabled, setLogCleanupUsageLogsEnabled] = useState(true);
-  const [logCleanupProgramLogsEnabled, setLogCleanupProgramLogsEnabled] = useState(false);
-  const [cooldown, setCooldown] = useState("60");
-  const [costWeight, setCostWeight] = useState(40);
-  const [balanceWeight, setBalanceWeight] = useState(30);
-  const [usageWeight, setUsageWeight] = useState(30);
-
-  // Notify
-  const [notify, setNotify] = useState<Record<NotifyKind, NotifyDraft>>({
-    webhook: { enabled: true, url: "https://ops.example.test/hooks/metapi" },
-    bark: { enabled: true, url: "https://api.day.app/YOUR_KEY" },
-    serverchan: { enabled: false, key: "" },
-    telegram: { enabled: false, token: "", chat_id: "" },
-    smtp: { enabled: false, host: "", port: "587", secure: false, user: "", pass: "", to: "", from: "" },
-  });
+  const t = useUiText(); const local = useLocalSettingsText(); const {showToast} = useToast();
+  const [tab, setTab] = useState<TabKey>('general');
+  const [advancedDirty, setAdvancedDirty] = useState(false);
+  const [draft, setDraft] = useState<Record<string, unknown> | null>(null);
+  const [saved, setSaved] = useState<Record<string, unknown> | null>(null);
+  const [runtime, setRuntime] = useState<Record<string, unknown>>({});
   const [configKind, setConfigKind] = useState<NotifyKind | null>(null);
-  const [testing, setTesting] = useState<NotifyKind | null>(null);
-
-  // Security
-  const [ipAllow, setIpAllow] = useState("127.0.0.1, ::1");
-
-  const dirty = useMemo(() => false, []);
-
-  const updateNotify = (kind: NotifyKind, patch: Partial<NotifyDraft>) =>
-    setNotify((prev) => ({ ...prev, [kind]: { ...prev[kind], ...patch } }));
-
-  // Load real runtime settings from the backend on mount.
-  useEffect(() => {
-    let cancelled = false;
-    fetchRuntimeSettings()
-      .then((data) => {
-        if (cancelled) return;
-        const s = data as Record<string, unknown>;
-        if (typeof s.checkinCron === "string") setCheckinCron(s.checkinCron);
-        if (typeof s.balanceRefreshCron === "string") setBalanceCron(s.balanceRefreshCron);
-        if (typeof s.logCleanupCron === "string") setLogCleanupCron(s.logCleanupCron);
-        if (typeof s.logCleanupRetentionDays === "number") setLogCleanupRetentionDays(String(s.logCleanupRetentionDays));
-        if (typeof s.logCleanupUsageLogsEnabled === "boolean") setLogCleanupUsageLogsEnabled(s.logCleanupUsageLogsEnabled);
-        if (typeof s.logCleanupProgramLogsEnabled === "boolean") setLogCleanupProgramLogsEnabled(s.logCleanupProgramLogsEnabled);
-        if (typeof s.tokenRouterFailureCooldownMaxSec === "number") setCooldown(String(s.tokenRouterFailureCooldownMaxSec));
-        const weights = s.routingWeights as { costWeight?: number; balanceWeight?: number; usageWeight?: number } | undefined;
-        if (weights?.costWeight !== undefined) setCostWeight(Math.round(weights.costWeight * 100));
-        if (weights?.balanceWeight !== undefined) setBalanceWeight(Math.round(weights.balanceWeight * 100));
-        if (weights?.usageWeight !== undefined) setUsageWeight(Math.round(weights.usageWeight * 100));
-        if (Array.isArray(s.adminIpAllowlist)) setIpAllow((s.adminIpAllowlist as string[]).join(", "));
-        // Notification channels (secrets come back masked; leave those blank).
-        setNotify((prev) => ({
-          ...prev,
-          webhook: { ...prev.webhook, enabled: s.webhookEnabled === true, url: typeof s.webhookUrl === "string" ? s.webhookUrl : prev.webhook.url },
-          bark: { ...prev.bark, enabled: s.barkEnabled === true, url: typeof s.barkUrl === "string" ? s.barkUrl : prev.bark.url },
-          serverchan: { ...prev.serverchan, enabled: s.serverChanEnabled === true },
-          telegram: {
-            ...prev.telegram,
-            enabled: s.telegramEnabled === true,
-            chat_id: typeof s.telegramChatId === "string" ? s.telegramChatId : prev.telegram.chat_id,
-          },
-          smtp: {
-            ...prev.smtp,
-            enabled: s.smtpEnabled === true,
-            host: typeof s.smtpHost === "string" ? s.smtpHost : prev.smtp.host,
-            port: typeof s.smtpPort === "number" ? String(s.smtpPort) : prev.smtp.port,
-            secure: s.smtpSecure === true,
-            user: typeof s.smtpUser === "string" ? s.smtpUser : prev.smtp.user,
-            to: typeof s.smtpTo === "string" ? s.smtpTo : prev.smtp.to,
-            from: typeof s.smtpFrom === "string" ? s.smtpFrom : prev.smtp.from,
-          },
-        }));
-      })
-      .catch((err) => { if (!cancelled) showToast(err instanceof Error ? err.message : "Failed to load settings."); });
-    return () => { cancelled = true; };
-  }, [showToast]);
-
-  const [saving, setSaving] = useState(false);
-
+  const [saving, setSaving] = useState(false); const [testing, setTesting] = useState(false); const [error, setError] = useState('');
+  const formFrom = (settings: Record<string, unknown>) => Object.fromEntries([...generalKeys, ...notifyEnabledKeys].map(key => [key, key === 'adminIpAllowlist' ? (Array.isArray(settings[key]) ? (settings[key] as string[]).join(', ') : '') : settings[key]]));
+  const apply = (settings: Record<string, unknown>) => {setRuntime(settings); const form = formFrom(settings); setDraft(form); setSaved(structuredClone(form)); setError('');};
+  const reload = async () => apply(await fetchRuntimeSettings() as Record<string, unknown>);
+  useEffect(() => {let active = true; fetchRuntimeSettings().then(settings => {if (active) apply(settings as Record<string, unknown>);}).catch(error => {if (active) setError(error instanceof Error ? error.message : t('ui.settings.err_load'));}); return () => {active = false;};}, []);
+  const patch = (key: string, value: unknown) => setDraft(previous => ({...previous, [key]: value}));
+  const dirty = settingsDirty(draft, saved);
   const saveAll = async () => {
-    setSaving(true);
+    if (!draft) return;
+    setSaving(true); setError('');
     try {
-      await updateRuntimeSettings({
-        checkinCron: checkinCron.trim(),
-        checkinScheduleMode: "cron",
-        balanceRefreshCron: balanceCron.trim(),
-        logCleanupCron: logCleanupCron.trim(),
-        logCleanupRetentionDays: Number(logCleanupRetentionDays) || 30,
-        logCleanupUsageLogsEnabled: logCleanupUsageLogsEnabled,
-        logCleanupProgramLogsEnabled: logCleanupProgramLogsEnabled,
-        tokenRouterFailureCooldownMaxSec: Number(cooldown) || 60,
-        routingWeights: {
-          baseWeightFactor: 0.5,
-          valueScoreFactor: 0.5,
-          costWeight: costWeight / 100,
-          balanceWeight: balanceWeight / 100,
-          usageWeight: usageWeight / 100,
-        },
-        webhookEnabled: notify.webhook.enabled,
-        webhookUrl: notify.webhook.url ?? "",
-        barkEnabled: notify.bark.enabled,
-        barkUrl: notify.bark.url ?? "",
-        serverChanEnabled: notify.serverchan.enabled,
-        ...(notify.serverchan.key ? { serverChanKey: notify.serverchan.key } : {}),
-        telegramEnabled: notify.telegram.enabled,
-        telegramChatId: notify.telegram.chat_id ?? "",
-        ...(notify.telegram.token ? { telegramBotToken: notify.telegram.token } : {}),
-        smtpEnabled: notify.smtp.enabled,
-        smtpHost: notify.smtp.host ?? "",
-        smtpPort: Number(notify.smtp.port) || 587,
-        smtpSecure: notify.smtp.secure ?? false,
-        smtpUser: notify.smtp.user ?? "",
-        smtpFrom: notify.smtp.from ?? "",
-        smtpTo: notify.smtp.to ?? "",
-        ...(notify.smtp.pass ? { smtpPass: notify.smtp.pass } : {}),
-        adminIpAllowlist: ipAllow.split(",").map((s) => s.trim()).filter(Boolean),
-      });
-      showToast(t("ui.settings.saved"));
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Save failed.");
-    } finally {
-      setSaving(false);
-    }
+      const payload: Record<string, unknown> = {...draft, adminIpAllowlist: String(draft.adminIpAllowlist ?? '').split(',').map(item => item.trim()).filter(Boolean)};
+      for (const key of ['checkinIntervalHours', 'logCleanupRetentionDays', 'tokenRouterFailureCooldownMaxSec']) {
+        payload[key] = integerNumber(draft[key], 1);
+      }
+      await updateRuntimeSettings(payload); await reload(); showToast(t('ui.settings.saved'));
+    } catch (error) {setError(error instanceof SettingsInputError ? local('Check numeric settings: positive whole numbers are required.', '請檢查數值設定：必須是正整數。', '请检查数值设置：必须是正整数。') : error instanceof Error ? error.message : t('ui.toast.save_failed'));}
+    finally {setSaving(false);}
   };
-
-  const cancelAll = async () => {
-    // Reload from the backend so unsaved edits are discarded.
-    setTab("general");
-    const data = await fetchRuntimeSettings().catch(() => null);
-    if (data) {
-      const s = data as Record<string, unknown>;
-      if (typeof s.checkinCron === "string") setCheckinCron(s.checkinCron);
-      if (typeof s.balanceRefreshCron === "string") setBalanceCron(s.balanceRefreshCron);
-        if (typeof s.logCleanupCron === "string") setLogCleanupCron(s.logCleanupCron);
-        if (typeof s.logCleanupRetentionDays === "number") setLogCleanupRetentionDays(String(s.logCleanupRetentionDays));
-        if (typeof s.logCleanupUsageLogsEnabled === "boolean") setLogCleanupUsageLogsEnabled(s.logCleanupUsageLogsEnabled);
-        if (typeof s.logCleanupProgramLogsEnabled === "boolean") setLogCleanupProgramLogsEnabled(s.logCleanupProgramLogsEnabled);
-      if (Array.isArray(s.adminIpAllowlist)) setIpAllow((s.adminIpAllowlist as string[]).join(", "));
-    }
-    showToast(t("ui.settings.cancelled"));
+  const cancelAll = () => {if (saved) setDraft(structuredClone(saved)); setConfigKind(null); setError(''); showToast(t('ui.settings.cancelled'));};
+  const mergeSavedRuntime = (next: Record<string, unknown>) => {
+    setRuntime(next);
+    const form = formFrom(next);
+    setDraft(previous => mergeSettingsDraft(previous, saved, form));
+    setSaved(structuredClone(form));
   };
-
-  const testNotify = async (kind: NotifyKind) => {
-    setTesting(kind);
-    try {
-      await testNotification();
-      showToast(t("ui.settings.notify_test_sent"));
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Test failed.");
-    } finally {
-      setTesting(null);
-    }
+  const onChannelSaved = async () => {
+    mergeSavedRuntime(await fetchRuntimeSettings() as Record<string, unknown>);
+    showToast(t('ui.settings.saved'));
   };
-
-  // Save the channel being configured in the drawer directly to runtime.
-  const handleSaveNotify = async () => {
-    if (!configKind) return;
-    const d = notify[configKind];
-    const payload: Record<string, unknown> = {};
-    switch (configKind) {
-      case "webhook":
-        payload.webhookEnabled = d.enabled;
-        payload.webhookUrl = d.url ?? "";
-        break;
-      case "bark":
-        payload.barkEnabled = d.enabled;
-        payload.barkUrl = d.url ?? "";
-        break;
-      case "serverchan":
-        payload.serverChanEnabled = d.enabled;
-        if (d.key) payload.serverChanKey = d.key;
-        break;
-      case "telegram":
-        payload.telegramEnabled = d.enabled;
-        payload.telegramChatId = d.chat_id ?? "";
-        if (d.token) payload.telegramBotToken = d.token;
-        break;
-      case "smtp":
-        payload.smtpEnabled = d.enabled;
-        payload.smtpHost = d.host ?? "";
-        payload.smtpPort = Number(d.port) || 587;
-        payload.smtpSecure = d.secure ?? false;
-        payload.smtpUser = d.user ?? "";
-        payload.smtpFrom = d.from ?? "";
-        payload.smtpTo = d.to ?? "";
-        if (d.pass) payload.smtpPass = d.pass;
-        break;
-    }
-    try {
-      await updateRuntimeSettings(payload);
-      showToast(t("ui.settings.saved"));
-      setConfigKind(null);
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Save failed.");
-    }
-  };
-
-  return (
-    <div className="space-y-8">
-      <PageHeader
-        eyebrow={t("ui.settings.eyebrow")}
-        title={t("ui.settings.title")}
-        description={t("ui.settings.desc")}
-        actions={
-          dirty ? (
-            <span className="chip chip-amber">● UNSAVED</span>
-          ) : (
-            <span className="chip chip-lime">{t("ui.settings.saved_badge")}</span>
-          )
-        }
-      />
-
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[220px_1fr]">
-        {/* Tab nav */}
-        <nav className="card h-fit p-3">
-          {([
-            { key: "general", label: t("ui.settings.tab_general"), icon: <SlidersHorizontal size={14} /> },
-            { key: "notify", label: t("ui.settings.tab_notify"), icon: <Bell size={14} /> },
-            { key: "security", label: t("ui.settings.tab_security"), icon: <ShieldCheck size={14} /> },
-            { key: "advanced", label: t("ui.settings.tab_advanced"), icon: <Terminal size={14} /> },
-          ] as const).map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              onClick={() => setTab(item.key)}
-              className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${
-                tab === item.key
-                  ? "bg-[color:var(--color-lime)]/10 text-[color:var(--color-lime)]"
-                  : "text-[color:var(--color-fg)]/75 hover:bg-white/[0.03]"
-              }`}
-            >
-              {item.icon}
-              {item.label}
-            </button>
-          ))}
-        </nav>
-
-        {/* Content */}
-        <div className="space-y-4">
-          {tab === "general" && (
-            <>
-              <RowField label={t("ui.settings.checkin_cron")} desc={t("ui.settings.checkin_cron_desc")} value={checkinCron} onChange={setCheckinCron} />
-              <RowField label={t("ui.settings.balance_cron")} desc={t("ui.settings.balance_cron_desc")} value={balanceCron} onChange={setBalanceCron} />
-              <RowField label={t("ui.settings.log_cleanup_cron")} desc={t("ui.settings.log_cleanup_cron_desc")} value={logCleanupCron} onChange={setLogCleanupCron} />
-              <RowField label={t("ui.settings.log_cleanup_retention")} desc={t("ui.settings.log_cleanup_retention_desc")} value={logCleanupRetentionDays} onChange={setLogCleanupRetentionDays} suffix="days" />
-              <div className="card p-4">
-                <div className="font-mono text-[10px] tracking-widest uppercase text-[color:var(--color-muted)]">{t("ui.settings.log_cleanup_scopes")}</div>
-                <p className="mt-1 text-xs leading-5 text-[color:var(--color-muted)]">{t("ui.settings.log_cleanup_scopes_desc")}</p>
-                <div className="mt-3 flex flex-col gap-2">
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={logCleanupUsageLogsEnabled} onChange={(e) => setLogCleanupUsageLogsEnabled(e.target.checked)} className="accent-[color:var(--color-lime)]" />
-                    <span className="font-mono text-[10px] tracking-wider text-[color:var(--color-muted)]">{t("ui.settings.log_cleanup_usage")}</span>
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={logCleanupProgramLogsEnabled} onChange={(e) => setLogCleanupProgramLogsEnabled(e.target.checked)} className="accent-[color:var(--color-lime)]" />
-                    <span className="font-mono text-[10px] tracking-wider text-[color:var(--color-muted)]">{t("ui.settings.log_cleanup_program")}</span>
-                  </label>
-                </div>
-              </div>
-              <RowField label={t("ui.settings.cooldown")} desc={t("ui.settings.cooldown_desc")} value={cooldown} onChange={setCooldown} suffix="s" />
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                <WeightSlider label={t("ui.settings.weight_cost")} desc={t("ui.settings.weight_cost_desc")} value={costWeight} onChange={setCostWeight} />
-                <WeightSlider label={t("ui.settings.weight_balance")} desc={t("ui.settings.weight_balance_desc")} value={balanceWeight} onChange={setBalanceWeight} />
-                <WeightSlider label={t("ui.settings.weight_usage")} desc={t("ui.settings.weight_usage_desc")} value={usageWeight} onChange={setUsageWeight} />
-              </div>
-            </>
-          )}
-
-          {tab === "notify" && (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {NOTIFY_KINDS.map((kind) => (
-                <NotifyCard
-                  key={kind}
-                  kind={kind}
-                  label={t(`ui.settings.notify_${kind}`)}
-                  desc={t(`ui.settings.notify_${kind}_desc`)}
-                  enabled={notify[kind].enabled}
-                  onToggle={(v) => updateNotify(kind, { enabled: v })}
-                  onConfig={() => setConfigKind(kind)}
-                  onTest={() => testNotify(kind)}
-                  testing={testing === kind}
-                />
-              ))}
-            </div>
-          )}
-
-          {tab === "security" && (
-            <>
-              <RowField label={t("ui.settings.ip_allow")} desc={t("ui.settings.ip_allow_desc")} value={ipAllow} onChange={setIpAllow} />
-              <p className="text-xs text-[color:var(--color-muted)]">
-                Admin token rotation lives on the Accounts page; the proxy token lives in Advanced settings.
-              </p>
-            </>
-          )}
-
-          {tab === "advanced" && <SettingsAdvanced />}
-
-          {/* Save / Cancel */}
-          <div className="flex items-center justify-end gap-2 pt-2">
-            <button type="button" onClick={cancelAll}
-              className="h-9 rounded-lg border border-[color:var(--color-border)] px-4 font-mono text-xs tracking-wider text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]">
-              {t("ui.common.cancel")}
-            </button>
-            <button type="button" onClick={saveAll} disabled={saving}
-              className="flex h-9 items-center gap-1.5 rounded-lg bg-[color:var(--color-lime)] px-4 font-mono text-xs font-bold tracking-wider text-[color:var(--color-ink)] hover:opacity-90 disabled:opacity-40">
-              <Save size={13} /> {saving ? "SAVING…" : t("ui.common.save")}
-            </button>
-          </div>
-        </div>
+  const row = (labelKey: string, descKey: string, key: string, suffix?: string) => <RowField label={t(labelKey)} desc={t(descKey)} value={String(draft?.[key] ?? '')} onChange={value => patch(key, value)} suffix={suffix} />;
+  return <div className="space-y-8">
+    <PageHeader eyebrow={t('ui.settings.eyebrow')} title={t('ui.settings.title')} description={t('ui.settings.desc')} actions={draft && tab !== 'advanced' ? <span className={`chip chip-${dirty ? 'amber' : 'lime'}`}>{dirty ? local('Unsaved', '尚未儲存', '尚未保存') : t('ui.settings.saved_badge')}</span> : undefined} />
+    {error && <div role="alert">{error}<button className={PARITY_ACTION_CLASS} type="button" onClick={() => reload().catch(error => setError(String(error)))}>{local('Reload', '重新載入', '重新加载')}</button></div>}
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[220px_1fr]">
+      <nav className="card h-fit p-3">{([
+        {key: 'general', label: t('ui.settings.tab_general'), icon: <SlidersHorizontal size={14} />},
+        {key: 'notify', label: t('ui.settings.tab_notify'), icon: <Bell size={14} />},
+        {key: 'security', label: t('ui.settings.tab_security'), icon: <ShieldCheck size={14} />},
+        {key: 'advanced', label: t('ui.settings.tab_advanced'), icon: <Terminal size={14} />},
+      ] as const).map(item => <button key={item.key} type="button" onClick={() => {if (tab === 'advanced' && advancedDirty && !window.confirm(local('Discard unsaved advanced changes?', '捨棄未儲存的進階變更？', '丢弃未保存的高级更改？'))) return; setTab(item.key);}} className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${tab === item.key ? 'bg-[color:var(--color-lime)]/10 text-[color:var(--color-lime)]' : 'text-[color:var(--color-fg)]/75 hover:bg-white/[0.03]'}`}>{item.icon}{item.label}</button>)}</nav>
+      <div className="space-y-4">
+        {tab === 'advanced' ? <SettingsAdvanced runtime={draft ? runtime : undefined} onSaved={mergeSavedRuntime} onDirtyChange={setAdvancedDirty} /> : draft && <fieldset disabled={saving} className="space-y-4 min-w-0">
+          {tab === 'general' && <>
+            <div className="card p-4"><Field label={local('Checkin schedule mode', '簽到排程模式', '签到排程模式')}><select className={PARITY_SELECT_CLASS}
+value={String(draft.checkinScheduleMode ?? 'cron')} onChange={event => patch('checkinScheduleMode', event.target.value)}><option value="cron">Cron</option><option value="interval">{local('Interval', '間隔', '间隔')}</option></select></Field></div>
+            {draft.checkinScheduleMode === 'interval' ? <RowField label={local('Checkin interval', '簽到間隔', '签到间隔')} value={String(draft.checkinIntervalHours ?? '')} onChange={value => patch('checkinIntervalHours', value)} suffix={local('hours', '小時', '小时')} /> : row('ui.settings.checkin_cron', 'ui.settings.checkin_cron_desc', 'checkinCron')}
+            {row('ui.settings.balance_cron', 'ui.settings.balance_cron_desc', 'balanceRefreshCron')}
+            {row('ui.settings.log_cleanup_cron', 'ui.settings.log_cleanup_cron_desc', 'logCleanupCron')}
+            {row('ui.settings.log_cleanup_retention', 'ui.settings.log_cleanup_retention_desc', 'logCleanupRetentionDays', local('days', '天', '天'))}
+            <div className="card p-4"><h2 className="font-mono text-[10px] tracking-widest uppercase text-[color:var(--color-muted)]">{t('ui.settings.log_cleanup_scopes')}</h2><p className="mt-1 text-xs">{t('ui.settings.log_cleanup_scopes_desc')}</p><div className="mt-3 space-y-2">{(['logCleanupUsageLogsEnabled', 'logCleanupProgramLogsEnabled'] as const).map((key, index) => <Field key={key} label={t(index ? 'ui.settings.log_cleanup_program' : 'ui.settings.log_cleanup_usage')}><Toggle checked={draft[key] === true} onChange={value => patch(key, value)} /></Field>)}</div></div>
+            {row('ui.settings.cooldown', 'ui.settings.cooldown_desc', 'tokenRouterFailureCooldownMaxSec', local('s', '秒', '秒'))}
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">{(['cost', 'balance', 'usage'] as const).map(name => {
+              const weights = draft.routingWeights as Record<string, number> | undefined;
+              const key = `${name}Weight`; const value = (weights?.[key] ?? 0) * 100;
+              return <div key={name} className="card p-4"><div className="flex items-center justify-between"><label className="font-mono text-[10px]">{t(`ui.settings.weight_${name}`)}</label><span>{value}</span></div><p className="mt-1 text-xs">{t(`ui.settings.weight_${name}_desc`)}</p><input aria-label={t(`ui.settings.weight_${name}`)} type="range" min={0} max={100} step={0.1} value={value} onChange={event => patch('routingWeights', {...weights, [key]: Number(event.target.value) / 100})} className="mt-3 w-full accent-[color:var(--color-lime)]" /></div>;
+            })}</div>
+          </>}
+          {tab === 'notify' && <>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">{NOTIFY_KINDS.map(kind => {
+              const enabledKey = NOTIFICATION_FIELDS[kind][0].key;
+              return <div key={kind} className="card p-4 flex items-start gap-3"><Bell size={16} /><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><h3 className="font-display text-lg">{t(`ui.settings.notify_${kind}`)}</h3><Toggle checked={draft[enabledKey] === true} onChange={value => patch(enabledKey, value)} /></div><p className="mt-1 text-xs">{t(`ui.settings.notify_${kind}_desc`)}</p><button type="button" className="mt-3 rounded-md border border-[color:var(--color-border)] px-2.5 py-1 font-mono text-[10px]" onClick={() => setConfigKind(kind)}>{t('ui.common.configure')}</button></div></div>;
+            })}</div>
+            <p>{local('Tests use saved settings and send to all enabled channels.', '測試使用已儲存設定，傳送至所有已啟用渠道。', '测试使用已保存设置，发送至所有已启用渠道。')}</p>
+            <button className={PARITY_ACTION_CLASS} disabled={testing} onClick={async () => {setTesting(true); try {await testNotification(); showToast(t('ui.settings.notify_test_sent'));} catch (error) {showToast(String(error));} finally {setTesting(false);}}}>{testing ? t('ui.common.testing') : t('ui.common.test')}</button>
+          </>}
+          {tab === 'security' && <>{row('ui.settings.ip_allow', 'ui.settings.ip_allow_desc', 'adminIpAllowlist')}<p className="text-xs">{local('The proxy token can be rotated in Advanced settings.', '可在進階設定輪換代理令牌。', '可在高级设置轮换代理令牌。')}</p></>}
+          <div className="flex items-center justify-end gap-2 pt-2"><button type="button" disabled={saving || !dirty} onClick={cancelAll} className="h-9 rounded-lg border border-[color:var(--color-border)] px-4 font-mono text-xs">{t('ui.common.cancel')}</button><button type="button" disabled={saving || !dirty} onClick={saveAll} className="flex h-9 items-center gap-1.5 rounded-lg bg-[color:var(--color-lime)] px-4 font-mono text-xs text-[color:var(--color-ink)]"><Save size={13} />{saving ? local('Saving…', '儲存中…', '保存中…') : t('ui.common.save')}</button></div>
+        </fieldset>}
       </div>
-
-      {/* Notify config drawer */}
-      {configKind && (
-        <EditDrawer
-          open
-          onClose={() => setConfigKind(null)}
-          title={t(`ui.settings.notify_${configKind}`)}
-          eyebrow={t("ui.settings.tab_notify")}
-          subtitle={t("ui.settings.notify_drawer_sub")}
-          footer={
-            <>
-              <button type="button" onClick={() => setConfigKind(null)}
-                className="h-9 rounded-lg border border-[color:var(--color-border)] px-4 font-mono text-[11px] tracking-wider text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]">
-                {t("ui.common.cancel")}
-              </button>
-              <button type="button" onClick={handleSaveNotify}
-                className="h-9 rounded-lg bg-[color:var(--color-lime)] px-4 font-mono text-[11px] font-bold tracking-wider text-[color:var(--color-ink)] hover:opacity-90">
-                {t("ui.common.save")}
-              </button>
-            </>
-          }
-        >
-          <div className="mb-4 flex items-center justify-between rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)]/50 p-3">
-            <span className="font-mono text-[10px] tracking-widest text-[color:var(--color-muted)]">{t("ui.settings.notify_enabled")}</span>
-            <Toggle checked={notify[configKind].enabled} onChange={(v) => updateNotify(configKind, { enabled: v })} />
-          </div>
-          <NotifyConfigFields kind={configKind} draft={notify[configKind]} update={patch => updateNotify(configKind, patch)} t={t} />
-        </EditDrawer>
-      )}
     </div>
-  );
-}
-
-function NotifyConfigFields({
-  kind,
-  draft,
-  update,
-  t,
-}: {
-  kind: NotifyKind;
-  draft: NotifyDraft;
-  update: (patch: Partial<NotifyDraft>) => void;
-  t: (key: string) => string;
-}) {
-  if (kind === "webhook") {
-    return <Field label={t("ui.settings.notify_webhook_url")}><TextInput value={draft.url ?? ""} onChange={(e) => update({ url: e.target.value })} placeholder={t("ui.settings.notify_webhook_url_ph")} /></Field>;
-  }
-  if (kind === "bark") {
-    return <Field label={t("ui.settings.notify_bark_key")}><TextInput value={draft.url ?? ""} onChange={(e) => update({ url: e.target.value })} placeholder={t("ui.settings.notify_bark_key_ph")} /></Field>;
-  }
-  if (kind === "serverchan") {
-    return <Field label={t("ui.settings.serverchan_key")}><TextInput value={draft.key ?? ""} onChange={(e) => update({ key: e.target.value })} placeholder="SCT..." /></Field>;
-  }
-  if (kind === "telegram") {
-    return (
-      <>
-        <Field label={t("ui.settings.notify_telegram_token")}><TextInput value={draft.token ?? ""} onChange={(e) => update({ token: e.target.value })} placeholder="123:AAH..." /></Field>
-        <Field label={t("ui.settings.notify_telegram_chat")}><TextInput value={draft.chat_id ?? ""} onChange={(e) => update({ chat_id: e.target.value })} placeholder="@channel or -100..." /></Field>
-      </>
-    );
-  }
-  return (
-    <>
-      <Field label={t("ui.settings.notify_smtp_host")}><TextInput value={draft.host ?? ""} onChange={(e) => update({ host: e.target.value })} placeholder="smtp.example.com:587" /></Field>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label={t("ui.settings.notify_smtp_user")}><TextInput value={draft.user ?? ""} onChange={(e) => update({ user: e.target.value })} /></Field>
-        <Field label={t("ui.settings.notify_smtp_pass")}><TextInput type="password" value={draft.pass ?? ""} onChange={(e) => update({ pass: e.target.value })} /></Field>
-      </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label={t("ui.settings.notify_smtp_to")}><TextInput value={draft.to ?? ""} onChange={(e) => update({ to: e.target.value })} /></Field>
-        <Field label={t("ui.settings.notify_smtp_from")}><TextInput value={draft.from ?? ""} onChange={(e) => update({ from: e.target.value })} /></Field>
-      </div>
-    </>
-  );
+    {configKind && <ChannelConfigDrawer kind={configKind} settings={runtime} onClose={() => setConfigKind(null)} onSaved={onChannelSaved} />}
+  </div>;
 }

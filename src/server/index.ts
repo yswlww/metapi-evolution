@@ -1,3 +1,4 @@
+import { frontendEntryForPath } from './frontendEntry.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
@@ -273,9 +274,8 @@ if (existsSync(webDir)) {
   });
   // SPA fallback
   app.setNotFoundHandler(async (request, reply) => {
-    if (!request.url.startsWith('/api/') && !request.url.startsWith('/v1/')) {
-      return reply.sendFile('index.html');
-    }
+    const entry = frontendEntryForPath(request.url);
+    if (entry) return reply.sendFile(entry);
     reply.code(404).send({ error: 'Not found' });
   });
 }

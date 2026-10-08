@@ -1,26 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Bell, Check, ChevronRight, Info, TriangleAlert, CircleX } from "lucide-react";
 import { useUiText } from "../i18n/useUiText";
 import { fetchEvents, markEventRead, markAllEventsRead } from "../lib/source";
 import { fmtAgo } from "../lib/format";
-
-const LS_KEY = "metapi.notif.readIds";
-
-function loadRead(): Set<number> {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    return raw ? new Set(JSON.parse(raw)) : new Set();
-  } catch {
-    return new Set();
-  }
-}
-
-function saveRead(ids: Set<number>) {
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify(Array.from(ids)));
-  } catch { /* ignore */ }
-}
+import { apiGet } from "../lib/client";
+import { useLang } from "../contexts/LangContext";
 
 // Backend event row.
 interface BackendEvent {
@@ -51,14 +36,44 @@ export default function NotificationBell() {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [events, setEvents] = useState<BackendEvent[]>([]);
-  const [read, setRead] = useState<Set<number>>(() => loadRead());
+  const [unread, setUnread] = useState(0);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const { lang } = useLang();
+  const text = (en: string, hant: string, hans = hant) => lang === "en" ? en : lang === "zh-Hant" ? hant : hans;
   const ref = useRef<HTMLDivElement>(null);
+  const mounted = useRef(true);
+  const generation = useRef(0);
+
+  const reload = useCallback(async () => {
+    const request = ++generation.current;
+    try {
+      const [data, count] = await Promise.all([fetchEvents(50), apiGet<{ count: number }>("/api/events/count")]);
+      if (!mounted.current || request !== generation.current) return;
+      setEvents(data as BackendEvent[]);
+      setUnread(count.count);
+      setError("");
+    } catch (err) {
+      if (mounted.current && request === generation.current) setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
 
   useEffect(() => {
-    fetchEvents(50)
-      .then((data) => setEvents(data as BackendEvent[]))
-      .catch(() => { /* ignore */ });
-  }, []);
+    mounted.current = true;
+    void reload();
+    const interval = window.setInterval(() => { if (!document.hidden) void reload(); }, 30_000);
+    window.addEventListener("focus", reload);
+    window.addEventListener("metapi-events-changed", reload);
+    return () => {
+      mounted.current = false;
+      ++generation.current;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", reload);
+      window.removeEventListener("metapi-events-changed", reload);
+    };
+  }, [reload]);
+
+  useEffect(() => { if (open) void reload(); }, [open, reload]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -68,22 +83,16 @@ export default function NotificationBell() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const unread = events.filter((e) => !read.has(e.id) && !e.read).length;
-
-  const markAll = async () => {
-    const next = new Set(read);
-    events.forEach((e) => next.add(e.id));
-    setRead(next);
-    saveRead(next);
-    try { await markAllEventsRead(); } catch { /* ignore */ }
-  };
-
-  const markOne = async (id: number) => {
-    const next = new Set(read);
-    next.add(id);
-    setRead(next);
-    saveRead(next);
-    try { await markEventRead(id); } catch { /* ignore */ }
+  const mark = async (id?: number) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      if (id === undefined) await markAllEventsRead(); else await markEventRead(id);
+      await reload();
+      window.dispatchEvent(new Event("metapi-events-changed"));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally { if (mounted.current) setBusy(false); }
   };
 
   return (
@@ -91,7 +100,7 @@ export default function NotificationBell() {
       <button
         onClick={() => setOpen((v) => !v)}
         className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel)]/40 hover:bg-[color:var(--color-panel)]"
-        aria-label="Notifications"
+        aria-label={text("Notifications", "通知")}
       >
         <Bell size={14} />
         {unread > 0 && (
@@ -107,12 +116,13 @@ export default function NotificationBell() {
             <div>
               <div className="font-display text-lg leading-tight">{t("ui.events.title")}</div>
               <div className="mt-0.5 font-mono text-[10px] tracking-wider text-[color:var(--color-muted)]">
-                {unread} unread · {events.length} total
+                {unread} {text("unread", "未讀", "未读")} · {events.length} {text("loaded", "已載入", "已加载")}
               </div>
             </div>
             {unread > 0 && (
               <button
-                onClick={markAll}
+                onClick={() => mark()}
+                disabled={busy}
                 className="h-7 rounded-md px-2 font-mono text-[10px] tracking-wider text-[color:var(--color-lime)] hover:bg-[color:var(--color-lime)]/10"
               >
                 {t("ui.events.mark_all_read")}
@@ -121,17 +131,19 @@ export default function NotificationBell() {
           </div>
 
           <div className="flex-1 overflow-y-auto">
+            {error && <div role="alert" className="p-3 text-xs text-[color:var(--color-rose)]">{error}</div>}
             {events.length === 0 && (
               <div className="p-8 text-center text-sm text-[color:var(--color-muted)]">
                 {t("ui.events.empty_title")}
               </div>
             )}
             {events.map((ev) => {
-              const isRead = read.has(ev.id) || ev.read;
+              const isRead = ev.read;
               return (
                 <button
                   key={ev.id}
-                  onClick={() => markOne(ev.id)}
+                  onClick={() => mark(ev.id)}
+                  disabled={busy}
                   className={`flex w-full items-start gap-3 border-b border-[color:var(--color-border)]/50 px-4 py-3 text-left transition last:border-0 hover:bg-white/[0.03] ${
                     isRead ? "opacity-70" : ""
                   }`}
@@ -164,7 +176,7 @@ export default function NotificationBell() {
             onClick={() => { setOpen(false); navigate("/app/events"); }}
             className="flex items-center justify-between border-t border-[color:var(--color-border)] px-4 py-3 font-mono text-[10px] tracking-wider text-[color:var(--color-muted)] hover:bg-white/[0.03] hover:text-[color:var(--color-lime)]"
           >
-            <span>VIEW ALL</span>
+            <span>{text("View all", "檢視全部", "查看全部")}</span>
             <ChevronRight size={12} />
           </button>
         </div>

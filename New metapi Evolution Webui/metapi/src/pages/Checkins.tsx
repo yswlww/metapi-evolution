@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import CheckinSchedule from './checkins/CheckinSchedule';
+import CheckinDiagnostics from './checkins/CheckinDiagnostics';
 import { Calendar, CheckCircle2, XCircle, Minus, Settings2 } from "lucide-react";
 import PageHeader from "../components/PageHeader";
 import { EmptyState, SearchField, SectionTitle, StatCard } from "../components/PrototypeUI";
@@ -10,7 +12,6 @@ import {
   DATA_MODE,
   fetchCheckins,
   triggerCheckinAll,
-  updateCheckinSchedule,
 } from "../lib/source";
 
 type StatusFilter = "all" | CheckinEntry["status"];
@@ -32,11 +33,11 @@ interface BackendCheckinLogRow {
   sites: {
     name?: string;
   } | null;
-  failureReason?: string | null;
+  failureReason?: unknown;
 }
 
 function mapBackendCheckin(row: BackendCheckinLogRow): CheckinEntry {
-  const log = row?.checkin_logs ?? {};
+  const log: Partial<BackendCheckinLogRow["checkin_logs"]> = row?.checkin_logs ?? {};
   const status = log.status === "success" ? "success" as const
     : log.status === "failed" || log.status === "failure" ? "failure" as const
     : "skipped" as const;
@@ -84,8 +85,8 @@ export default function Checkins() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [showSchedule, setShowSchedule] = useState(false);
-  const [scheduleCron, setScheduleCron] = useState("0 8 * * *");
   const [checkins, setCheckins] = useState<CheckinEntry[]>([]);
+  const [diagnostics, setDiagnostics] = useState<Record<string, { reason: unknown; message: string }>>({});
   const [loading, setLoading] = useState(true);
 
   const reload = async () => {
@@ -95,10 +96,12 @@ export default function Checkins() {
     }
     try {
       const data = await fetchCheckins();
-      setCheckins((data as BackendCheckinLogRow[]).map(mapBackendCheckin));
+      const rows = data as BackendCheckinLogRow[];
+      setCheckins(rows.map(mapBackendCheckin));
+      setDiagnostics(Object.fromEntries(rows.map(row => [String(row.checkin_logs.id), { reason: row.failureReason, message: row.checkin_logs.message || '' }])));
     } catch (err) {
       setCheckins([]);
-      showToast(err instanceof Error ? err.message : "Failed to load check-ins.");
+      showToast(err instanceof Error ? err.message : t("ui.checkin.err_load"));
     } finally {
       setLoading(false);
     }
@@ -125,36 +128,26 @@ export default function Checkins() {
     setTriggered(true);
     try {
       await triggerCheckinAll();
-      showToast("All check-ins triggered.");
+      showToast(t("ui.checkin.trigger_all_ok"));
       await reload();
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Trigger failed.");
+      showToast(err instanceof Error ? err.message : t("ui.checkin.trigger_failed"));
     } finally {
       setTriggered(false);
-    }
-  };
-
-  const handleSaveSchedule = async () => {
-    try {
-      await updateCheckinSchedule({ mode: "cron", cron: scheduleCron });
-      setShowSchedule(false);
-      showToast("Schedule saved.");
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "Save schedule failed.");
     }
   };
 
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Observe"
+        eyebrow={t("ui.checkin.eyebrow")}
         title={t("ui.checkin.title")}
         description={t("ui.checkin.desc")}
         actions={
           <button type="button" onClick={handleTriggerAll}
             disabled={triggered}
             className="flex h-9 items-center gap-2 rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel)]/50 px-4 font-mono text-xs tracking-wider text-[color:var(--color-fg)] hover:border-[color:var(--color-border-bright)] disabled:opacity-40">
-            <Zap size={13} /> {triggered ? "TRIGGERING…" : "TRIGGER ALL"}
+            <Zap size={13} /> {triggered ? "TRIGGERING…" : t("ui.checkin.trigger_all")}
           </button>
         }
       />
@@ -176,7 +169,7 @@ export default function Checkins() {
                   ? "border-[color:var(--color-border-bright)] bg-[color:var(--color-panel)] text-[color:var(--color-fg)]"
                   : "border-transparent text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]"
               }`}>
-              {s === "all" ? "ALL" : s === "success" ? "OK" : s === "failure" ? "FAILED" : "SKIPPED"}
+              {s === "all" ? t("ui.checkin.status_all") : s === "success" ? "OK" : s === "failure" ? t("ui.checkin.status_failed") : t("ui.checkin.status_skipped")}
             </button>
           ))}
         </div>
@@ -210,28 +203,7 @@ export default function Checkins() {
       </div>
 
       {/* Schedule settings */}
-      {showSchedule && (
-        <div className="card p-4">
-          <div className="mb-3 font-mono text-[10px] tracking-[0.2em] text-[color:var(--color-lime)]">{t("ui.checkin.schedule_settings")}</div>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <label className="block flex-1">
-              <span className="mb-1 block font-mono text-[10px] tracking-[0.16em] text-[color:var(--color-muted)]">CHECK-IN CRON (UTC+8)</span>
-              <input
-                value={scheduleCron}
-                onChange={(e) => setScheduleCron(e.target.value)}
-                className="h-9 w-full rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)] px-3 font-mono text-xs text-[color:var(--color-fg)] outline-none focus:border-[color:var(--color-lime)]/50"
-              />
-            </label>
-            <button
-              type="button"
-              onClick={handleSaveSchedule}
-              className="h-9 rounded-lg bg-[color:var(--color-lime)] px-4 font-mono text-[10px] font-bold tracking-wider text-[color:var(--color-ink)] hover:opacity-90"
-            >
-              SAVE SCHEDULE
-            </button>
-          </div>
-        </div>
-      )}
+      {showSchedule && <CheckinSchedule onSaved={() => setShowSchedule(false)} />}
 
       {filtered.length === 0 ? (
         <EmptyState title={t("ui.checkin.no_match")} description={t("ui.checkin.no_match_desc")} icon={<Calendar size={18} />} />
@@ -264,7 +236,7 @@ export default function Checkins() {
                     </td>
                     <td className="px-4 py-3 font-medium text-[color:var(--color-fg)]">{checkin.account}</td>
                     <td className="px-4 py-3 text-[color:var(--color-muted)]">{checkin.site}</td>
-                    <td className="px-4 py-3 text-[color:var(--color-muted)]">{checkin.note || "—"}</td>
+                    <td className="px-4 py-3 text-[color:var(--color-muted)]">{checkin.note || "—"}{diagnostics[checkin.id] && <CheckinDiagnostics reason={diagnostics[checkin.id].reason} message={diagnostics[checkin.id].message} />}</td>
                     <td className="px-4 py-3 font-mono text-[color:var(--color-fg)]">{checkin.reward}</td>
                     <td className="px-4 py-3 font-mono text-[10px] text-[color:var(--color-muted)]">{new Date(checkin.occurredAt).toLocaleDateString()}</td>
                   </tr>
