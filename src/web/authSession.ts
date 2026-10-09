@@ -1,5 +1,10 @@
 const AUTH_TOKEN_STORAGE_KEY = 'auth_token';
 const AUTH_TOKEN_EXPIRES_AT_STORAGE_KEY = 'auth_token_expires_at';
+// The Evolution shell keeps its own pair of keys. The two interfaces share one
+// backend and one administrator token, so a session established in either shell
+// must authenticate the other without copying the credential between stores.
+const EVOLUTION_AUTH_TOKEN_STORAGE_KEY = 'metapi-auth-token';
+const EVOLUTION_AUTH_EXPIRES_AT_STORAGE_KEY = 'metapi-auth-expires-at';
 export const AUTH_SESSION_DURATION_MS = 12 * 60 * 60 * 1000;
 
 type StorageLike = {
@@ -14,11 +19,35 @@ function resolveStorage(storage?: StorageLike | null): StorageLike | null {
   return null;
 }
 
+type StoredSession = { token: string; expiresAtRaw: string | null; storage: StorageLike; tokenKey: string; expiresKey: string };
+
+function readStoredSession(storage: StorageLike, tokenKey: string, expiresKey: string): StoredSession {
+  return {
+    token: (storage.getItem(tokenKey) || '').trim(),
+    expiresAtRaw: storage.getItem(expiresKey),
+    storage,
+    tokenKey,
+    expiresKey,
+  };
+}
+
+function resolveSession(target: StorageLike): StoredSession | null {
+  const legacy = readStoredSession(target, AUTH_TOKEN_STORAGE_KEY, AUTH_TOKEN_EXPIRES_AT_STORAGE_KEY);
+  if (legacy.token) return legacy;
+  const evolution = readStoredSession(target, EVOLUTION_AUTH_TOKEN_STORAGE_KEY, EVOLUTION_AUTH_EXPIRES_AT_STORAGE_KEY);
+  return evolution.token ? evolution : null;
+}
+
 export function clearAuthSession(storage?: StorageLike | null): void {
   const target = resolveStorage(storage);
   if (!target) return;
-  target.removeItem(AUTH_TOKEN_STORAGE_KEY);
-  target.removeItem(AUTH_TOKEN_EXPIRES_AT_STORAGE_KEY);
+  for (const [tokenKey, expiresKey] of [
+    [AUTH_TOKEN_STORAGE_KEY, AUTH_TOKEN_EXPIRES_AT_STORAGE_KEY],
+    [EVOLUTION_AUTH_TOKEN_STORAGE_KEY, EVOLUTION_AUTH_EXPIRES_AT_STORAGE_KEY],
+  ] as const) {
+    target.removeItem(tokenKey);
+    target.removeItem(expiresKey);
+  }
 }
 
 export function persistAuthSession(
@@ -45,19 +74,21 @@ export function getAuthToken(storage?: StorageLike | null, nowMs = Date.now()): 
   const target = resolveStorage(storage);
   if (!target) return null;
 
-  const token = (target.getItem(AUTH_TOKEN_STORAGE_KEY) || '').trim();
-  if (!token) return null;
+  const session = resolveSession(target);
+  if (!session) return null;
+  const { token, expiresAtRaw, storage: store, tokenKey, expiresKey } = session;
 
-  const expiresAtRaw = target.getItem(AUTH_TOKEN_EXPIRES_AT_STORAGE_KEY);
   if (!expiresAtRaw) {
-    // Legacy migration: set a default TTL the first time we read an old session.
-    persistAuthSession(target, token, AUTH_SESSION_DURATION_MS, nowMs);
+    // First read of a session stored without a deadline: apply the standard
+    // lifetime once, in whichever shell's own keys hold it.
+    store.setItem(expiresKey, String(nowMs + Math.max(1, Math.trunc(AUTH_SESSION_DURATION_MS))));
     return token;
   }
 
   const expiresAt = Number(expiresAtRaw);
   if (!Number.isFinite(expiresAt) || expiresAt <= nowMs) {
-    clearAuthSession(target);
+    store.removeItem(tokenKey);
+    store.removeItem(expiresKey);
     return null;
   }
 
