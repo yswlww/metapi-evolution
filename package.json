@@ -113,7 +113,7 @@
     "concurrently": "^9.1.0",
     "cross-env": "^7.0.3",
     "drizzle-kit": "^0.31.10",
-    "electron": "^42.5.1",
+    "electron": "^44.5.1",
     "electron-builder": "^26.15.3",
     "jsdom": "^29.1.1",
     "lucide-react": "^1.53.0",
