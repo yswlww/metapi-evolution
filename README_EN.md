@@ -16,8 +16,8 @@ into **one API Key, one endpoint** — with automatic model discovery, smart rou
 <a href="https://github.com/yswlww/metapi-evolution/stargazers">
   <img alt="Stars" src="https://img.shields.io/github/stars/yswlww/metapi-evolution?style=flat&logo=github&label=Stars">
 </a>
-<a href="https://hub.docker.com/r/kennethww/metapi">
-  <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/kennethww/metapi?style=flat&logo=docker&label=Docker%20Pulls">
+<a href="https://hub.docker.com/r/kennethww/metapi-evolution">
+  <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/kennethww/metapi-evolution?style=flat&logo=docker&label=Docker%20Pulls">
 </a>
 <a href="https://github.com/yswlww/metapi-evolution/actions/workflows/ci.yml">
   <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/yswlww/metapi-evolution/ci.yml?branch=main&label=CI&logo=github&style=flat">
@@ -165,7 +165,7 @@ mkdir metapi && cd metapi
 cat > docker-compose.yml << 'EOF'
 services:
   metapi:
-    image: kennethww/metapi:latest
+    image: kennethww/metapi-evolution:latest
     ports:
       - "127.0.0.1:${PORT:-4000}:${PORT:-4000}"
     volumes:
@@ -214,12 +214,23 @@ docker run -d --name metapi \
   -e TZ=Asia/Shanghai \
   -v ./data:/app/data \
   --restart unless-stopped \
-  kennethww/metapi:latest
+  kennethww/metapi-evolution:latest
 ```
 
 </details>
 
 After starting, visit `http://localhost:4000` and log in with your `AUTH_TOKEN`!
+
+### Interfaces
+
+The image ships both the **Metapi Evolution interface (default)** and the legacy reference interface on the same backend, sharing one administrator session:
+
+| Path | Interface |
+| --- | --- |
+| `/` | **Metapi Evolution** (default) — dark three-language UI, lazily loaded, covers every management workflow |
+| `/legacy/` | Legacy reference interface — identical to the previous release, for comparison and rollback |
+
+Switch at any time: click "旧版参照界面" at the bottom of the left sidebar, or just visit `/legacy/` directly. Returning to `/` needs no new login.
 
 > [!NOTE]
 > Docker images support `amd64`, `arm64`, and `armv7l` (`linux/arm/v7`) server deployments.

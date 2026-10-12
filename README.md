@@ -16,8 +16,8 @@
 <a href="https://github.com/yswlww/metapi-evolution/stargazers">
   <img alt="Stars" src="https://img.shields.io/github/stars/yswlww/metapi-evolution?style=flat&logo=github&label=Stars">
 </a>
-<a href="https://hub.docker.com/r/kennethww/metapi">
-  <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/kennethww/metapi?style=flat&logo=docker&label=Docker%20Pulls">
+<a href="https://hub.docker.com/r/kennethww/metapi-evolution">
+  <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/kennethww/metapi-evolution?style=flat&logo=docker&label=Docker%20Pulls">
 </a>
 <a href="https://github.com/yswlww/metapi-evolution/actions/workflows/ci.yml">
   <img alt="CI" src="https://img.shields.io/github/actions/workflow/status/yswlww/metapi-evolution/ci.yml?branch=main&label=CI&logo=github&style=flat">
@@ -77,6 +77,26 @@
 - **通用兼容接口**：OrcaRouter（OpenAI 兼容 API Key）、OpenAI / Claude / Gemini 兼容端点，以及 `cliproxyapi` / CPA
 - **官方预设**：阿里云 / 智谱 / 豆包 Coding Plan，DeepSeek，Moonshot(Kimi)，MiniMax，ModelScope
 - **OAuth 连接**：Codex、Claude、Gemini CLI、Antigravity
+
+---
+
+## 🖥️ 界面
+
+现在，**Metapi Evolution 界面（默认）** 与旧版参考界面同时打包在同一个镜像里，共用同一套后端与同一份管理员登录状态：
+
+| 路径 | 界面 | 说明 |
+| --- | --- | --- |
+| `/` | **Metapi Evolution**（默认） | 深色三语言（简中 / 繁中 / English）界面，页面按需加载，覆盖全部管理功能 |
+| `/legacy/` | 旧版参考界面 | 与旧版本完全一致，便于比对与回退 |
+
+在默认界面左下角点击「旧版参照界面」即可切换过去；在旧版直接访问 `/` 即可回到新版，**无需重新登录**。
+
+新版界面在旧版基础上补齐了这些能力：
+
+- **真实流程**：OAuth 授权会保留会话并引导完成 consent；通知配置、备份与更新中心均真实写入并可重载确认
+- **契约修复**：路由策略、模型成功率与定价、公告正文与已读状态、日志事件分类等全部对齐后端契约，不再展示占位数据
+- **管理能力**：账号 / 令牌的完整编辑与批量操作、站点排序与代理、下游密钥的权限清空与移动端批量选择
+- **可访问性**：语义化标签、原生表单控件、键盘操作与 `prefers-color-scheme` 主题跟随
 
 <details>
 <summary><strong>📊 界面预览（点击展开）</strong></summary>
@@ -165,7 +185,7 @@ mkdir metapi && cd metapi
 cat > docker-compose.yml << 'EOF'
 services:
   metapi:
-    image: kennethww/metapi:latest
+    image: kennethww/metapi-evolution:latest
     ports:
       - "127.0.0.1:${PORT:-4000}:${PORT:-4000}"
     volumes:
@@ -214,12 +234,23 @@ docker run -d --name metapi \
   -e TZ=Asia/Shanghai \
   -v ./data:/app/data \
   --restart unless-stopped \
-  kennethww/metapi:latest
+  kennethww/metapi-evolution:latest
 ```
 
 </details>
 
 启动后访问 `http://localhost:4000`，用 `AUTH_TOKEN` 登录即可。
+
+### 界面说明
+
+镜像同时包含两套界面，开箱无需切换：
+
+| 路径 | 界面 |
+| --- | --- |
+| `/` | **Metapi Evolution 新界面（默认）** — 深色三语言界面，页面按需加载 |
+| `/legacy/` | 旧版参考界面 — 与新界面共用同一后端与同一管理员登录状态 |
+
+两套界面可随时互相切换：在新界面左下角点击「旧版参照界面」，或直接访问 `/legacy/`。登录状态互通，无需分别登录。
 
 > [!NOTE]
 > Docker 镜像支持 `amd64`、`arm64` 和 `armv7l`（`linux/arm/v7`）服务端部署。
