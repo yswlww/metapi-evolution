@@ -261,14 +261,21 @@ if (existsSync(webDir)) {
     root: webDir,
     prefix: '/',
     wildcard: false,
-    setHeaders: (res, filePath) => {
+    setHeaders: (reply, filePath) => {
       const normalizedPath = normalize(filePath);
+      // `@fastify/static` hands the Fastify reply to this callback, not the raw
+      // node response, so prefer `reply.header` and only fall back to the raw
+      // response for plain node servers.
+      const setHeader = (value: string) => {
+        if (typeof reply.header === 'function') reply.header('Cache-Control', value);
+        else (reply as unknown as import('node:http').ServerResponse).setHeader('Cache-Control', value);
+      };
       if (normalizedPath.includes(`${sep}assets${sep}`)) {
-        (res as unknown as import('node:http').ServerResponse).setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        setHeader('public, max-age=31536000, immutable');
         return;
       }
       if (normalizedPath.endsWith(`${sep}index.html`)) {
-        (res as unknown as import('node:http').ServerResponse).setHeader('Cache-Control', 'no-cache');
+        setHeader('no-cache');
       }
     },
   });
