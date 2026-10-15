@@ -16,6 +16,8 @@ const { apiMock } = vi.hoisted(() => ({
   },
 }));
 
+vi.mock('@visactor/react-vchart', () => ({ VChart: () => null }));
+
 vi.mock('../api.js', () => ({
   api: apiMock,
 }));
