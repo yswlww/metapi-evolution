@@ -194,8 +194,8 @@ function parseJsonSafe<T>(text: string): T | null {
   }
 }
 
-function collectSetCookieHeaders(headers: Headers): string[] {
-  const getSetCookie = (headers as unknown as { getSetCookie?: () => string[] }).getSetCookie;
+function collectSetCookieHeaders(headers: { get(name: string): string | null; getSetCookie?: () => string[] }): string[] {
+  const getSetCookie = headers.getSetCookie;
   if (typeof getSetCookie === 'function') {
     return getSetCookie.call(headers) || [];
   }

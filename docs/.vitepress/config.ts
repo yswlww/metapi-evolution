@@ -56,6 +56,9 @@ export default withMermaid(
     lastUpdated: true,
     ignoreDeadLinks: true,
     vite: {
+      optimizeDeps: {
+        include: ['fastdom', 'fastdom/extensions/fastdom-promised.js'],
+      },
       resolve: {
         alias: [
           { find: /^dayjs$/, replacement: dayjsEsmEntry },

@@ -4,7 +4,12 @@ import { db, schema } from '../db/index.js';
 import { requireInsertedRowId } from '../db/insertHelpers.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
 
-type HeadersLike = Headers | Record<string, unknown> | null | undefined;
+export type ProxyDebugHeadersLike = {
+  get(name: string): string | null;
+  entries(): Iterable<[string, string]>;
+} | Record<string, unknown> | null | undefined;
+
+type HeadersLike = ProxyDebugHeadersLike;
 
 export type ProxyDebugCaptureOptions = {
   enabled: boolean;
