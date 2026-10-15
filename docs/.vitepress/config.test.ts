@@ -96,6 +96,10 @@ describe('docs vitepress config', () => {
     expect(aliasEntry && typeof aliasEntry === 'object' && 'find' in aliasEntry && aliasEntry.find instanceof RegExp && aliasEntry.find.test('dayjs/plugin/duration.js')).toBe(false);
   });
 
+  it('prebundles the CommonJS fastdom dependency used by the Mermaid browser plugin', () => {
+    expect(config.vite?.optimizeDeps?.include).toEqual(expect.arrayContaining(['fastdom', 'fastdom/extensions/fastdom-promised.js']));
+  });
+
   it('aliases sanitize-url to a browser-loadable source entry', () => {
     const alias = getAlias(config.vite?.resolve?.alias, '@braintree/sanitize-url');
 

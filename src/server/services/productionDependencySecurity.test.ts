@@ -18,6 +18,7 @@ const floors: Record<string, (version: string) => string> = {
   '@vue/server-renderer': () => '3.5.43', 'source-map-js': () => '1.2.2',
   'http-cache-semantics': () => '4.3.0', joi: () => '18.2.9',
   katex: () => '0.19.0', 'global-agent': () => '4.1.3',
+  vite: () => '6.4.3', esbuild: () => '0.25.0',
 };
 
 describe('dependency security floors', () => {

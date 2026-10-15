@@ -127,7 +127,7 @@
     "tailwindcss": "^4.0.0",
     "tsx": "^4.19.2",
     "typescript": "^6.0.3",
-    "vite": "^6.4.3",
+    "vite": "6.4.4",
     "vitepress": "^1.6.4",
     "vitepress-plugin-mermaid": "^2.0.17",
     "vitest": "^4.1.11",
@@ -166,6 +166,9 @@
     "brace-expansion@>=2.0.0 <2.1.7": "2.1.7",
     "esbuild@<0.25.0": "0.25.12",
     "esbuild@>=0.27.3 <0.28.1": "0.28.2",
+    "vitepress": {
+      "vite": "6.4.4"
+    },
     "@electron/get": {
       "undici": "7.29.1"
     },
