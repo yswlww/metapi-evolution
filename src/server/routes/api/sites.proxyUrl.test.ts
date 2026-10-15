@@ -13,7 +13,7 @@ vi.mock('../../services/siteDetector.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../services/siteDetector.js')>();
   return {
     ...actual,
-    detectSite: (url: string) => url.includes('unrecognized-platform.example.com')
+    detectSite: (url: string) => new URL(url).hostname === 'unrecognized-platform.example.com'
       ? Promise.resolve(null)
       : actual.detectSite(url),
   };
