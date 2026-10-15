@@ -17,6 +17,7 @@ export default defineConfig({
       ...evolutionTestFiles(process.cwd()).node,
       '.worktrees/**',
       '.claude/worktrees/**',
+      'release/**',
     ],
     // Many of our web tests rely on React's test utilities (act, etc.).
     // If NODE_ENV is accidentally set to "production" in the environment,

@@ -11,6 +11,7 @@ import {
 import { Readable } from 'node:stream';
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
 import {
+  Headers,
   Response,
   fetch,
   type RequestInit as UndiciRequestInit,

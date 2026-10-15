@@ -10,6 +10,7 @@ import {
   updateProxyDebugAttempt,
   updateProxyDebugTraceCandidates,
   updateProxyDebugTraceSelection,
+  type ProxyDebugHeadersLike,
   type ProxyDebugTraceSession,
 } from './proxyDebugTraceStore.js';
 
@@ -155,17 +156,12 @@ export async function captureSurfaceProxyDebugSuccessResponseBody(
 }
 
 export function buildSurfaceProxyDebugResponseHeaders(
-  response:
-    | Headers
-    | Record<string, unknown>
-    | { headers?: Headers | Record<string, unknown> | null | undefined }
-    | null
-    | undefined,
+  response: ProxyDebugHeadersLike | { headers?: ProxyDebugHeadersLike },
 ): Record<string, unknown> | null {
   if (!response) return null;
   if (typeof response === 'object' && 'headers' in response) {
     const responseHeaders = (response as {
-      headers?: Headers | Record<string, unknown> | null | undefined;
+      headers?: ProxyDebugHeadersLike;
     }).headers;
     return normalizeProxyDebugResponseHeaders(responseHeaders ?? null);
   }

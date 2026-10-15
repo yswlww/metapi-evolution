@@ -85,7 +85,7 @@ export function normalizeImageProviderResponse(input: {
     operation: input.operation,
     modelName: input.modelName,
     status: input.response.status,
-    headers: new Headers(input.response.headers),
+    headers: new Headers([...input.response.headers.entries()]),
     bodyText: input.bodyText,
   };
   return input.provider.normalizeResponse(meta);
