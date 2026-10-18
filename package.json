@@ -131,7 +131,7 @@
     "vite": "6.4.4",
     "vitepress": "^1.6.4",
     "vitepress-plugin-mermaid": "^2.0.17",
-    "vitest": "^4.1.11",
+    "vitest": "^4.1.12",
     "wait-on": "^9.5.1"
   },
   "overrides": {
