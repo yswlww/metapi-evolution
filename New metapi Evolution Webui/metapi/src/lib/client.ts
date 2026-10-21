@@ -87,7 +87,6 @@ export async function apiPost<T = unknown>(url: string, body?: unknown, options:
   const res = await authFetch(url, {
     ...options,
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) throw new Error(await extractError(res));
@@ -98,7 +97,6 @@ export async function apiPut<T = unknown>(url: string, body?: unknown, options: 
   const res = await authFetch(url, {
     ...options,
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) throw new Error(await extractError(res));
@@ -109,7 +107,6 @@ export async function apiPatch<T = unknown>(url: string, body?: unknown, options
   const res = await authFetch(url, {
     ...options,
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) throw new Error(await extractError(res));
@@ -120,7 +117,6 @@ export async function apiDelete<T = unknown>(url: string, body?: unknown, option
   const res = await authFetch(url, {
     ...options,
     method: "DELETE",
-    headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!res.ok) throw new Error(await extractError(res));
