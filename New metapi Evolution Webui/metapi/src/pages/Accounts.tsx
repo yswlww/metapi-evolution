@@ -93,15 +93,16 @@ export default function Accounts() {
   const [addingAccount, setAddingAccount] = useState(false);
   const [verifying, setVerifying] = useState(false);
 
-  // Verify the entered access token against the selected site. The backend
-  // refuses to create an account until the token verifies.
+  // Verify with the same credential mode used when creating the account.
   const handleVerifyToken = async () => {
     const siteId = Number(addAccountForm.siteId);
     if (!Number.isFinite(siteId) || siteId <= 0) { showToast(t("ui.toast.select_site")); return; }
-    if (!addAccountForm.accessToken.trim()) { showToast(t("ui.toast.access_token_required")); return; }
+    const isApiKey = addAccountForm.mode === "apikey";
+    const credential = (isApiKey ? addAccountForm.apiKey : addAccountForm.accessToken).trim();
+    if (!credential) { showToast(t(isApiKey ? "ui.toast.api_key_required" : "ui.toast.access_token_required")); return; }
     setVerifying(true);
     try {
-      const res = await verifyAccountToken({ siteId, accessToken: addAccountForm.accessToken.trim() });
+      const res = await verifyAccountToken({ siteId, accessToken: credential, credentialMode: isApiKey ? "apikey" : "session" });
       if (res.success) {
         showToast(t("ui.toast.token_verified"));
       } else {
@@ -176,8 +177,8 @@ export default function Accounts() {
         await createAccount({
           siteId,
           username: addAccountForm.username.trim() || undefined,
-          apiToken: addAccountForm.apiKey.trim(),
-          credentialMode: "apiKey",
+          accessToken: addAccountForm.apiKey.trim(),
+          credentialMode: "apikey",
         });
         showToast(t("ui.toast.account_created_key"));
       } else {
@@ -189,6 +190,7 @@ export default function Accounts() {
           siteId,
           username: addAccountForm.username.trim() || undefined,
           accessToken: addAccountForm.accessToken.trim(),
+          credentialMode: "session",
         });
         showToast(t("ui.toast.account_created_token"));
       }
@@ -523,23 +525,14 @@ export default function Accounts() {
                       className="h-9 w-full rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)] px-3 font-mono text-xs text-[color:var(--color-fg)] outline-none focus:border-[color:var(--color-lime)]/50"
                     />
                   </label>
-                ) : addAccountForm.mode === "apikey" ? (
-                  <label className="block">
-                    <span className="mb-1 block font-mono text-[10px] tracking-[0.16em] text-[color:var(--color-muted)]">{t("ui.accounts.api_key")}</span>
-                    <input
-                      value={addAccountForm.apiKey}
-                      onChange={(e) => setAddAccountForm((f) => ({ ...f, apiKey: e.target.value }))}
-                      placeholder="sk-…"
-                      className="h-9 w-full rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)] px-3 font-mono text-xs text-[color:var(--color-fg)] outline-none focus:border-[color:var(--color-lime)]/50"
-                    />
-                  </label>
                 ) : (
                   <label className="block">
-                    <span className="mb-1 block font-mono text-[10px] tracking-[0.16em] text-[color:var(--color-muted)]">{t("ui.accounts.access_token")}</span>
+                    <span className="mb-1 block font-mono text-[10px] tracking-[0.16em] text-[color:var(--color-muted)]">{t(addAccountForm.mode === "apikey" ? "ui.accounts.api_key" : "ui.accounts.access_token")}</span>
                     <div className="flex gap-2">
                       <input
-                        value={addAccountForm.accessToken}
-                        onChange={(e) => setAddAccountForm((f) => ({ ...f, accessToken: e.target.value }))}
+                        type="password"
+                        value={addAccountForm.mode === "apikey" ? addAccountForm.apiKey : addAccountForm.accessToken}
+                        onChange={(e) => setAddAccountForm((f) => ({ ...f, [f.mode === "apikey" ? "apiKey" : "accessToken"]: e.target.value }))}
                         placeholder="sk-…"
                         className="h-9 w-full rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)] px-3 font-mono text-xs text-[color:var(--color-fg)] outline-none focus:border-[color:var(--color-lime)]/50"
                       />

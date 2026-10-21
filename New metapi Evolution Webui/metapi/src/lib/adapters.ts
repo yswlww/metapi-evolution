@@ -2,6 +2,7 @@ export const ADAPTER_COLORS: Record<string, string> = {
   "new-api": "#c8ff2e",
   "one-api": "#7de3d1",
   onehub: "#ff7a4d",
+  "one-hub": "#ff7a4d",
   "done-hub": "#ffc857",
   veloera: "#a78bfa",
   anyrouter: "#60a5fa",
@@ -13,26 +14,26 @@ export const ADAPTER_COLORS: Record<string, string> = {
 export const ADAPTER_NAMES: Record<string, string> = {
   "new-api": "New API",
   "one-api": "One API",
-  onehub: "OneHub",
+  "one-hub": "OneHub",
   "done-hub": "DoneHub",
   veloera: "Veloera",
   anyrouter: "AnyRouter",
   axonhub: "AxonHub",
   orcarouter: "OrcaRouter",
   sub2api: "Sub2API",
+  openai: "OpenAI Compatible",
+  claude: "Claude / Anthropic",
+  gemini: "Gemini / Google AI",
+  codex: "Codex",
+  "gemini-cli": "Gemini CLI",
+  antigravity: "Antigravity",
+  cliproxyapi: "CLIProxyAPI",
 };
 
-export const ADAPTER_FALLBACK_LIST = [
-  { name: "New API", color: "#c8ff2e" },
-  { name: "One API", color: "#7de3d1" },
-  { name: "OneHub", color: "#ff7a4d" },
-  { name: "DoneHub", color: "#ffc857" },
-  { name: "Veloera", color: "#a78bfa" },
-  { name: "AnyRouter", color: "#60a5fa" },
-  { name: "AxonHub", color: "#f472b6" },
-  { name: "OrcaRouter", color: "#34d399" },
-  { name: "Sub2API", color: "#fb7185" },
-];
+export const ADAPTER_FALLBACK_LIST = Object.entries(ADAPTER_NAMES).map(([platform, name]) => ({
+  name,
+  color: ADAPTER_COLORS[platform] || "#c8ff2e",
+}));
 
 export const PALETTE = [
   "#c8ff2e",
