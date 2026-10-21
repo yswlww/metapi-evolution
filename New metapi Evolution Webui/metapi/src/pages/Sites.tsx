@@ -481,7 +481,7 @@ export default function Sites() {
                       onChange={(e) => setForm({ ...form, adapter: e.target.value })}
                       className="h-9 w-full rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)] px-3 font-mono text-xs text-[color:var(--color-fg)] outline-none focus:border-[color:var(--color-lime)]/50"
                     >
-                      {Object.keys(ADAPTER_NAMES).map((a) => <option key={a} value={a}>{a}</option>)}
+                      {Object.entries(ADAPTER_NAMES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                     </select>
                   </label>
                 </div>

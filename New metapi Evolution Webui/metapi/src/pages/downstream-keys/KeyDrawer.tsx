@@ -225,6 +225,9 @@ export default function KeyDrawer({
         <span>{advancedOpen ? t("ui.keys.advanced_open") : t("ui.keys.advanced_closed")}</span>
       </button>
 
+      {siteOptions.length > 0 && siteOptions.every(site => excludedSiteIds.has(site.id)) && (
+        <p role="alert" className="rounded-lg border border-[color:var(--color-amber)] p-3 text-sm text-[color:var(--color-amber)]">{l('allSitesExcluded')}</p>
+      )}
       {advancedOpen && (
         <div className="space-y-5 pt-1">
           {/* Site weight JSON */}

@@ -243,7 +243,7 @@ export async function createAccount(payload: {
   accessToken?: string;
   apiToken?: string;
   checkinEnabled?: boolean;
-  credentialMode?: "accessToken" | "apiKey" | "password";
+  credentialMode?: "auto" | "session" | "apikey";
 }): Promise<Account> {
   if (DATA_MODE === "prototype") return { id: 0, ...payload } as unknown as Account;
   const created = await apiPost<BackendAccount>("/api/accounts", payload);
@@ -273,7 +273,7 @@ export async function verifyAccountToken(payload: {
   siteId: number;
   accessToken?: string;
   platformUserId?: number;
-  credentialMode?: "accessToken" | "apiKey" | "password";
+  credentialMode?: "auto" | "session" | "apikey";
   proxyUrl?: string | null;
 }): Promise<{ success: boolean; message?: string }> {
   if (DATA_MODE === "prototype") return { success: true };
