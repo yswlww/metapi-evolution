@@ -9,6 +9,7 @@ function atLeast(version: string, minimum: string): boolean {
   return true;
 }
 const floors: Record<string, (version: string) => string> = {
+  'follow-redirects': () => '1.16.1',
   fastify: () => '5.12.5', nodemailer: () => '10.0.9',
   undici: version => version.startsWith('6.') ? '6.29.0' : '7.29.1',
   'brace-expansion': version => version.startsWith('1.') ? '1.1.21' : version.startsWith('2.') ? '2.1.7' : '5.0.12',
@@ -51,6 +52,7 @@ describe('dependency security floors', () => {
   });
   it('retains the supported undici 6 runtime line rather than an untested major upgrade', async () => {
     const manifest = JSON.parse(await readFile(new URL('../../../package.json', import.meta.url), 'utf8'));
-    expect(manifest.dependencies.undici).toBe('6.29.0');
+    expect(manifest.dependencies.undici).toMatch(/^6\.\d+\.\d+$/);
+    expect(atLeast(manifest.dependencies.undici, '6.29.0')).toBe(true);
   });
 });
