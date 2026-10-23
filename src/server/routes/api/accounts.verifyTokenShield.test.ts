@@ -64,6 +64,16 @@ describe('accounts verify-token shield detection', () => {
     delete process.env.DATA_DIR;
   });
 
+  it('preserves an adapter-provided ESA diagnostic without retrying diagnostic HTTP probes', async () => {
+    const message = '站点返回了阿里云 ESA 浏览器验证页面，需要真实浏览器执行 JavaScript';
+    verifyTokenMock.mockResolvedValue({ tokenType: 'unknown', message });
+    const site = await db.insert(schema.sites).values({ name: 'ESA', url: 'https://esa.example.com', platform: 'new-api' }).returning().get();
+    const response = await app.inject({ method: 'POST', url: '/api/accounts/verify-token', payload: { siteId: site.id, accessToken: 'fixture', platformUserId: 1 } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ success: false, message: expect.stringContaining(message) });
+    expect(undiciFetchMock).not.toHaveBeenCalled();
+  });
+
   it('returns rebind hint when verify-token reports invalid access token', async () => {
     verifyTokenMock.mockRejectedValueOnce(new Error('invalid access token'));
 

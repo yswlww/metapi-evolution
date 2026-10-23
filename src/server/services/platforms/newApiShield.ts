@@ -2,6 +2,25 @@ import type { RequestInit as UndiciRequestInit } from 'undici';
 import { createContext, runInContext } from 'node:vm';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
 
+// Report browser-only challenges; do not run ESA scripts through the legacy solver.
+export class NewApiShieldChallengeError extends Error {
+  readonly code = 'new_api_shield_challenge';
+
+  constructor() {
+    super('站点返回了阿里云 ESA 浏览器验证页面，需要真实浏览器执行 JavaScript，当前 HTTP 客户端无法完成验证');
+    this.name = 'NewApiShieldChallengeError';
+  }
+}
+
+export function isAliyunEsaBrowserChallenge(text: string): boolean {
+  return text.trimStart().startsWith('<')
+    && /<meta\b[^>]*\bname\s*=\s*["']aliyun_waf_(?:aa|bb)["'][^>]*>/i.test(text);
+}
+
+export function assertNoEsaBrowserChallenge(text: string): void {
+  if (isAliyunEsaBrowserChallenge(text)) throw new NewApiShieldChallengeError();
+}
+
 const SHIELD_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36';
 
 export function buildNewApiCookieCandidates(token: string): string[] {
@@ -230,6 +249,7 @@ export async function fetchJsonWithShieldCookieRetry<T>(
     const proxiedRequestOptions = await withSiteProxyRequestInit(url, requestOptions);
     const response = await fetch(url, proxiedRequestOptions);
     const text = await response.text();
+    assertNoEsaBrowserChallenge(text);
 
     cookieHeader = mergeSetCookiePairs(cookieHeader, collectSetCookieHeaders(response.headers));
     const parsed = parseJsonSafe<T>(text);

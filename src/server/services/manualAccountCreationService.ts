@@ -215,7 +215,7 @@ export async function createManualAccount({
     );
     tokenType = verifyResult.tokenType;
     if (tokenType === 'unknown') {
-      const error = new Error('Token 验证失败，请先点击“验证 Token”，验证成功后再绑定账号');
+      const error = new Error(verifyResult.message || 'Token 验证失败，请先点击“验证 Token”，验证成功后再绑定账号');
       (error as Error & { requiresVerification?: boolean }).requiresVerification = true;
       throw error;
     }

@@ -2,7 +2,7 @@ import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, UserInfo
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { createContext, runInContext } from 'node:vm';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
-import { fetchJsonWithShieldCookieRetry } from './newApiShield.js';
+import { assertNoEsaBrowserChallenge, fetchJsonWithShieldCookieRetry, NewApiShieldChallengeError } from './newApiShield.js';
 
 export class NewApiAdapter extends BasePlatformAdapter {
   readonly platformName: string = 'new-api';
@@ -733,6 +733,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
       const proxiedRequestOptions = await withSiteProxyRequestInit(url, requestOptions);
       const res = await fetch(url, proxiedRequestOptions);
       const text = await res.text();
+      assertNoEsaBrowserChallenge(text);
       const getSetCookie = (res.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie;
       if (typeof getSetCookie === 'function') {
         cookieHeader = this.mergeSetCookiePairs(cookieHeader, getSetCookie.call(res.headers) || []);
@@ -778,7 +779,9 @@ export class NewApiAdapter extends BasePlatformAdapter {
         if (typeof res?.message === 'string' && res.message.trim()) {
           onFailureMessage?.(res.message.trim());
         }
-      } catch {}
+      } catch (error) {
+        if (error instanceof NewApiShieldChallengeError) onFailureMessage?.(error.message);
+      }
     }
     return null;
   }
@@ -873,7 +876,8 @@ export class NewApiAdapter extends BasePlatformAdapter {
         headers: { Authorization: `Bearer ${token}` },
       });
       return this.extractOpenAiModels(res);
-    } catch {
+    } catch (error) {
+      if (error instanceof NewApiShieldChallengeError) throw error;
       return [];
     }
   }
@@ -986,7 +990,15 @@ export class NewApiAdapter extends BasePlatformAdapter {
   }
 
   override async verifyToken(baseUrl: string, token: string, platformUserId?: number): Promise<TokenVerifyResult> {
-    const openAiModels = await this.getOpenAiModels(baseUrl, token);
+    let verificationFailureMessage: string | undefined;
+    const rememberFailure = (message: string) => { verificationFailureMessage ||= message; };
+    let openAiModels: string[] = [];
+    try {
+      openAiModels = await this.getOpenAiModels(baseUrl, token);
+    } catch (error) {
+      if (!(error instanceof NewApiShieldChallengeError)) throw error;
+      rememberFailure(error.message);
+    }
     if (openAiModels.length > 0) {
       return { tokenType: 'apikey', models: openAiModels };
     }
@@ -1026,9 +1038,11 @@ export class NewApiAdapter extends BasePlatformAdapter {
           }
         }
       }
-    } catch {}
+    } catch (error) {
+      if (error instanceof NewApiShieldChallengeError) rememberFailure(error.message);
+    }
 
-    const cookieRes = await this.fetchUserSelfByCookie(baseUrl, token, platformUserId);
+    const cookieRes = await this.fetchUserSelfByCookie(baseUrl, token, platformUserId, rememberFailure);
     if (cookieRes?.success && cookieRes?.data) {
       const userId = cookieRes.data.id;
       const userInfo = this.parseUserInfo(cookieRes.data);
@@ -1040,7 +1054,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
 
     const cookieUserId = await this.probeAlternateUserIdByCookie(baseUrl, token, platformUserId);
     if (cookieUserId) {
-      const cookieRetry = await this.fetchUserSelfByCookie(baseUrl, token, cookieUserId);
+      const cookieRetry = await this.fetchUserSelfByCookie(baseUrl, token, cookieUserId, rememberFailure);
       if (cookieRetry?.success && cookieRetry?.data) {
         const userInfo = this.parseUserInfo(cookieRetry.data);
         const balance = this.parseBalance(cookieRetry.data);
@@ -1050,7 +1064,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
       }
     }
 
-    return { tokenType: 'unknown' };
+    return { tokenType: 'unknown', ...(verificationFailureMessage ? { message: verificationFailureMessage } : {}) };
   }
 
   private async probeUserId(baseUrl: string, accessToken: string): Promise<number | null> {

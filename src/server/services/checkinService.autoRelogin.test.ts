@@ -101,6 +101,30 @@ vi.mock('./accountCredentialService.js', () => ({
 }));
 
 describe('checkinService auto relogin', () => {
+  it('writes exactly one aggregate event for mixed batch results', async () => {
+    const rows = [1, 2, 3].map(id => ({
+      accounts: { id, username: `fixture-${id}`, accessToken: 'fixture', status: 'active', extraConfig: null, balance: 10 },
+      sites: { id: 1, name: 'fixture-site', url: 'https://fixture.example', platform: 'new-api', status: 'active' },
+    }));
+    selectAllMock.mockReturnValue(rows).mockReturnValueOnce(rows);
+    adapterMock.checkin
+      .mockResolvedValueOnce({ success: true, message: 'ok', reward: '1' })
+      .mockResolvedValueOnce({ success: false, message: 'Check-in is not supported by Sub2API' })
+      .mockResolvedValueOnce({ success: false, message: 'upstream unavailable' });
+    const { checkinAll } = await import('./checkinService.js');
+    await checkinAll({ scheduleMode: 'cron' });
+    const events = insertValuesMock.mock.calls.map(([payload]) => payload).filter(payload => payload.type === 'checkin');
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ title: 'checkin summary', level: 'warning', message: expect.stringMatching(/总计 3.*成功 1.*跳过 1.*失败 1/) });
+  });
+
+  it('does not create summary noise for an empty batch', async () => {
+    selectAllMock.mockReturnValue([]);
+    const { checkinAll } = await import('./checkinService.js');
+    await expect(checkinAll()).resolves.toEqual([]);
+    expect(insertValuesMock).not.toHaveBeenCalled();
+  });
+
   it('allows balance-delta reward inference at exactly the 10-minute freshness boundary', async () => {
     const isFresh = await getRewardBalanceFreshnessChecker();
     const freshnessWindow = await getRewardBalanceFreshnessWindow();

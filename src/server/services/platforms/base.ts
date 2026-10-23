@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
 import { normalizePlatformUserId } from '../platformUserId.js';
+import { assertNoEsaBrowserChallenge } from './newApiShield.js';
 
 export interface CheckinResult {
   success: boolean;
@@ -75,6 +76,7 @@ export interface UserInfo {
 
 export interface TokenVerifyResult {
   tokenType: 'session' | 'apikey' | 'unknown';
+  message?: string;
   userInfo?: UserInfo | null;
   balance?: BalanceInfo | null;
   apiToken?: string | null;
@@ -255,10 +257,12 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
     };
     const proxiedRequestOptions = await withSiteProxyRequestInit(url, requestOptions);
     const res = await fetch(url, proxiedRequestOptions);
+    const text = await res.text();
+    assertNoEsaBrowserChallenge(text);
     if (!res.ok) {
-      throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      throw new Error(`HTTP ${res.status}: ${text}`);
     }
-    return res.json() as Promise<T>;
+    return JSON.parse(text) as T;
   }
 
   protected buildNoticeSourceKey(content: string): string {

@@ -969,6 +969,10 @@ export async function accountsRoutes(app: FastifyInstance) {
         };
       }
 
+      if (typeof result.message === "string" && result.message.trim()) {
+        return { success: false, message: appendSessionTokenRebindHint(result.message) };
+      }
+
       // Try to explain unknown failures: missing user id vs anti-bot challenge page.
       const detectVerifyFailureReason =
         async (): Promise<VerifyFailureReason> => {
