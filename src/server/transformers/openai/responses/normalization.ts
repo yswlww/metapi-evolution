@@ -123,8 +123,12 @@ function normalizeResponsesContentItem(
   if (type === 'input_image' || type === 'image_url') {
     const imageUrl = normalizeImageUrlValue(item.image_url) ?? normalizeImageUrlValue(item.url);
     if (!imageUrl) return null;
+    // Codex rejects an input_image block that carries both file_id and
+    // image_url ("Missing mutually exclusive parameters"), so drop the
+    // conflicting file_id and keep every unrelated sibling (e.g. detail).
+    const { file_id: _fileId, ...rest } = item;
     return {
-      ...item,
+      ...rest,
       type: 'input_image',
       image_url: imageUrl,
     };
