@@ -57,6 +57,16 @@ describe('accounts add requires token verification success', () => {
     delete process.env.DATA_DIR;
   });
 
+  it('keeps the browser-verification diagnostic when creating a session connection', async () => {
+    const message = '站点返回了阿里云 ESA 浏览器验证页面，需要真实浏览器执行 JavaScript';
+    verifyTokenMock.mockResolvedValueOnce({ tokenType: 'unknown', message });
+    const site = await db.insert(schema.sites).values({ name: 'ESA', url: 'https://esa.example.com', platform: 'new-api' }).returning().get();
+    const response = await app.inject({ method: 'POST', url: '/api/accounts', payload: { siteId: site.id, accessToken: 'fixture', credentialMode: 'session' } });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ success: false, message: expect.stringContaining(message) });
+    expect(await db.select().from(schema.accounts).all()).toHaveLength(0);
+  });
+
   it('rejects binding when token verification is not successful', async () => {
     verifyTokenMock.mockResolvedValueOnce({ tokenType: 'unknown' });
 
