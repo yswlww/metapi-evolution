@@ -38,6 +38,7 @@ interface BackendSite {
   status?: "active" | "disabled" | null;
   enabled?: boolean;
   globalWeight?: number | null;
+  maxConcurrency?: number | null;
   isPinned?: boolean;
   pinned?: boolean;
   sortOrder?: number | null;
@@ -84,6 +85,7 @@ function mapBackendSite(raw: BackendSite): Site {
     proxyUrl: raw.proxyUrl ?? null,
     useSystemProxy: raw.useSystemProxy ?? false,
     globalWeight: raw.globalWeight ?? 1,
+    maxConcurrency: raw.maxConcurrency ?? null,
     isPinned: raw.isPinned ?? false,
     apiKey: raw.apiKey ?? null,
   };
@@ -102,6 +104,7 @@ export async function createSite(payload: {
   platform?: string;
   status?: "active" | "disabled";
   apiKey?: string;
+  maxConcurrency?: number | null;
 }): Promise<Site> {
   if (DATA_MODE === "prototype") return payload as unknown as Site;
   const created = await apiPost<BackendSite>("/api/sites", payload);
@@ -120,6 +123,7 @@ export async function updateSite(
     isPinned?: boolean;
     sortOrder?: number;
     globalWeight?: number;
+    maxConcurrency?: number | null;
   },
 ): Promise<Site> {
   if (DATA_MODE === "prototype") return { id, ...payload } as unknown as Site;

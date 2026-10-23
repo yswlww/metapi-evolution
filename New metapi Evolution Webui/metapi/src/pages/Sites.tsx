@@ -32,6 +32,7 @@ import {
 } from "../lib/source";
 import type { Site } from "../data/prototype";
 import { type SiteStatus } from "../data/prototype";
+import { normalizeSiteMaxConcurrency } from "../../../../src/shared/siteMaxConcurrency.js";
 
 type StatusFilter = "all" | SiteStatus;
 
@@ -86,6 +87,7 @@ export default function Sites() {
     weight: "1.0",
     pinned: false,
     disabledModels: "",
+    maxConcurrency: "",
   });
 
   const statusCounts = useMemo(() => {
@@ -109,7 +111,7 @@ export default function Sites() {
 
   const openCreate = () => {
     setDrawerMode("create");
-    setForm({ name: "", slug: "", adapter: "new-api", url: "", region: "", status: "healthy", note: "", enabled: true, customHeaders: "", proxyUrl: "", useSystemProxy: false, weight: "1.0", pinned: false, disabledModels: "" });
+    setForm({ name: "", slug: "", adapter: "new-api", url: "", region: "", status: "healthy", note: "", enabled: true, customHeaders: "", proxyUrl: "", useSystemProxy: false, weight: "1.0", pinned: false, disabledModels: "", maxConcurrency: "" });
     setDrawer({ id: 0 });
   };
 
@@ -132,6 +134,7 @@ export default function Sites() {
       weight: String(site.globalWeight ?? 1),
       pinned: site.isPinned ?? false,
       disabledModels: "",
+      maxConcurrency: site.maxConcurrency == null ? "" : String(site.maxConcurrency),
     });
     setDrawer(site);
   };
@@ -181,6 +184,12 @@ export default function Sites() {
     // Preserve the existing sortOrder on edit (create defaults to 0).
     sortOrder: forCreate ? 0 : (drawer?.sortOrder ?? 0),
     globalWeight: parseFloat(form.weight) || 1,
+    // Same shared normalizer the legacy UI and backend use, so an invalid
+    // value never reaches the API. handleSave surfaces the error first.
+    ...(() => {
+      const normalized = normalizeSiteMaxConcurrency(form.maxConcurrency.trim() === "" ? null : Number(form.maxConcurrency.trim()));
+      return normalized.ok ? { maxConcurrency: normalized.value } : {};
+    })(),
     // Advanced fields that the form exposes.
     ...(form.proxyUrl.trim() ? { proxyUrl: form.proxyUrl.trim() } : { proxyUrl: null }),
     useSystemProxy: form.useSystemProxy,
@@ -229,6 +238,13 @@ export default function Sites() {
   const handleSave = async () => {
     if (!form.name.trim() || !form.url.trim()) {
       showToast(t("ui.sites.err_required"));
+      return;
+    }
+    const normalizedMaxConcurrency = normalizeSiteMaxConcurrency(
+      form.maxConcurrency.trim() === "" ? null : Number(form.maxConcurrency.trim()),
+    );
+    if (!normalizedMaxConcurrency.ok) {
+      showToast(normalizedMaxConcurrency.error);
       return;
     }
     setSaving(true);
@@ -581,6 +597,15 @@ export default function Sites() {
                       value={form.weight}
                       onChange={(e) => setForm({ ...form, weight: e.target.value })}
                       placeholder="1.0"
+                      className="h-9 w-full rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)] px-3 font-mono text-[10px] text-[color:var(--color-fg)] outline-none focus:border-[color:var(--color-lime)]/50"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block font-mono text-[10px] tracking-[0.16em] text-[color:var(--color-muted)]">{t("ui.sites.adv_max_concurrency")}</span>
+                    <input
+                      value={form.maxConcurrency}
+                      onChange={(e) => setForm({ ...form, maxConcurrency: e.target.value })}
+                      placeholder="4"
                       className="h-9 w-full rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel-2)] px-3 font-mono text-[10px] text-[color:var(--color-fg)] outline-none focus:border-[color:var(--color-lime)]/50"
                     />
                   </label>
