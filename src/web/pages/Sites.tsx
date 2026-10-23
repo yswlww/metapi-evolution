@@ -683,11 +683,11 @@ export default function Sites() {
             addLog(`${s}${lat}  ${d.modelName}${reasonText ? `  —  ${reasonText}` : ''}`, c);
             setTimeout(() => probeLogEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 30);
           } else if (type === 'action') {
-            if (d.action === 'disabled') addLog(`  ↳ 已加入站点禁用列表: ${d.modelName}`, 'var(--color-text-muted)');
+            if (d.action === 'flagged') addLog(`  ↳ 已标记（模型保留）: ${d.modelName}`, 'var(--color-text-muted)');
           } else if (type === 'complete') {
             if (d.unsupported > 0) {
-              addLog(`完成：${d.probed} 个模型已探测，${d.unsupported} 个不可用已自动加入禁用列表`, 'var(--color-error, #ef4444)');
-              toast.error(`${d.unsupported} 个模型不可用，已自动加入站点禁用列表`);
+              addLog(`完成：${d.probed} 个模型已探测，${d.unsupported} 个未确认（模型已保留，可在下方查看标记）`, 'var(--color-error, #ef4444)');
+              toast.error(`${d.unsupported} 个模型探测未确认，模型已保留。`);
             } else {
               addLog(`完成：${d.probed} 个模型均可用`, 'var(--color-success, #22c55e)');
               toast.success(`探测完成：${d.probed} 个模型均可用`);

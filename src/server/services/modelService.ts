@@ -397,7 +397,7 @@ export type ProbeSiteModelsResult = {
 export type ProbeSiteModelsProgress =
   | { type: 'start'; scope: 'single' | 'all'; modelsCount: number; modelsToProbe: string[] }
   | { type: 'model'; modelName: string; status: RuntimeModelProbeStatus; latencyMs: number | null; latencyExceeded?: true; reason?: string }
-  | { type: 'action'; modelName: string; action: 'disabled' };
+  | { type: 'action'; modelName: string; action: 'flagged' };
 
 export async function probeSiteModels(
   siteId: number,
@@ -484,30 +484,36 @@ export async function probeSiteModels(
   // Restore original model order for the final details list
   const details = modelsToProbe.map((m) => detailsMap.get(m)!);
 
-  const unsupportedModels = details.filter((d) => d.status === 'unsupported' || d.status === 'inconclusive').map((d) => d.modelName);
+  // A probe failure must never hide a model the operator already has. Keep
+  // `available` untouched and instead record a warning: an unsettled probe
+  // (timeout, network, unstable key) is not evidence the model is gone, and
+  // even a definite rejection only flags the model so the operator decides.
+  const failedModels = details.filter((d) => d.status === 'unsupported' || d.status === 'inconclusive');
+  const unsupportedModels = failedModels.map((d) => d.modelName);
   if (unsupportedModels.length > 0) {
     const checkedAt = new Date().toISOString();
-    for (const modelName of unsupportedModels) {
-      await db.update(schema.modelAvailability)
-        .set({ available: false, checkedAt })
-        .where(and(
-          eq(schema.modelAvailability.accountId, account.id),
-          eq(schema.modelAvailability.modelName, modelName),
-        ))
-        .run();
+    const definitelyUnsupported = failedModels.filter((d) => d.status === 'unsupported');
+    for (const detail of definitelyUnsupported) {
       await db.insert(schema.siteDisabledModels)
-        .values({ siteId, modelName })
+        .values({ siteId, modelName: detail.modelName })
         .onConflictDoNothing()
         .run();
-      onProgress?.({ type: 'action', modelName, action: 'disabled' });
+      onProgress?.({ type: 'action', modelName: detail.modelName, action: 'flagged' });
     }
-    const reason = unsupportedModels.length === 1
-      ? `手动探测失败：模型 ${unsupportedModels[0]} 不可用`
-      : `手动探测失败：${unsupportedModels.length} 个模型不可用（${unsupportedModels.slice(0, 3).join('、')}${unsupportedModels.length > 3 ? '…' : ''}）`;
-    await setAccountRuntimeHealth(account.id, { state: 'unhealthy', reason, source: 'manual-probe', checkedAt });
-    rebuildTokenRoutesFromAvailability().catch((err) => {
-      console.warn('[probe-site-now] route rebuild failed', err);
+    const reason = failedModels.length === 1
+      ? `手动探测未确认：模型 ${failedModels[0].modelName} ${failedModels[0].status === 'unsupported' ? '不受支持（已标记）' : '探测未完成（已保留）'}`
+      : `手动探测未确认：${failedModels.length} 个模型异常（保留，其中 ${definitelyUnsupported.length} 个已标记）`;
+    await setAccountRuntimeHealth(account.id, {
+      state: definitelyUnsupported.length > 0 ? 'degraded' : 'healthy',
+      reason,
+      source: 'manual-probe',
+      checkedAt,
     });
+    if (definitelyUnsupported.length > 0) {
+      rebuildTokenRoutesFromAvailability().catch((err) => {
+        console.warn('[probe-site-now] route rebuild failed', err);
+      });
+    }
   }
 
   return { success: true, scope, probed: details.length, unsupported: unsupportedModels.length, details };
@@ -561,39 +567,35 @@ async function runPostRefreshProbeIfEnabled(params: {
     }
   }
 
-  // Handle unsupported models
-  const unsupportedModels = details.filter((d) => d.status === 'unsupported' || d.status === 'inconclusive').map((d) => d.modelName);
+  // Same rule as the manual probe: never hide an existing model. An unsettled
+  // probe leaves it available, and a definite rejection only flags it.
+  const failedModels = details.filter((d) => d.status === 'unsupported' || d.status === 'inconclusive');
+  const unsupportedModels = failedModels.map((d) => d.modelName);
   if (unsupportedModels.length > 0) {
     const checkedAt = new Date().toISOString();
-    for (const modelName of unsupportedModels) {
-      // Mark model as unavailable
-      await db.update(schema.modelAvailability)
-        .set({ available: false, checkedAt })
-        .where(and(
-          eq(schema.modelAvailability.accountId, params.account.id),
-          eq(schema.modelAvailability.modelName, modelName),
-        ))
-        .run();
-      // Add to site-level disabled models
+    const definitelyUnsupported = failedModels.filter((d) => d.status === 'unsupported');
+    for (const detail of definitelyUnsupported) {
       await db.insert(schema.siteDisabledModels)
-        .values({ siteId: params.site.id, modelName })
+        .values({ siteId: params.site.id, modelName: detail.modelName })
         .onConflictDoNothing()
         .run();
     }
-    // Update account health
-    const reason = unsupportedModels.length === 1
-      ? `刷新后探测失败：模型 ${unsupportedModels[0]} 不可用`
-      : `刷新后探测失败：${unsupportedModels.length} 个模型不可用（${unsupportedModels.slice(0, 3).join('、')}${unsupportedModels.length > 3 ? '…' : ''}）`;
+    const reason = failedModels.length === 1
+      ? `刷新后探测未确认：模型 ${failedModels[0].modelName} ${failedModels[0].status === 'unsupported' ? '不受支持（已标记）' : '探测未完成（已保留）'}`
+      : `刷新后探测未确认：${failedModels.length} 个模型异常（保留，其中 ${definitelyUnsupported.length} 个已标记）`;
     await setAccountRuntimeHealth(params.account.id, {
-      state: 'unhealthy',
+      state: definitelyUnsupported.length > 0 ? 'degraded' : 'healthy',
       reason,
       source: 'post-refresh-probe',
       checkedAt,
     });
-    // Single route rebuild for all changes
-    rebuildTokenRoutesFromAvailability().catch((err) => {
-      console.warn('[post-refresh-probe] route rebuild failed', err);
-    });
+    // Only a flagged (definitely rejected) model changes routing; a merely
+    // unsettled probe must not rebuild routes.
+    if (definitelyUnsupported.length > 0) {
+      rebuildTokenRoutesFromAvailability().catch((err) => {
+        console.warn('[post-refresh-probe] route rebuild failed', err);
+      });
+    }
   }
 
   return {
