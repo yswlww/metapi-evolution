@@ -359,5 +359,18 @@ export async function checkinAll(options?: { accountIds?: number[]; scheduleMode
   });
 
   await Promise.all(promises);
+  if (results.length > 0) {
+    const success = results.filter(entry => entry.result.status === 'success').length;
+    const skipped = results.filter(entry => entry.result.status === 'skipped').length;
+    const failed = results.length - success - skipped;
+    await db.insert(schema.events).values({
+      type: 'checkin',
+      title: 'checkin summary',
+      message: `签到批次完成：总计 ${results.length}，成功 ${success}，跳过 ${skipped}，失败 ${failed}`,
+      level: failed > 0 ? 'warning' : 'info',
+      relatedType: 'account',
+      createdAt: formatUtcSqlDateTime(new Date()),
+    }).run();
+  }
   return results;
 }
