@@ -33,6 +33,7 @@ import {
 } from "../../services/proxyDebugTraceStore.js";
 import { parseProxyLogMessageMeta } from "../../services/proxyLogMessage.js";
 import { requiresManagedAccountTokens } from "../../services/accountExtraConfig.js";
+import { buildSiteDisabledModelFilter } from "../../services/routeChannelCandidateService.js";
 import { ACCOUNT_TOKEN_VALUE_STATUS_READY } from "../../services/accountTokenService.js";
 import {
   formatLocalDateTime,
@@ -1526,6 +1527,15 @@ export async function statsRoutes(app: FastifyInstance) {
         )
         .all();
 
+      // Routing already excludes these models (see routeChannelCandidateService),
+      // so the statistics endpoint must apply the same rule or it keeps
+      // advertising a site-disabled model as pending.
+      const siteDisabledModelFilter = buildSiteDisabledModelFilter(
+        await db.select().from(schema.siteDisabledModels).all(),
+      );
+      const isSiteDisabledModel = (siteId: number, modelName: string) =>
+        siteDisabledModelFilter.isDisabled(siteId, modelName);
+
       const result: Record<
         string,
         Array<{
@@ -1571,6 +1581,7 @@ export async function statsRoutes(app: FastifyInstance) {
       for (const row of rows) {
         const modelName = (row.token_model_availability.modelName || "").trim();
         if (!modelName) continue;
+        if (isSiteDisabledModel(row.sites.id, modelName)) continue;
         const accountModelKey = `${row.accounts.id}::${modelName.toLowerCase()}`;
         coveredAccountModelSet.add(accountModelKey);
 
@@ -1620,6 +1631,7 @@ export async function statsRoutes(app: FastifyInstance) {
         if (!requiresManagedAccountTokens(row)) continue;
         const modelName = (row.modelName || "").trim();
         if (!modelName) continue;
+        if (isSiteDisabledModel(row.siteId, modelName)) continue;
         const coverageKey = `${row.accountId}::${modelName.toLowerCase()}`;
         if (coveredAccountModelSet.has(coverageKey)) continue;
         if (!modelsWithoutToken[modelName]) modelsWithoutToken[modelName] = [];
@@ -1639,7 +1651,8 @@ export async function statsRoutes(app: FastifyInstance) {
 
       const accountIdsForGroupHints = new Set(
         availableModelRows
-          .filter((row) => requiresManagedAccountTokens(row))
+          .filter((row) => requiresManagedAccountTokens(row)
+            && !isSiteDisabledModel(row.siteId, row.modelName))
           .map((row) => row.accountId),
       );
       const requiredGroupsByAccountModel = new Map<
@@ -1718,6 +1731,7 @@ export async function statsRoutes(app: FastifyInstance) {
         if (!requiresManagedAccountTokens(row)) continue;
         const modelName = (row.modelName || "").trim();
         if (!modelName) continue;
+        if (isSiteDisabledModel(row.siteId, modelName)) continue;
         const accountModelKey = `${row.accountId}::${modelName.toLowerCase()}`;
 
         const requiredGroups =

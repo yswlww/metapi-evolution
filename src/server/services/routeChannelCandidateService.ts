@@ -21,6 +21,37 @@ export type RouteChannelCandidate = {
 
 export type DatabaseExecutor = typeof db;
 
+export type SiteDisabledModelRow = { siteId: number; modelName: string };
+
+/**
+ * Single normalization rule for site-disabled models.
+ *
+ * Route building and the token-candidates statistics endpoint must agree on
+ * which models a site has disabled, otherwise the UI keeps advertising a model
+ * as "pending" that routing will never select. Both call this helper so there
+ * is exactly one owner of the rule (including trim + case folding, so
+ * whitespace-padded rows restored from a backup cannot bypass the filter).
+ */
+export function buildSiteDisabledModelFilter(rows: SiteDisabledModelRow[]): {
+  isDisabled(siteId: number, modelName: string): boolean;
+  size: number;
+} {
+  const disabledBySite = new Map<number, Set<string>>();
+  for (const row of rows) {
+    const normalizedSiteId = Number(row.siteId);
+    const normalizedName = String(row.modelName ?? '').trim().toLowerCase();
+    if (!Number.isFinite(normalizedSiteId) || normalizedSiteId <= 0 || !normalizedName) continue;
+    const names = disabledBySite.get(normalizedSiteId) ?? new Set<string>();
+    names.add(normalizedName);
+    disabledBySite.set(normalizedSiteId, names);
+  }
+  return {
+    isDisabled: (siteId: number, modelName: string) =>
+      disabledBySite.get(Number(siteId))?.has(String(modelName ?? '').trim().toLowerCase()) ?? false,
+    size: disabledBySite.size,
+  };
+}
+
 function normalizeModelName(modelName: string | null | undefined): string {
   return (modelName || '').trim();
 }
@@ -79,12 +110,7 @@ export async function loadFilteredRouteChannelCandidates(
     .all();
 
   const disabledModelRows = await database.select().from(schema.siteDisabledModels).all();
-  const disabledModelsBySite = new Map<number, Set<string>>();
-  for (const row of disabledModelRows) {
-    const disabledModels = disabledModelsBySite.get(row.siteId) ?? new Set<string>();
-    disabledModels.add(row.modelName.toLowerCase());
-    disabledModelsBySite.set(row.siteId, disabledModels);
-  }
+  const siteDisabledModelFilter = buildSiteDisabledModelFilter(disabledModelRows);
 
   const blockedBrandRules = getBlockedBrandRules(config.globalBlockedBrands);
   const globalAllowedModels = new Set(
@@ -93,7 +119,7 @@ export async function loadFilteredRouteChannelCandidates(
   const isAllowed = (siteId: number, modelName: string) => {
     const normalized = modelName.toLowerCase();
     if (globalAllowedModels.size > 0 && !globalAllowedModels.has(normalized)) return false;
-    if (disabledModelsBySite.get(siteId)?.has(normalized)) return false;
+    if (siteDisabledModelFilter.isDisabled(siteId, modelName)) return false;
     return blockedBrandRules.length === 0 || !isModelBlockedByBrand(modelName, blockedBrandRules);
   };
 

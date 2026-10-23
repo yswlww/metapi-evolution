@@ -113,6 +113,7 @@ export interface Site {
   proxyUrl?: string | null;
   useSystemProxy?: boolean;
   globalWeight?: number;
+  maxConcurrency?: number | null;
   isPinned?: boolean;
   apiKey?: string | null;
 }
