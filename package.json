@@ -90,7 +90,7 @@
     "minimist": "^1.2.8",
     "mysql2": "^3.24.6",
     "node-cron": "^4.6.0",
-    "nodemailer": "^10.1.1",
+    "nodemailer": "^10.1.4",
     "pg": "^8.23.1",
     "rate-limiter-flexible": "^11.2.2",
     "socks": "^2.8.10",
