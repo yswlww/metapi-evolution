@@ -40,6 +40,14 @@ export async function imagesProxyRoute(app: FastifyInstance) {
   app.post('/v1/images/generations', async (request: FastifyRequest, reply: FastifyReply) => {
     const body = request.body as any;
     const requestedModel = body?.model || 'gpt-image-1';
+    // Reject unusable input here so the operator sees a clear 400 instead of
+    // spending an upstream attempt on a request that cannot succeed.
+    const prompt = typeof body?.prompt === 'string' ? body.prompt.trim() : '';
+    if (!prompt) {
+      return reply.code(400).send({
+        error: { message: 'prompt is required', type: 'invalid_request_error' },
+      });
+    }
     if (!await ensureModelAllowedForDownstreamKey(request, reply, requestedModel)) return;
     const downstreamPolicy = getDownstreamRoutingPolicy(request);
     const forcedChannelId = getTesterForcedChannelId({

@@ -75,28 +75,61 @@ type IntervalCheckinCandidate = {
   lastCheckinAt?: string | null;
 };
 
+/**
+ * Deterministic per-account offset inside the jitter window, derived from the
+ * account id so the same account keeps its slot across restarts.
+ *
+ * Anti-ban scheduling needs check-ins spread out rather than firing every
+ * account at the same instant, but a random offset would reshuffle on every
+ * restart and make the schedule unpredictable.
+ */
+export function computeCheckinJitterOffsetMs(
+  accountId: number,
+  windowMs: number,
+): number {
+  const window = Math.max(0, Math.trunc(windowMs || 0));
+  if (window <= 0) return 0;
+  const id = Number.isFinite(accountId) ? Math.trunc(accountId) : 0;
+  const hash = Math.abs(Math.imul(id ^ 0x9e3779b9, 0x85ebca6b) >>> 0);
+  return hash % window;
+}
+
 export function selectDueIntervalCheckinAccountIds(
   rows: IntervalCheckinCandidate[],
   intervalHours: number,
   now = new Date(),
   attemptState = intervalAttemptByAccount,
+  jitterWindowMs = 0,
 ) {
   const nowMs = now.getTime();
   const intervalMs = Math.max(1, intervalHours) * 60 * 60 * 1000;
+  const jitterWindow = Math.max(0, Math.trunc(jitterWindowMs || 0));
 
   return rows
     .filter((row) => {
       const lastCheckinMs = row.lastCheckinAt ? Date.parse(row.lastCheckinAt) : Number.NaN;
       const lastAttemptMs = attemptState.get(row.id);
+      let due: boolean;
       if (Number.isFinite(lastCheckinMs)) {
         if (nowMs - lastCheckinMs < intervalMs) return false;
         if (typeof lastAttemptMs === 'number' && lastAttemptMs >= lastCheckinMs && nowMs - lastAttemptMs < intervalMs) {
           return false;
         }
-        return true;
+        due = true;
+      } else {
+        if (typeof lastAttemptMs === 'number' && nowMs - lastAttemptMs < intervalMs) return false;
+        due = true;
       }
-      if (typeof lastAttemptMs === 'number' && nowMs - lastAttemptMs < intervalMs) return false;
-      return true;
+      if (!due || jitterWindow <= 0) return due;
+
+      // Hold the account back until its jittered slot after the boundary.
+      const offset = computeCheckinJitterOffsetMs(row.id, jitterWindow);
+      if (offset <= 0) return true;
+      const boundaryMs = Number.isFinite(lastCheckinMs)
+        ? lastCheckinMs + intervalMs
+        : (typeof lastAttemptMs === 'number' ? lastAttemptMs + intervalMs : Number.NaN);
+      if (!Number.isFinite(boundaryMs)) return true;
+      return nowMs >= boundaryMs + offset;
     })
     .map((row) => row.id);
 }
@@ -117,6 +150,8 @@ async function runIntervalCheckinPass(now = new Date()) {
       })),
     config.checkinIntervalHours,
     now,
+    intervalAttemptByAccount,
+    Math.max(0, Math.trunc((config.checkinJitterMinutes || 0) * 60 * 1000)),
   );
 
   if (dueAccountIds.length === 0) return;
@@ -255,7 +290,7 @@ export async function startScheduler() {
   dailySummaryTask = createDailySummaryTask(activeDailySummaryCron);
   logCleanupTask = createLogCleanupTask(activeLogCleanupCron);
 
-  console.log(`[Scheduler] Check-in schedule: ${config.checkinScheduleMode} (${config.checkinScheduleMode === 'cron' ? activeCheckinCron : `${config.checkinIntervalHours}h`})`);
+  console.log(`[Scheduler] Check-in schedule: ${config.checkinScheduleMode} (${config.checkinScheduleMode === 'cron' ? activeCheckinCron : `${config.checkinIntervalHours}h, jitter=${config.checkinJitterMinutes || 0}m`})`);
   console.log(`[Scheduler] Balance refresh cron: ${activeBalanceCron}`);
   console.log(`[Scheduler] Daily summary cron: ${activeDailySummaryCron}`);
   console.log(

@@ -146,6 +146,31 @@ describe('/v1/images/edits route', () => {
     }
   });
 
+  it('rejects a generation request with a missing prompt before contacting upstream', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/images/generations',
+      headers: { authorization: 'Bearer sk-demo' },
+      payload: { model: 'gpt-image-1', prompt: '   ' },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ error: { type: 'invalid_request_error' } });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('accepts a non-string prompt body without rejecting the whole request', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/images/generations',
+      headers: { authorization: 'Bearer sk-demo' },
+      payload: { model: 'gpt-image-1', prompt: '' },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('accepts multipart image edit requests and forwards them to /v1/images/edits', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({
       created: 1,

@@ -54,13 +54,41 @@ export const openAiCompatibleImageProvider: ImageProviderAdapter = {
     };
   },
   normalizeResponse(input) {
+    let parsed: unknown;
     try {
-      return { ok: true, value: JSON.parse(input.bodyText) as unknown };
+      parsed = JSON.parse(input.bodyText) as unknown;
     } catch {
       return {
         ok: false,
         message: input.bodyText || 'Upstream returned malformed JSON',
       };
     }
+
+    // An upstream error body is a failure, not a successful image result.
+    const payload = parsed as { error?: { message?: unknown } } | null;
+    const upstreamError = typeof payload?.error?.message === 'string'
+      ? payload.error.message.trim()
+      : '';
+    if (input.status >= 400 || upstreamError) {
+      return {
+        ok: false,
+        message: upstreamError || `Upstream returned HTTP ${input.status}`,
+      };
+    }
+
+    // A 2xx response carrying no usable image would otherwise be proxied as
+    // success, so clients would receive an empty result with no retry.
+    const data = (parsed as { data?: unknown })?.data;
+    const hasUsableImage = Array.isArray(data) && data.some((item) => {
+      if (!item || typeof item !== 'object') return false;
+      const entry = item as { b64_json?: unknown; url?: unknown };
+      return (typeof entry.b64_json === 'string' && entry.b64_json.trim().length > 0)
+        || (typeof entry.url === 'string' && entry.url.trim().length > 0);
+    });
+    if (!hasUsableImage) {
+      return { ok: false, message: 'Upstream returned no image data' };
+    }
+
+    return { ok: true, value: parsed };
   },
 };

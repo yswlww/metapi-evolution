@@ -109,6 +109,7 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
       ? 'interval' as const
       : 'cron' as const,
     checkinIntervalHours: Math.min(24, Math.max(1, Math.trunc(parseNumber(env.CHECKIN_INTERVAL_HOURS, 6)))),
+    checkinJitterMinutes: Math.min(240, Math.max(0, Math.trunc(parseNumber(env.CHECKIN_JITTER_MINUTES, 0)))),
     balanceRefreshCron: env.BALANCE_REFRESH_CRON || '0 * * * *',
     logCleanupCron: env.LOG_CLEANUP_CRON || '0 6 * * *',
     logCleanupConfigured: false,
