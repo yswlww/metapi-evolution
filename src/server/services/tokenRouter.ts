@@ -1859,9 +1859,13 @@ export class TokenRouter {
     if (!isModelAllowedByDownstreamPolicy(requestedModel, downstreamPolicy)) return null;
     await ensureSiteRuntimeHealthStateLoaded();
 
-    const match = await this.findRoute(requestedModel, downstreamPolicy);
-    if (!match) return null;
-    return await this.selectFromMatch(match, requestedModel, downstreamPolicy, [], true, selectionConstraint);
+    return await this.selectAcrossRouteCandidates(
+      requestedModel,
+      downstreamPolicy,
+      [],
+      true,
+      selectionConstraint,
+    );
   }
 
   async previewSelectedChannel(
@@ -1871,9 +1875,12 @@ export class TokenRouter {
     if (!isModelAllowedByDownstreamPolicy(requestedModel, downstreamPolicy)) return null;
     await ensureSiteRuntimeHealthStateLoaded();
 
-    const match = await this.findRoute(requestedModel, downstreamPolicy);
-    if (!match) return null;
-    return await this.selectFromMatch(match, requestedModel, downstreamPolicy, [], false);
+    return await this.selectAcrossRouteCandidates(
+      requestedModel,
+      downstreamPolicy,
+      [],
+      false,
+    );
   }
 
   /**
@@ -1888,9 +1895,13 @@ export class TokenRouter {
     if (!isModelAllowedByDownstreamPolicy(requestedModel, downstreamPolicy)) return null;
     await ensureSiteRuntimeHealthStateLoaded();
 
-    const match = await this.findRoute(requestedModel, downstreamPolicy);
-    if (!match) return null;
-    return await this.selectFromMatch(match, requestedModel, downstreamPolicy, excludeChannelIds, true, selectionConstraint);
+    return await this.selectAcrossRouteCandidates(
+      requestedModel,
+      downstreamPolicy,
+      excludeChannelIds,
+      true,
+      selectionConstraint,
+    );
   }
 
   async selectPreferredChannel(
@@ -1948,8 +1959,18 @@ export class TokenRouter {
     selectionConstraint?: TokenRouterSelectionConstraint,
   ): Promise<RouteDecisionExplanation> {
     await ensureSiteRuntimeHealthStateLoaded();
-    const match = await this.findRoute(requestedModel, downstreamPolicy);
-    return this.explainSelectionFromMatch(match, requestedModel, {
+    const candidates = await this.findRouteCandidates(requestedModel, downstreamPolicy);
+    const lastIndex = candidates.length - 1;
+    for (const [index, route] of candidates.entries()) {
+      const match = await this.loadRouteMatch(route);
+      const explanation = this.explainSelectionFromMatch(match, requestedModel, {
+        excludeChannelIds,
+        downstreamPolicy,
+        selectionConstraint,
+      });
+      if (explanation.selectedChannelId || index === lastIndex) return explanation;
+    }
+    return this.explainSelectionFromMatch(null, requestedModel, {
       excludeChannelIds,
       downstreamPolicy,
       selectionConstraint,
@@ -3176,11 +3197,20 @@ export class TokenRouter {
     );
   }
 
-  private async findRoute(
+  /**
+   * Every enabled route that exposes `model`, in resolution priority order.
+   *
+   * A model name can be exposed by more than one route (an aggregation group
+   * plus a direct route, for example). `findRoute` returns only the first
+   * match, so when every channel of that route is blocked by the downstream
+   * policy the model would appear to have no route at all. Callers that can
+   * fall back iterate this list instead.
+   */
+  private async findRouteCandidates(
     model: string,
     downstreamPolicy: DownstreamRoutingPolicy,
     forceRefresh = false,
-  ): Promise<RouteMatch | null> {
+  ): Promise<RouteRow[]> {
     let routes = await loadEnabledRoutes(Date.now(), forceRefresh);
 
     const supportedPatterns = Array.isArray(downstreamPolicy.supportedModels)
@@ -3193,17 +3223,66 @@ export class TokenRouter {
       routes = routes.filter((route) => allowSet.has(route.id));
     }
 
-    const matchedRoute = routes.find((route) => isExplicitGroupRoute(route) && isRouteDisplayNameMatch(model, route.displayName))
-      || routes.find((route) => (
+    const tiers: Array<(route: RouteRow) => boolean> = [
+      (route) => isExplicitGroupRoute(route) && isRouteDisplayNameMatch(model, route.displayName),
+      (route) => (
         !isExplicitGroupRoute(route)
         && isExactRouteModelPattern(route.modelPattern)
         && (route.modelPattern || '').trim() === model
-      ))
-      || routes.find((route) => !isExplicitGroupRoute(route) && isRouteDisplayNameMatch(model, route.displayName))
-      || routes.find((route) => !isExplicitGroupRoute(route) && matchesModelPattern(model, route.modelPattern));
+      ),
+      (route) => !isExplicitGroupRoute(route) && isRouteDisplayNameMatch(model, route.displayName),
+      (route) => !isExplicitGroupRoute(route) && matchesModelPattern(model, route.modelPattern),
+    ];
 
+    const ordered: RouteRow[] = [];
+    const seen = new Set<number>();
+    for (const tier of tiers) {
+      for (const route of routes) {
+        if (seen.has(route.id) || !tier(route)) continue;
+        seen.add(route.id);
+        ordered.push(route);
+      }
+    }
+    return ordered;
+  }
+
+  /**
+   * Resolve a channel, walking every route that exposes this model.
+   *
+   * When a route matches the name but none of its channels are eligible (the
+   * downstream key excludes that site, for example), try the next route with
+   * the same exposed name instead of reporting the model as unroutable.
+   */
+  private async selectAcrossRouteCandidates(
+    requestedModel: string,
+    downstreamPolicy: DownstreamRoutingPolicy,
+    excludeChannelIds: number[],
+    recordSelection: boolean,
+    selectionConstraint?: TokenRouterSelectionConstraint,
+  ): Promise<SelectedChannel | null> {
+    const candidates = await this.findRouteCandidates(requestedModel, downstreamPolicy);
+    for (const route of candidates) {
+      const match = await this.loadRouteMatch(route);
+      const picked = await this.selectFromMatch(
+        match,
+        requestedModel,
+        downstreamPolicy,
+        excludeChannelIds,
+        recordSelection,
+        selectionConstraint,
+      );
+      if (picked) return picked;
+    }
+    return null;
+  }
+
+  private async findRoute(
+    model: string,
+    downstreamPolicy: DownstreamRoutingPolicy,
+    forceRefresh = false,
+  ): Promise<RouteMatch | null> {
+    const [matchedRoute] = await this.findRouteCandidates(model, downstreamPolicy, forceRefresh);
     if (!matchedRoute) return null;
-
     return await this.loadRouteMatch(matchedRoute, forceRefresh);
   }
 

@@ -6,6 +6,7 @@ import {
   resolveProxyUrlFromExtraConfig,
 } from './accountExtraConfig.js';
 import { withSiteRecordProxyRequestInit } from './siteProxy.js';
+import { Sub2ApiAdapter } from './platforms/sub2api.js';
 
 export const SUB2API_MANAGED_REFRESH_LEAD_MS = 120 * 1000;
 
@@ -34,10 +35,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function parseSub2ApiRefreshPayload(payload: unknown): Sub2ApiRefreshedCredentials | null {
   if (!isRecord(payload)) return null;
-  const code = typeof payload.code === 'number'
-    ? payload.code
-    : (typeof payload.code === 'string' ? Number.parseInt(payload.code.trim(), 10) : Number.NaN);
-  if (!Number.isFinite(code) || code !== 0) return null;
+  // Deployments return either a numeric `0` or a string status such as "OK".
+  if (!Sub2ApiAdapter.isSuccessCode(payload.code)) return null;
   if (!isRecord(payload.data)) return null;
   const data = payload.data;
 
