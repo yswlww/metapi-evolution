@@ -609,14 +609,29 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
    * Parse the Sub2API { code, message, data } envelope.
    * code === 0 means success; anything else is an error.
    */
+  /**
+   * Envelope codes arrive in two shapes: the numeric `0` used by the original
+   * Sub2API releases, and a string status such as `"OK"` / `"UNAUTHORIZED"`
+   * used by newer deployments. Real deployments use both, so every envelope
+   * reader shares this one rule.
+   */
+  static isSuccessCode(code: unknown): boolean {
+    if (typeof code === 'number') return code === 0;
+    if (typeof code === 'string') {
+      const normalized = code.trim().toUpperCase();
+      return normalized === 'OK' || normalized === 'SUCCESS' || normalized === '0';
+    }
+    return false;
+  }
+
   private parseSub2ApiEnvelope<T>(body: any, endpoint: string): T {
     if (!body || typeof body !== 'object') {
       throw new Error(`Invalid response from ${endpoint}`);
     }
-    if (typeof body.code !== 'number') {
+    if (body.code === undefined || body.code === null) {
       throw new Error(`Invalid response format from ${endpoint}`);
     }
-    if (body.code !== 0) {
+    if (!Sub2ApiAdapter.isSuccessCode(body.code)) {
       const message = typeof body.message === 'string' && body.message.trim()
         ? body.message.trim()
         : `Error code ${body.code} from ${endpoint}`;
