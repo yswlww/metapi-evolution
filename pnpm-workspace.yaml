@@ -33,5 +33,5 @@ overrides:
   "esbuild@<0.25.0": "0.25.12"
   "esbuild@>=0.27.3 <0.28.1": "0.28.2"
   "vitepress>vite": "6.4.4"
-  "@electron/get>undici": "7.29.1"
-  "node-gyp>undici": "6.29.0"
+  "@electron/get>undici": "7.30.1"
+  "node-gyp>undici": "7.30.1"
