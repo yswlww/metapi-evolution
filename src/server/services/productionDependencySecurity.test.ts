@@ -10,11 +10,13 @@ function atLeast(version: string, minimum: string): boolean {
 }
 const floors: Record<string, (version: string) => string> = {
   'follow-redirects': () => '1.16.1',
-  fastify: () => '5.12.5', nodemailer: () => '10.0.9',
+  fastify: () => '5.12.5', nodemailer: () => '10.1.4',
   undici: () => '7.30.1',
   'brace-expansion': version => version.startsWith('1.') ? '1.1.21' : version.startsWith('2.') ? '2.1.7' : '5.0.12',
-  'ip-address': () => '10.7.1', dompurify: () => '3.4.16',
-  'fast-uri': version => version.startsWith('3.') ? '3.1.8' : '4.1.5',
+  'ip-address': () => '10.7.5', dompurify: () => '3.4.17',
+  // fast-uri 3.x, 4.0–4.2.2 and the shared 4.1.5 pin are all vulnerable to
+  // URI scheme spoofing through percent-encoded scheme decoding.
+  'fast-uri': version => version.startsWith('3.') ? '3.1.9' : '4.2.3',
   'shell-quote': () => '1.12.0', sharp: () => '0.35.5', vue: () => '3.5.43',
   '@vue/server-renderer': () => '3.5.43', 'source-map-js': () => '1.2.2',
   'http-cache-semantics': () => '4.3.0', joi: () => '18.2.9',
