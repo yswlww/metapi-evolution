@@ -71,9 +71,16 @@ describe('docker workflows', () => {
 
   it('uses an armv7-capable node base image in the Dockerfile', () => {
     const dockerfile = readFileSync(resolve(process.cwd(), 'docker/Dockerfile'), 'utf8');
+    const fromLines = dockerfile.match(/^FROM\s+\S+/gm) ?? [];
 
-    expect(dockerfile).toContain('FROM node:22-bookworm-slim AS builder');
-    expect(dockerfile).toContain('FROM node:22-bookworm-slim');
+    // Node 24+ stopped publishing linux/arm/v7 manifests, so the base must stay
+    // on the 22 line. The tag is pinned to an exact patch: a floating tag drifts
+    // onto whatever the registry serves next, including a vulnerable one.
+    expect(fromLines.length).toBeGreaterThan(0);
+    for (const line of fromLines) {
+      const image = line.replace(/^FROM\s+/, '');
+      expect(image, `${image} must stay on the Node 22 line for armv7`).toMatch(/^node:22\.\d+\.\d+-/);
+    }
   });
 
   it('avoids buildkit-only frontend syntax so managed docker builders can parse it reliably', () => {
