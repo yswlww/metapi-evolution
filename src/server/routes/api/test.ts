@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
-import { fetch, File as UndiciFile, FormData as UndiciFormData } from 'undici';
+import { fetch, FormData as UndiciFormData } from 'undici';
 import { config } from '../../config.js';
 import { readRuntimeResponseText } from '../../proxy-core/executors/types.js';
 import {
@@ -526,7 +526,9 @@ async function buildUpstreamRequestInit(
 
   if (envelope.requestKind === 'multipart') {
     const FormDataCtor = globalThis.FormData ?? UndiciFormData;
-    const FileCtor = globalThis.File ?? UndiciFile;
+    // undici 7 dropped the named `File` export; the runtime global is the
+    // supported constructor and is present on every supported Node version.
+    const FileCtor = globalThis.File;
     const formData = new FormDataCtor();
     for (const [field, value] of Object.entries(envelope.multipartFields || {})) {
       formData.append(field, value);

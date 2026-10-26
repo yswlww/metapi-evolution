@@ -11,7 +11,7 @@ function atLeast(version: string, minimum: string): boolean {
 const floors: Record<string, (version: string) => string> = {
   'follow-redirects': () => '1.16.1',
   fastify: () => '5.12.5', nodemailer: () => '10.0.9',
-  undici: version => version.startsWith('6.') ? '6.29.0' : '7.29.1',
+  undici: () => '7.30.1',
   'brace-expansion': version => version.startsWith('1.') ? '1.1.21' : version.startsWith('2.') ? '2.1.7' : '5.0.12',
   'ip-address': () => '10.7.1', dompurify: () => '3.4.16',
   'fast-uri': version => version.startsWith('3.') ? '3.1.8' : '4.1.5',
@@ -50,9 +50,21 @@ describe('dependency security floors', () => {
     }));
     expect(actual).toEqual(expected);
   });
-  it('retains the supported undici 6 runtime line rather than an untested major upgrade', async () => {
+  it('pins undici to a release that carries the TLS and decompression fixes', async () => {
     const manifest = JSON.parse(await readFile(new URL('../../../package.json', import.meta.url), 'utf8'));
-    expect(manifest.dependencies.undici).toMatch(/^6\.\d+\.\d+$/);
-    expect(atLeast(manifest.dependencies.undici, '6.29.0')).toBe(true);
+    // 7.30.1 is the first release covering the TLS 1.2 renegotiation DoS,
+    // the Agent TLS-option drop, excessive content-encoding DoS and the SRI
+    // algorithm-token bypass. The 6.x line received none of these.
+    expect(atLeast(manifest.dependencies.undici, '7.30.1')).toBe(true);
+    expect(manifest.dependencies.undici).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+  it('routes every transitive undici consumer to the patched release', async () => {
+    const manifest = JSON.parse(await readFile(new URL('../../../package.json', import.meta.url), 'utf8'));
+    for (const [parent, child] of Object.entries(manifest.overrides)) {
+      if (!child || typeof child !== 'object') continue;
+      const pinned = (child as Record<string, string>).undici;
+      if (pinned === undefined) continue;
+      expect(atLeast(pinned, '7.30.1'), `${parent}>undici`).toBe(true);
+    }
   });
 });
