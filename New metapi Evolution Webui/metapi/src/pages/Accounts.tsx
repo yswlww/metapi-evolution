@@ -475,7 +475,7 @@ export default function Accounts() {
               onClick={() => setAddAccountOpen((v) => !v)}
               className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-[color:var(--color-lime)] px-4 font-mono text-xs font-bold tracking-wider text-[color:var(--color-ink)] hover:opacity-90"
             >
-              <Plus size={13} /> ADD ACCOUNT
+              <Plus size={13} /> {t("ui.accounts.add_account")}
             </button>
           </div>
 

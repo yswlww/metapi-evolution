@@ -122,7 +122,9 @@ export default function Checkins() {
   }, [search, statusFilter, dateFrom, dateTo, checkins]);
 
   const successCount = checkins.filter((c) => c.status === "success").length;
-  const totalReward = checkins.reduce((a, c) => a + c.reward, 0);
+  // Sum in integer micro-units so accumulated float error cannot leak into the
+  // headline reward figure (e.g. 51.07000000000001).
+  const totalReward = checkins.reduce((a, c) => a + Math.round(c.reward * 1e6), 0) / 1e6;
 
   const handleTriggerAll = async () => {
     setTriggered(true);
@@ -155,7 +157,7 @@ export default function Checkins() {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatCard label={t("ui.checkin.today")} value={successCount} icon={<CheckCircle2 size={16} />} />
         <StatCard label={t("ui.checkin.failed")} value={checkins.filter((c) => c.status === "failure").length} icon={<XCircle size={16} />} />
-        <StatCard label={t("ui.checkin.reward")} value={`${totalReward}`} detail="points total" icon={<Calendar size={16} />} />
+        <StatCard label={t("ui.checkin.reward")} value={String(totalReward)} detail="points total" icon={<Calendar size={16} />} />
         <StatCard label={t("ui.checkin.success_rate")} value={checkins.length ? `${((successCount / checkins.length) * 100).toFixed(0)}%` : "—"} trend={{ label: successCount > 0 ? "on track" : "behind", tone: successCount > 0 ? "lime" : "amber" }} icon={<CheckCircle2 size={16} />} />
       </div>
 
@@ -197,7 +199,7 @@ export default function Checkins() {
               showSchedule ? "border-[color:var(--color-lime)]/40 bg-[color:var(--color-lime)]/10 text-[color:var(--color-lime)]" : "border-[color:var(--color-border)] text-[color:var(--color-muted)] hover:text-[color:var(--color-fg)]"
             }`}
           >
-            <Settings2 size={12} /> SCHEDULE
+            <Settings2 size={12} /> {t("ui.checkin.schedule")}
           </button>
         </div>
       </div>

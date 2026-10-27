@@ -7,7 +7,7 @@
 Bring together all your New API / One API / OneHub / Done Hub / Veloera / AxonHub / Sub2API sites
 into **one API Key, one endpoint** — with automatic model discovery, smart routing, and cost optimization.
 
-[Live Demo](#-live-demo) · [Docs](https://yswlww.github.io/metapi-evolution) · [Quick Start](#-quick-start) · [Download Desktop](https://github.com/yswlww/metapi-evolution/releases) · [Report an Issue](https://github.com/yswlww/metapi-evolution/issues)
+[Interface Preview](#-interface-preview) · [Docs](https://yswlww.github.io/metapi-evolution) · [Quick Start](#-quick-start) · [Download Desktop](https://github.com/yswlww/metapi-evolution/releases) · [Report an Issue](https://github.com/yswlww/metapi-evolution/issues)
 
 <p>
 <a href="https://github.com/yswlww/metapi-evolution/releases">
@@ -44,17 +44,68 @@ into **one API Key, one endpoint** — with automatic model discovery, smart rou
 
 ---
 
-## 🌐 Live Demo
+## 🌐 Interface Preview
 
-> Try Metapi Evolution without deploying — full-featured demo instance:
+The default Metapi Evolution interface — a dark-first design language with English / 简体中文 / 繁體中文, covering every management surface in one console.
 
-| | |
-|---|---|
-| 🔗 **Demo URL** | [metapi-t9od.onrender.com](https://metapi-t9od.onrender.com/) |
-| 🔑 **Admin Token** | `123456` |
+<p align="center">
+  <img src="docs/screenshots/landing.png" alt="Metapi Evolution landing page" width="100%"/>
+</p>
 
-> **⚠️ Security Notice**: This is a public demo. **Do NOT enter any real API keys, credentials, or site information.** Data may be reset at any time.
-> **ℹ️ Note**: Demo runs on Render free tier + OpenRouter free models (only `:free` suffixed models available). First visit may take 30-60s to wake up.
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/dashboard.png" alt="Dashboard"/>
+      <div><b>Dashboard</b> — balance, routing and live events at a glance</div>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/routes.png" alt="Smart routes"/>
+      <div><b>Smart Routes</b> — patterns, weighted selection, failover</div>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/screenshots/model-marketplace.png" alt="Model marketplace"/>
+      <div><b>Model Marketplace</b> — cross-site coverage, pricing, availability</div>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/sites.png" alt="Sites"/>
+      <div><b>Sites</b> — upstream sites, adapters and health</div>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/screenshots/accounts.png" alt="Accounts"/>
+      <div><b>Accounts</b> — multi-site accounts, credentials, connection mode</div>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/downstream-keys.png" alt="Downstream keys"/>
+      <div><b>Downstream Keys</b> — model allowlists, groups, usage and cost</div>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/screenshots/checkin.png" alt="Check-ins"/>
+      <div><b>Auto Check-in</b> — scheduled runs and reward history</div>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/monitor.png" alt="Uptime monitor"/>
+      <div><b>Uptime Monitor</b> — channel health and latency trends</div>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/screenshots/proxy-logs.png" alt="Proxy logs"/>
+      <div><b>Proxy Logs</b> — requests, token usage and cost detail</div>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/playground.png" alt="Playground"/>
+      <div><b>Playground</b> — exercise models straight from the console</div>
+    </td>
+  </tr>
+</table>
+
+> Screenshots are generated from fabricated demo data. No real site, credential or endpoint appears in them.
 
 ---
 
@@ -78,73 +129,7 @@ The AI ecosystem is seeing a growing number of aggregation relay stations based 
 - **Official presets**: Alibaba Cloud / Zhipu / Doubao Coding Plans, DeepSeek, Moonshot (Kimi), MiniMax, ModelScope
 - **OAuth connections**: Codex, Claude, Gemini CLI, Antigravity
 
-<details>
-<summary><strong>📊 Screenshots (click to expand)</strong></summary>
 
-<table>
-  <tr>
-    <td align="center">
-      <img src="docs/screenshots/dashboard.png" alt="dashboard" style="width:100%;height:auto;"/>
-      <div><b>Dashboard</b> — Balance distribution, spending trends, system overview</div>
-    </td>
-    <td align="center">
-      <img src="docs/screenshots/model-marketplace.png" alt="model-marketplace" style="width:100%;height:auto;"/>
-      <div><b>Model Marketplace</b> — Cross-site model coverage, pricing comparison, measured metrics</div>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="docs/screenshots/routes.png" alt="routes" style="width:100%;height:auto;"/>
-      <div><b>Smart Routing</b> — Multi-channel probability distribution, cost-priority routing</div>
-    </td>
-    <td align="center">
-      <img src="docs/screenshots/accounts.png" alt="accounts" style="width:100%;height:auto;"/>
-      <div><b>Account Management</b> — Multi-site multi-account, health state tracking</div>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="docs/screenshots/sites.png" alt="sites" style="width:100%;height:auto;"/>
-      <div><b>Site Management</b> — Upstream site configuration and status overview</div>
-    </td>
-    <td align="center">
-      <img src="docs/screenshots/tokens.png" alt="tokens" style="width:100%;height:auto;"/>
-      <div><b>Token Management</b> — API Token lifecycle management</div>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="docs/screenshots/playground.png" alt="playground" style="width:100%;height:auto;"/>
-      <div><b>Model Playground</b> — Interactive online model testing</div>
-    </td>
-    <td align="center">
-      <img src="docs/screenshots/checkin.png" alt="checkin" style="width:100%;height:auto;"/>
-      <div><b>Check-in Log</b> — Auto check-in status and reward tracking</div>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="docs/screenshots/proxy-logs.png" alt="proxy-logs" style="width:100%;height:auto;"/>
-      <div><b>Usage Logs</b> — Proxy request logs and cost breakdown</div>
-    </td>
-    <td align="center">
-      <img src="docs/screenshots/monitor.png" alt="monitor" style="width:100%;height:auto;"/>
-      <div><b>Availability Monitor</b> — Channel health real-time monitoring</div>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="docs/screenshots/settings.png" alt="settings" style="width:100%;height:auto;"/>
-      <div><b>System Settings</b> — Global parameters and security configuration</div>
-    </td>
-    <td align="center">
-      <img src="docs/screenshots/notification-settings.png" alt="notification-settings" style="width:100%;height:auto;"/>
-      <div><b>Notification Settings</b> — Multi-channel alert and push configuration</div>
-    </td>
-  </tr>
-</table>
-
-</details>
 
 ---
 

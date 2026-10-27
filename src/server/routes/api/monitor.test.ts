@@ -322,6 +322,29 @@ describe('monitor routes', () => {
     ]);
   });
 
+  it('strips the stored metadata envelope from recent failure messages', async () => {
+    const siteId = await insertSite({ name: 'Envelope Site' });
+    const accountId = await insertAccount(siteId, { username: 'envelope-account' });
+
+    await db.insert(schema.proxyLogs).values({
+      accountId,
+      modelRequested: 'gpt-4o-mini',
+      status: 'failed',
+      httpStatus: 502,
+      errorMessage: '[usage:upstream] [client:cursor] upstream connection reset',
+      createdAt: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+    }).run();
+
+    const response = await app.inject({ method: 'GET', url: '/api/monitor/overview?refresh=1' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().traffic24h.recentFailures).toEqual([
+      expect.objectContaining({
+        errorMessage: 'upstream connection reset',
+      }),
+    ]);
+  });
+
   it.each([
     ['GET', '/api/monitor/config'],
     ['PUT', '/api/monitor/config'],

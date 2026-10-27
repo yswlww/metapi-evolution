@@ -7,7 +7,7 @@
 把你在各处注册的 New API / One API / OneHub / Done Hub / Veloera / AnyRouter / Sub2API 等站点，
 汇聚成 **一个 API Key、一个入口**——自动发现模型、智能路由、成本最优。
 
-[在线体验](#-在线体验) · [文档](https://yswlww.github.io/metapi-evolution) · [快速开始](#-快速开始) · [下载桌面版](https://github.com/yswlww/metapi-evolution/releases) · [报告问题](https://github.com/yswlww/metapi-evolution/issues)
+[界面預覽](#-界面預覽) · [文档](https://yswlww.github.io/metapi-evolution) · [快速开始](#-快速开始) · [下载桌面版](https://github.com/yswlww/metapi-evolution/releases) · [报告问题](https://github.com/yswlww/metapi-evolution/issues)
 
 <p>
 <a href="https://github.com/yswlww/metapi-evolution/releases">
@@ -44,17 +44,69 @@
 
 ---
 
-## 🌐 在线体验
+## 🌐 界面預覽
 
-> 无需部署，直接体验 Metapi Evolution 的完整功能：
+Metapi Evolution 的預設界面——深色為主的設計語言，支援簡中 / 繁中 / English 三語切換，全部管理功能都在同一個控制台內完成。
 
-|                        |                                                            |
-| ---------------------- | ---------------------------------------------------------- |
-| 🔗**体验地址**   | [metapi-t9od.onrender.com](https://metapi-t9od.onrender.com/) |
-| 🔑**管理员令牌** | `123456`                                                 |
+<p align="center">
+  <img src="docs/screenshots/landing.png" alt="Metapi Evolution 首頁" width="100%"/>
+</p>
 
-> **⚠️ 安全提示**：体验站为公共环境，**请勿填入你的 API Key、账号密码或站点信息**。数据随时可能被清空。
-> **ℹ️ 说明**：体验站使用 Render 免费方案 + OpenRouter 免费模型（仅 `:free` 后缀的模型可用）。
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/dashboard.png" alt="儀表板"/>
+      <div><b>儀表板</b> — 餘額、路由與即時事件總覽</div>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/routes.png" alt="智慧路由"/>
+      <div><b>智慧路由</b> — 正則比對、加權隨機、多通道故障轉移</div>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/screenshots/model-marketplace.png" alt="模型廣場"/>
+      <div><b>模型廣場</b> — 跨站模型覆蓋、定價與可用性</div>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/sites.png" alt="站點"/>
+      <div><b>站點管理</b> — 上游站點、適配器與健康狀態</div>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/screenshots/accounts.png" alt="帳號"/>
+      <div><b>帳號管理</b> — 多站點多帳號、憑證與連線模式</div>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/downstream-keys.png" alt="下游密鑰"/>
+      <div><b>下游密鑰</b> — 模型白名單、分組、用量與成本</div>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/screenshots/checkin.png" alt="簽到"/>
+      <div><b>自動簽到</b> — 排程執行與獎勵記錄</div>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/monitor.png" alt="可用性監控"/>
+      <div><b>可用性監控</b> — 通道健康度與延遲趨勢</div>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/screenshots/proxy-logs.png" alt="代理日誌"/>
+      <div><b>代理日誌</b> — 請求記錄、Token 用量與成本明細</div>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/playground.png" alt="操練場"/>
+      <div><b>模型操練場</b> — 直接在控制台測試模型</div>
+    </td>
+  </tr>
+</table>
+
+> 以上截圖以虛構的示範資料產生，不含任何真實站點或憑證。
+
 
 ---
 
@@ -80,9 +132,9 @@
 
 ---
 
-## 🖥️ 界面
+## 🖥️ 兩套界面
 
-现在，**Metapi Evolution 界面（默认）** 与旧版参考界面同时打包在同一个镜像里，共用同一套后端与同一份管理员登录状态：
+**Metapi Evolution 界面（默认）** 与旧版参考界面同时打包在同一个镜像里，共用同一套后端与同一份管理员登录状态：
 
 | 路径 | 界面 | 说明 |
 | --- | --- | --- |
@@ -98,73 +150,7 @@
 - **管理能力**：账号 / 令牌的完整编辑与批量操作、站点排序与代理、下游密钥的权限清空与移动端批量选择
 - **可访问性**：语义化标签、原生表单控件、键盘操作与 `prefers-color-scheme` 主题跟随
 
-<details>
-<summary><strong>📊 界面预览（点击展开）</strong></summary>
 
-<table>
-  <tr>
-    <td align="center">
-      <img src="docs/screenshots/dashboard.png" alt="dashboard" style="width:100%;height:auto;"/>
-      <div><b>仪表盘</b> — 余额分布、消费趋势、系统概览</div>
-    </td>
-    <td align="center">
-      <img src="docs/screenshots/model-marketplace.png" alt="model-marketplace" style="width:100%;height:auto;"/>
-      <div><b>模型广场</b> — 跨站模型覆盖、定价对比、实测指标</div>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="docs/screenshots/routes.png" alt="routes" style="width:100%;height:auto;"/>
-      <div><b>智能路由</b> — 多通道概率分配、成本优先选路</div>
-    </td>
-    <td align="center">
-      <img src="docs/screenshots/accounts.png" alt="accounts" style="width:100%;height:auto;"/>
-      <div><b>账号管理</b> — 多站点多账号、健康状态追踪</div>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="docs/screenshots/sites.png" alt="sites" style="width:100%;height:auto;"/>
-      <div><b>站点管理</b> — 上游站点配置与状态一览</div>
-    </td>
-    <td align="center">
-      <img src="docs/screenshots/tokens.png" alt="tokens" style="width:100%;height:auto;"/>
-      <div><b>令牌管理</b> — API Token 生命周期管理</div>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="docs/screenshots/playground.png" alt="playground" style="width:100%;height:auto;"/>
-      <div><b>模型操练场</b> — 在线交互式模型测试</div>
-    </td>
-    <td align="center">
-      <img src="docs/screenshots/checkin.png" alt="checkin" style="width:100%;height:auto;"/>
-      <div><b>签到记录</b> — 自动签到状态与奖励追踪</div>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="docs/screenshots/proxy-logs.png" alt="proxy-logs" style="width:100%;height:auto;"/>
-      <div><b>使用日志</b> — 代理请求日志与成本明细</div>
-    </td>
-    <td align="center">
-      <img src="docs/screenshots/monitor.png" alt="monitor" style="width:100%;height:auto;"/>
-      <div><b>可用性监控</b> — 通道健康度实时监测</div>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="docs/screenshots/settings.png" alt="settings" style="width:100%;height:auto;"/>
-      <div><b>系统设置</b> — 全局参数与安全配置</div>
-    </td>
-    <td align="center">
-      <img src="docs/screenshots/notification-settings.png" alt="notification-settings" style="width:100%;height:auto;"/>
-      <div><b>通知设置</b> — 多渠道告警与推送配置</div>
-    </td>
-  </tr>
-</table>
-
-</details>
 
 ---
 

@@ -44,7 +44,7 @@ export default function Marketplace() {
         actions={
           <button type="button" onClick={() => showToast("Marketplace refreshed (prototype).")}
             className="flex h-9 items-center gap-2 rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-panel)]/50 px-4 font-mono text-xs tracking-wider text-[color:var(--color-fg)] hover:border-[color:var(--color-border-bright)]">
-            <RefreshCw size={13} /> REFRESH
+            <RefreshCw size={13} /> {t("ui.models.refresh")}
           </button>
         }
       />
