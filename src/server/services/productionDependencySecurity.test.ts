@@ -37,6 +37,36 @@ describe('dependency security floors', () => {
     }
     expect(violations).toEqual([]);
   });
+  it('resolves the same direct dependency versions in the npm and pnpm lockfiles', async () => {
+    // Dependabot reads pnpm-lock.yaml. A manifest bump that only updates
+    // package-lock.json leaves pnpm advertising the old, vulnerable version and
+    // keeps the alert open even though npm builds are already patched.
+    const manifest = JSON.parse(await readFile(new URL('../../../package.json', import.meta.url), 'utf8'));
+    const lock = JSON.parse(await readFile(new URL('../../../package-lock.json', import.meta.url), 'utf8')) as {
+      packages: Record<string, { version?: string }>;
+    };
+    const pnpmLock = await readFile(new URL('../../../pnpm-lock.yaml', import.meta.url), 'utf8');
+
+    const pnpmImporter = pnpmLock.slice(
+      pnpmLock.indexOf('\nimporters:'),
+      pnpmLock.indexOf('\npackages:'),
+    );
+    const drift: string[] = [];
+    for (const name of Object.keys({ ...manifest.dependencies, ...manifest.devDependencies })) {
+      const npmVersion = lock.packages[`node_modules/${name}`]?.version;
+      if (!npmVersion) continue;
+      const entry = new RegExp(
+        `\\n      ${name.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}:\\n        specifier: [^\\n]+\\n        version: ([^\\n(]+)`,
+      ).exec(pnpmImporter);
+      if (!entry) continue;
+      const pnpmVersion = entry[1].trim();
+      // Aliased specifiers (`"x": "npm:typescript@^6"`) resolve to a different
+      // package name in pnpm; compare only the version tail.
+      const comparable = pnpmVersion.replace(/^[a-z@][^@]*@/i, '');
+      if (comparable !== npmVersion) drift.push(`${name}: npm ${npmVersion} vs pnpm ${pnpmVersion}`);
+    }
+    expect(drift).toEqual([]);
+  });
   it('keeps npm and pnpm security overrides identical', async () => {
     const manifest = JSON.parse(await readFile(new URL('../../../package.json', import.meta.url), 'utf8'));
     const workspace = await readFile(new URL('../../../pnpm-workspace.yaml', import.meta.url), 'utf8');
