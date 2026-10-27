@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 const repoRoot = resolve(import.meta.dirname, '../..');
 const manifests = [
@@ -53,22 +53,52 @@ describe('dependency lockfile consistency', () => {
         const manifestPath = join(repoRoot, manifestName);
         if (!existsSync(manifestPath)) continue;
         const dir = mkdtempSync(join(tmpdir(), 'metapi-npm-ci-'));
-        for (const file of [manifestName, lockName]) {
-          const target = join(dir, file);
-          mkdirSync(dirname(target), { recursive: true });
-          writeFileSync(target, readFileSync(join(repoRoot, file)));
+        // The container writes node_modules as root, which the host user cannot
+        // delete. Run it as the invoking user and always remove the tree, or a
+        // few runs fill /tmp with ~900MB of leaked npm installs.
+        const hostUid = typeof process.getuid === 'function' ? process.getuid() : 0;
+        const hostGid = typeof process.getgid === 'function' ? process.getgid() : 0;
+        try {
+          for (const file of [manifestName, lockName]) {
+            const target = join(dir, file);
+            mkdirSync(dirname(target), { recursive: true });
+            writeFileSync(target, readFileSync(join(repoRoot, file)));
+          }
+          const workdir = dirname(manifestName);
+          const result = spawnSync(
+            'docker',
+            [
+              'run', '--rm',
+              '--user', `${hostUid}:${hostGid}`,
+              '-e', 'HOME=/w',
+              '-v', `${dir}:/w`,
+              '-w', `/w/${workdir}`,
+              dockerBuilderImage(),
+              'npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund',
+            ],
+            { encoding: 'utf8', timeout: 9 * 60_000 },
+          );
+          const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+          expect(output, `${manifestName} install output`).not.toContain('from lock file');
+          expect(result.status, `${manifestName}: ${output.slice(-500)}`).toBe(0);
+        } finally {
+          removeTempTree(dir);
         }
-        const workdir = dirname(manifestName);
-        const result = spawnSync(
-          'docker',
-          ['run', '--rm', '-v', `${dir}:/w`, '-w', `/w/${workdir}`, dockerBuilderImage(), 'npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund'],
-          { encoding: 'utf8', timeout: 9 * 60_000 },
-        );
-        const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
-        expect(output, `${manifestName} install output`).not.toContain('from lock file');
-        expect(result.status, `${manifestName}: ${output.slice(-500)}`).toBe(0);
       }
     },
     15 * 60_000,
   );
 });
+
+function removeTempTree(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // Leftovers from an older root-running version of this test can be owned by
+    // root; sweep them with the same container rather than leaving them behind.
+    spawnSync('docker', ['run', '--rm', '-v', `${dirname(dir)}:/t`, 'alpine', 'rm', '-rf', `/t/${basename(dir)}`], {
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+  }
+}
