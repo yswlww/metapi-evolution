@@ -3,6 +3,7 @@ import { db, schema } from '../../db/index.js';
 import { gte } from 'drizzle-orm';
 import { createRateLimitGuard } from '../../middleware/requestRateLimit.js';
 import { getAccountsSnapshot } from '../../services/accountsOverviewService.js';
+import { parseProxyLogMessageMeta } from '../../services/proxyLogMessage.js';
 
 const limitMonitorOverviewRead = createRateLimitGuard({
   bucket: 'monitor-overview-read',
@@ -165,7 +166,9 @@ async function buildMonitorOverview(refresh: boolean) {
         siteName: account?.site?.name || (account ? siteById.get(account.siteId)?.name : null) || null,
         accountUsername: account?.username || null,
         httpStatus: log.httpStatus,
-        errorMessage: log.errorMessage,
+        // Stored messages carry an internal metadata envelope
+        // ("[usage:upstream] [client:...] …"); surface only the human text.
+        errorMessage: parseProxyLogMessageMeta(log.errorMessage || '').messageText || null,
         createdAt: log.createdAt,
       };
     });

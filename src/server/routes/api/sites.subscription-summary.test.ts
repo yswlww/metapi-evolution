@@ -102,6 +102,7 @@ describe('sites route subscription summary aggregation', () => {
     expect(response.statusCode).toBe(200);
     const body = response.json() as Array<{
       totalBalance: number;
+      accountCount: number;
       subscriptionSummary: {
         activeCount: number;
         totalUsedUsd: number;
@@ -115,6 +116,8 @@ describe('sites route subscription summary aggregation', () => {
 
     expect(body).toHaveLength(1);
     expect(body[0]?.totalBalance).toBe(15);
+    // The site card renders this count; it must reflect attached accounts.
+    expect(body[0]?.accountCount).toBe(2);
     expect(body[0]?.subscriptionSummary).toEqual({
       activeCount: 2,
       totalUsedUsd: 5,
