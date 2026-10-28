@@ -1,6 +1,8 @@
 node_modules/
 dist/
-release/
+# electron-builder output at the repo root only. Anchored so that source
+# directories named "release" (scripts/release) are not swallowed.
+/release/
 data/*
 !data/.gitkeep
 .env

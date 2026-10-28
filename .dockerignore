@@ -7,3 +7,13 @@ data
 docs
 .github
 *.log
+/tmp
+/release
+/release-bundles
+latestsessions.txt
+New metapi Evolution Webui/api-snap
+New metapi Evolution Webui/downloaded
+New metapi Evolution Webui/*.txt
+New metapi Evolution Webui/*.zip
+New metapi Evolution Webui/site.html
+**/node_modules

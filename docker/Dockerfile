@@ -19,40 +19,49 @@ RUN npm rebuild esbuild sharp better-sqlite3 --no-audit --no-fund
 COPY . .
 RUN npm run build:web && npm run build:server
 RUN npm prune --omit=dev --no-audit --no-fund
+RUN node scripts/release/buildBundle.mjs --manifest-only
 
-FROM node:22.23.4-bookworm-slim
+# Release assets and the runtime image share this exact native build and Node
+# executable, including both frontend entrypoints and generated DB assets.
+FROM builder AS bundle-builder
+ARG TARGETARCH
+ARG METAPI_BUNDLE_VERSION
+RUN node scripts/release/buildBundle.mjs --arch "$TARGETARCH" --version "${METAPI_BUNDLE_VERSION:-$(node -p 'require("./package.json").version')}" --out /release-bundles
+
+FROM scratch AS server-bundle
+COPY --from=bundle-builder /release-bundles/ /
+
+FROM node:22.23.4-bookworm-slim AS runtime
 
 WORKDIR /app
 
 ARG TARGETARCH
 ARG TARGETVARIANT
-ARG KUBECTL_VERSION=v1.31.8
-ARG HELM_VERSION=v3.18.6
 
+# No kubectl or helm here any more: local runtime upgrades (#622) replace the
+# Kubernetes deploy helper, so the runtime image carries no cluster tooling.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl tar gzip \
+  && apt-get install -y --no-install-recommends ca-certificates tar gzip \
+  && rm -rf /var/lib/apt/lists/* \
   && case "$TARGETARCH" in \
-    amd64|arm64) export ARCH="$TARGETARCH" ;; \
+    amd64|arm64) ;; \
     arm) \
-      if [ "${TARGETVARIANT:-}" = "v7" ]; then \
-        export ARCH="arm"; \
-      else \
+      if [ "${TARGETVARIANT:-}" != "v7" ]; then \
         echo "Unsupported TARGETARCH/TARGETVARIANT: $TARGETARCH/${TARGETVARIANT:-}" >&2; exit 1; \
       fi ;; \
     *) echo "Unsupported TARGETARCH/TARGETVARIANT: $TARGETARCH/${TARGETVARIANT:-}" >&2; exit 1 ;; \
-  esac \
-  && curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl" \
-  && chmod +x /usr/local/bin/kubectl \
-  && curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz" -o /tmp/helm.tgz \
-  && tar -xzf /tmp/helm.tgz -C /tmp \
-  && mv "/tmp/linux-${ARCH}/helm" /usr/local/bin/helm \
-  && chmod +x /usr/local/bin/helm \
-  && rm -rf /tmp/helm.tgz "/tmp/linux-${ARCH}" /var/lib/apt/lists/*
+  esac
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/drizzle ./drizzle
+COPY --from=builder /app/runtime-manifest.json ./runtime-manifest.json
+
+# Image-owned supervisor primitives are stable while current/previous point at
+# downloaded releases. Keep the source layout so relative imports stay valid.
+COPY --from=builder /app/scripts/release/runtimeRunner.mjs ./scripts/release/runtimeRunner.mjs
+COPY --from=builder /app/src/shared/localUpdate*.js ./src/shared/
 
 RUN mkdir -p /app/data
 
@@ -60,5 +69,6 @@ EXPOSE 4000
 
 ENV NODE_ENV=production
 ENV DATA_DIR=/app/data
+ENV METAPI_IMAGE_ROOT=/app
 
-CMD ["sh", "-c", "node dist/server/db/migrate.js && node dist/server/index.js"]
+CMD ["node", "/app/scripts/release/runtimeRunner.mjs"]

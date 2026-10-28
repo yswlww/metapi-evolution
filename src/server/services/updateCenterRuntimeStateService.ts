@@ -2,8 +2,33 @@ import { eq } from 'drizzle-orm';
 
 import { db, schema } from '../db/index.js';
 import { upsertSetting } from '../db/upsertSetting.js';
-import type { UpdateCenterHelperStatus } from './updateCenterHelperClient.js';
 import type { UpdateCenterVersionCandidate, UpdateCenterVersionSource } from './updateCenterVersionService.js';
+
+/**
+ * Snapshot of the cluster deploy helper, kept only so runtime state persisted
+ * before the local-upgrade migration still deserialises. New code never writes
+ * one; local upgrades report their state through update-state.json instead.
+ */
+export type UpdateCenterHelperStatus = {
+  ok: boolean;
+  releaseName: string | null;
+  namespace: string | null;
+  revision: string | null;
+  imageRepository: string | null;
+  imageTag: string | null;
+  imageDigest: string | null;
+  healthy: boolean;
+  history?: Array<{
+    revision: string;
+    updatedAt: string | null;
+    status: string | null;
+    description: string | null;
+    imageRepository: string | null;
+    imageTag: string | null;
+    imageDigest: string | null;
+  }>;
+  error?: string;
+};
 
 export type UpdateCenterStatusSnapshot = {
   githubRelease: UpdateCenterVersionCandidate | null;

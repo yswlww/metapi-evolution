@@ -9,5 +9,5 @@ export function isPublicApiRoute(url: string): boolean {
 export async function registerDesktopRoutes(app: FastifyInstance) {
   app.get(DESKTOP_HEALTH_ROUTE, {
     config: { rateLimit: false },
-  }, async () => ({ ok: true }));
+  }, async () => ({ ok: true, ...(process.env.METAPI_RUNTIME_BOOT_ID ? { runtimeBootId: process.env.METAPI_RUNTIME_BOOT_ID } : {}) }));
 }

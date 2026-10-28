@@ -71,16 +71,21 @@ describe('docker workflows', () => {
 
   it('uses an armv7-capable node base image in the Dockerfile', () => {
     const dockerfile = readFileSync(resolve(process.cwd(), 'docker/Dockerfile'), 'utf8');
-    const fromLines = dockerfile.match(/^FROM\s+\S+/gm) ?? [];
+    const fromLines = dockerfile.match(/^FROM\s+\S+(?:\s+AS\s+\S+)?/gm) ?? [];
 
-    // Node 24+ stopped publishing linux/arm/v7 manifests, so the base must stay
-    // on the 22 line. The tag is pinned to an exact patch: a floating tag drifts
-    // onto whatever the registry serves next, including a vulnerable one.
+    // Only external base images select a Node runtime. Stage aliases inherit
+    // that runtime, while scratch is an artifact-export stage, not an image
+    // we execute. The final runnable stage must still use Node 22 for armv7.
     expect(fromLines.length).toBeGreaterThan(0);
+    const stages = new Set<string>();
     for (const line of fromLines) {
-      const image = line.replace(/^FROM\s+/, '');
-      expect(image, `${image} must stay on the Node 22 line for armv7`).toMatch(/^node:22\.\d+\.\d+-/);
+      const [, image, , alias] = line.split(/\s+/);
+      if (image !== 'scratch' && !stages.has(image)) {
+        expect(image, `${image} must stay on the Node 22 line for armv7`).toMatch(/^node:22\.\d+\.\d+-/);
+      }
+      if (alias) stages.add(alias);
     }
+    expect(fromLines.at(-1)).not.toMatch(/^FROM\s+scratch/);
   });
 
   it('avoids buildkit-only frontend syntax so managed docker builders can parse it reliably', () => {

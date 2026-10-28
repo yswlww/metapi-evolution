@@ -207,26 +207,26 @@ describe('settings parity interactions', () => {
     expect(JSON.stringify(renderer!.toJSON())).toContain('Restart required');
   });
   it('saves update config and restores cancelled config edits', async () => {
-    const config = {enabled: true, helperBaseUrl: 'https://helper.test', namespace: 'default', releaseName: 'metapi', chartRef: 'chart', imageRepository: 'owner/metapi', githubReleasesEnabled: true, dockerHubTagsEnabled: true, defaultDeploySource: 'github-release' as const};
+    const config = {enabled: true, githubReleasesEnabled: true, dockerHubTagsEnabled: true, defaultDeploySource: 'github-release' as const};
     fixture.getUpdateCenterStatus.mockResolvedValue({currentVersion: '1.4.2', config});
     fixture.saveUpdateConfig.mockImplementation(async value => ({config: value}));
     await render(<UpdateCenter />);
-    await act(async () => field('Deploy helper URL').props.onChange({target: {value: 'https://edited.test'}}));
-    await click('ui.common.cancel'); expect(field('Deploy helper URL').props.value).toBe('https://helper.test');
-    await act(async () => field('Deploy helper URL').props.onChange({target: {value: 'https://edited.test'}}));
+    await act(async () => field('Default deploy source', 'select').props.onChange({target: {value: 'docker-hub-tag'}}));
+    await click('ui.common.cancel');
+    expect(field('Default deploy source', 'select').props.value).toBe('github-release');
+    await act(async () => field('Default deploy source', 'select').props.onChange({target: {value: 'docker-hub-tag'}}));
     await click('ui.common.save');
-    expect(fixture.saveUpdateConfig).toHaveBeenCalledWith({...config, helperBaseUrl: 'https://edited.test'});
+    expect(fixture.saveUpdateConfig).toHaveBeenCalledWith({...config, defaultDeploySource: 'docker-hub-tag'});
   });
-  it('deploys Docker tags and rolls back a selected historical revision', async () => {
-    const status = {currentVersion: '1.4.2', config: {enabled: true, defaultDeploySource: 'github-release'}, dockerHubRecentTags: [{tagName: 'v1.4.3', displayVersion: '1.4.3', digest: 'sha256:abc'}], helper: {revision: '8', history: [{revision: '7', imageTag: 'v1.4.1'}, {revision: '8', imageTag: 'v1.4.2'}]}, lastFinishedTask: {id: 'task-1'}};
+  it('deploys a tag and rolls back to the previous release', async () => {
+    const status = {currentVersion: '1.4.2', config: {enabled: true, defaultDeploySource: 'github-release'}, dockerHubRecentTags: [{tagName: 'v1.4.3', displayVersion: '1.4.3', digest: 'sha256:abc'}], selfUpgrade: {supported: true, reason: null, arch: 'x64'}, localUpdate: {canRollback: true}, lastFinishedTask: {id: 'task-1'}};
     fixture.getUpdateCenterStatus.mockResolvedValue(status); fixture.deployUpdateCenter.mockResolvedValue({task: {id: 'task-1'}}); fixture.rollbackUpdateCenter.mockResolvedValue({task: {id: 'task-1'}});
     await render(<UpdateCenter />);
     await act(async () => field('Deploy source', 'select').props.onChange({target: {value: 'docker-hub-tag'}}));
     await click('ui.about.deploy');
     expect(fixture.deployUpdateCenter).toHaveBeenCalledWith({source: 'docker-hub-tag', targetTag: 'v1.4.3', targetDigest: 'sha256:abc'});
-    await act(async () => field('Historical revision', 'select').props.onChange({target: {value: '7'}}));
     await click('ui.about.rollback');
-    expect(fixture.rollbackUpdateCenter).toHaveBeenCalledWith({targetRevision: '7'});
+    expect(fixture.rollbackUpdateCenter).toHaveBeenCalledWith();
     expect(JSON.stringify(renderer!.toJSON())).toContain('real deployment log');
   });
 });

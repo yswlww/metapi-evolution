@@ -1,0 +1,37 @@
+import type { UpdateState } from './localUpdateContract.js';
+export type LocalUpdatePaths = {
+  runtimeRoot: string;
+  releasesDir: string;
+  currentLink: string;
+  previousLink: string;
+  statePath: string;
+  lockPath: string;
+  tasksDir: string;
+};
+export type LocalUpdateTask = {
+  id: string;
+  type: string;
+  title: string;
+  status: 'pending' | 'running' | 'succeeded' | 'failed';
+  message: string;
+  error: string | null;
+  result: unknown;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  logs: Array<{ seq: number; message: string; createdAt: string }>;
+};
+export declare function resolveLocalUpdatePaths(dataDir: string): LocalUpdatePaths;
+export declare function atomicWriteJson(path: string, value: unknown): Promise<void>;
+export declare function readUpdateState(paths: LocalUpdatePaths): Promise<UpdateState>;
+export declare function writeUpdateState(paths: LocalUpdatePaths, state: UpdateState): Promise<UpdateState>;
+export declare function readSymlinkIfPresent(path: string): Promise<string | null>;
+export declare function switchSymlink(path: string, target: string): Promise<void>;
+export declare function resolveRelease(paths: LocalUpdatePaths, target: string): Promise<string>;
+export declare function readCurrentVersion(path: string): Promise<string | null>;
+export declare function sweepStagingDirs(paths: LocalUpdatePaths): Promise<string[]>;
+export declare function resolveLocalUpdateTaskPath(paths: LocalUpdatePaths, id: string): string;
+export declare function readLocalUpdateTask(paths: LocalUpdatePaths, id: string): Promise<LocalUpdateTask | null>;
+export declare function writeLocalUpdateTask(paths: LocalUpdatePaths, task: LocalUpdateTask): Promise<LocalUpdateTask>;
+export declare function finishLocalUpdateTask(paths: LocalUpdatePaths, state: UpdateState): Promise<void>;

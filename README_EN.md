@@ -121,6 +121,7 @@ The AI ecosystem is seeing a growing number of aggregation relay stations based 
 | 📊 Balances scattered everywhere | **Centralized dashboard** — at-a-glance overview with low-balance alerts |
 | ✅ Daily check-ins across sites | **Auto check-in** — scheduled execution with reward tracking |
 | 🤷 Don't know which site has which models | **Auto model discovery** — new upstream models appear with zero config |
+| ⬆️ Updating a single container shouldn't require a cluster | **[In-app upgrades](docs/update-center.md)** — verified release bundles, supervised restarts and one-shot failure rollback (Linux amd64 / arm64) |
 
 **Supported upstreams** go beyond traditional aggregation panels:
 

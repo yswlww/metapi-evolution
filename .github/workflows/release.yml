@@ -265,9 +265,44 @@ jobs:
             release/builder-debug.yml
           if-no-files-found: error
 
+  build-server-bundle:
+    name: Build Server Bundle (${{ matrix.arch }})
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build native server bundle in the Docker runtime environment
+        env:
+          BUNDLE_VERSION: ${{ github.ref_name }}
+        run: |
+          version_arg=""
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then version_arg="--build-arg METAPI_BUNDLE_VERSION=$BUNDLE_VERSION"; fi
+          docker buildx build --file docker/Dockerfile --target server-bundle \
+            --platform linux/${{ matrix.arch }} $version_arg \
+            --output type=local,dest=release-bundles .
+
+      - name: Upload server bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: metapi-server-bundle-${{ github.run_id }}-${{ matrix.arch }}
+          path: release-bundles/*
+          if-no-files-found: error
+
   publish-release:
     name: Publish GitHub Release
-    needs: build-packages
+    needs: [build-packages, build-server-bundle]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     if: startsWith(github.ref, 'refs/tags/')
@@ -278,6 +313,11 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
+
+      - name: Combine and verify architecture checksums
+        run: |
+          cat release-assets/metapi-evolution-*.tar.gz.sha256 > release-assets/checksums.txt
+          cd release-assets && sha256sum -c checksums.txt
 
       - name: Show release files
         run: ls -la release-assets

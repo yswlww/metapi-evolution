@@ -115,6 +115,30 @@ jobs:
       - name: Build server
         run: npm run build:server
 
+  runtime-upgrade:
+    name: Runtime Upgrade (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Build the image and a native candidate bundle
+        run: |
+          docker buildx build --file docker/Dockerfile --target runtime --load -t metapi-runtime:test .
+          docker buildx build --file docker/Dockerfile --target server-bundle --build-arg METAPI_BUNDLE_VERSION=99.0.0 --output type=local,dest=runtime-bundles .
+      - name: Rehearse boot, activation and rollback with the packaged runtime
+        run: node scripts/release/smokeRuntimeUpgrade.mjs --image metapi-runtime:test --bundles runtime-bundles
+
   build-desktop:
     name: Build Desktop
     runs-on: ubuntu-latest
