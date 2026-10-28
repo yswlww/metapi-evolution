@@ -1,476 +1,248 @@
-/**
- * Local (in-container) runtime upgrade orchestration for #622.
- *
- * Replaces the "ask a Kubernetes helper to run `helm upgrade`" chain with:
- * resolve -> download -> verify -> stage -> switch. The switch is a symlink
- * rename, so it is atomic; the *health* of the new version is proven later by
- * the runner on next boot (see Phase 2), which is also where rollback lives.
- *
- * Everything mutates under `<DATA_DIR>/runtime`:
- *   releases/<version>/        immutable unpacked bundle
- *   releases/<version>.staging scratch, swept on boot
- *   current -> releases/<v>    the only mutable pointer
- *   previous -> releases/<v>   rollback target
- *   update-state.json          in-flight attempt, survives process restart
- */
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
-import {
-  lstat,
-  mkdir,
-  readdir,
-  readFile,
-  readlink,
-  rename,
-  rm,
-  stat,
-  symlink,
-  writeFile,
-  access,
-  constants as fsConstants,
-} from 'node:fs/promises';
-import { join } from 'node:path';
-import { Readable } from 'node:stream';
+import { access, constants, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, join, posix, relative, resolve } from 'node:path';
+import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { promisify } from 'node:util';
 import { fetch } from 'undici';
-
+import * as tar from 'tar';
+import { createUpdateState, isActiveUpdatePhase, normalizeLocalUpdateVersion, localUpdateBundleFilename, toLocalBundleArch, resolveSelfUpgradeSupport, type SelfUpgradeSupport, type UpdateSourceKind, type UpdateState } from '../../shared/localUpdateContract.js';
 import {
-  createUpdateState,
-  isActiveUpdatePhase,
-  resolveSelfUpgradeSupport,
-  UPDATE_STATE_FILENAME,
-  type SelfUpgradeSupport,
-  type UpdateSourceKind,
-  type UpdateState,
-} from '../../shared/localUpdateContract.js';
+  readCurrentVersion, readSymlinkIfPresent, readUpdateState, resolveLocalUpdatePaths,
+  resolveRelease, sweepStagingDirs, switchSymlink, writeUpdateState, type LocalUpdatePaths,
+} from '../../shared/localUpdateRuntime.js';
 import type { UpdateCenterVersionCandidate } from './updateCenterVersionService.js';
 
-const DOWNLOAD_TIMEOUT_MS = 120_000;
+export { readCurrentVersion, readSymlinkIfPresent, readUpdateState, resolveLocalUpdatePaths, sweepStagingDirs, switchSymlink, writeUpdateState };
+export type { LocalUpdatePaths };
+export type LocalUpdateLog = (message: string) => void | Promise<void>;
+const execFileAsync = promisify(execFile);
 const MAX_BUNDLE_BYTES = 512 * 1024 * 1024;
 const CHECKSUM_FILENAME = 'checksums.txt';
-const STAGING_SUFFIX = '.staging';
 
-export type LocalUpdatePaths = {
-  runtimeRoot: string;
-  releasesDir: string;
-  currentLink: string;
-  previousLink: string;
-  statePath: string;
-};
-
-export type LocalUpdateLog = (message: string) => void;
-
-export type LocalUpdateStaged = {
-  version: string;
-  releaseDir: string;
-  sha256: string;
-  bundleUrl: string;
-};
-
-export function resolveLocalUpdatePaths(dataDir: string): LocalUpdatePaths {
-  const runtimeRoot = join(dataDir, 'runtime');
-  return {
-    runtimeRoot,
-    releasesDir: join(runtimeRoot, 'releases'),
-    currentLink: join(runtimeRoot, 'current'),
-    previousLink: join(runtimeRoot, 'previous'),
-    statePath: join(runtimeRoot, UPDATE_STATE_FILENAME),
-  };
-}
-
-/** Map a Node `process.arch` to the arch token used in release artifact names. */
-export function toBundleArchToken(arch: string): string {
-  if (arch === 'x64') return 'amd64';
-  if (arch === 'arm64') return 'arm64';
-  return arch;
-}
-
-export function buildBundleFilename(version: string, arch: string): string {
-  return `metapi-evolution-${version}-${toBundleArchToken(arch)}.tar.gz`;
-}
-
-/**
- * Parse a `checksums.txt` payload (the `sha256sum` format) into a filename map.
- * Lines that do not carry a 64-hex digest are ignored rather than trusted.
- */
+export const normalizeBundleVersion = normalizeLocalUpdateVersion;
+export const toBundleArchToken = toLocalBundleArch;
+export const buildBundleFilename = localUpdateBundleFilename;
 export function parseChecksums(raw: string): Map<string, string> {
   const result = new Map<string, string>();
-  for (const line of String(raw || '').split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const match = trimmed.match(/^([a-f0-9]{64})\s+\*?(.+)$/i);
+  for (const line of raw.split('\n')) {
+    const match = line.trim().match(/^([a-f0-9]{64})\s+\*?([^\s]+)$/i);
     if (!match) continue;
-    result.set(match[2].trim(), match[1].toLowerCase());
+    if (result.has(match[2])) throw new Error(`Duplicate checksum for ${match[2]}`);
+    result.set(match[2], match[1].toLowerCase());
   }
   return result;
 }
-
-/**
- * Verify a downloaded bundle before it is allowed anywhere near `current`.
- *
- * Every rejection returns a reason instead of throwing so the caller can log
- * and report it through the task stream; a silent continue here is how a
- * corrupt bundle becomes a dead container.
- */
 export function verifyBundle(input: {
-  actualSha256: string;
-  expectedSha256: string | null | undefined;
-  filename: string;
-  checksums: Map<string, string>;
-  expectedArch: string;
-  actualArch: string;
+  actualSha256: string; expectedSha256?: string | null; filename: string;
+  checksums: Map<string, string>; expectedArch: string; actualArch: string;
 }): { ok: true } | { ok: false; reason: string } {
-  const expectedFromFile = input.expectedSha256 || input.checksums.get(input.filename);
-  if (!expectedFromFile) {
-    return { ok: false, reason: `no checksum published for ${input.filename}` };
-  }
-  const normalizedExpected = String(expectedFromFile).trim().toLowerCase();
-  if (!/^[a-f0-9]{64}$/.test(normalizedExpected)) {
-    return { ok: false, reason: `malformed checksum for ${input.filename}` };
-  }
-  if (normalizedExpected !== String(input.actualSha256).trim().toLowerCase()) {
-    return { ok: false, reason: `checksum mismatch for ${input.filename}` };
-  }
-  if (input.expectedArch !== input.actualArch) {
-    return {
-      ok: false,
-      reason: `bundle arch ${input.expectedArch} does not match runtime arch ${input.actualArch}`,
-    };
-  }
+  const expected = input.expectedSha256 || input.checksums.get(input.filename);
+  if (!expected) return { ok: false, reason: `no checksum published for ${input.filename}` };
+  if (!/^[a-f0-9]{64}$/i.test(expected)) return { ok: false, reason: `malformed checksum for ${input.filename}` };
+  if (expected.toLowerCase() !== input.actualSha256.toLowerCase()) return { ok: false, reason: `checksum mismatch for ${input.filename}` };
+  if (input.expectedArch !== input.actualArch) return { ok: false, reason: `bundle arch ${input.expectedArch} does not match runtime arch ${input.actualArch}` };
   return { ok: true };
 }
 
-async function pathExists(target: string): Promise<boolean> {
-  try {
-    await lstat(target);
-    return true;
-  } catch {
-    return false;
+async function download(url: string, destination: string, fetchImpl: typeof fetch): Promise<{ sha256: string; bytes: number }> {
+  const signal = AbortSignal.timeout(120_000);
+  const response = await fetchImpl(url, { signal, headers: { 'user-agent': 'metapi-evolution-update-center' } });
+  if (!response.ok || !response.body) throw new Error(`Bundle download failed (HTTP ${response.status})`);
+  if (Number(response.headers.get('content-length')) > MAX_BUNDLE_BYTES) {
+    await response.body.cancel();
+    throw new Error('Bundle exceeds the maximum allowed size');
   }
+  const hash = createHash('sha256');
+  let bytes = 0;
+  const meter = new Transform({ transform(chunk, _encoding, callback) {
+    bytes += chunk.length;
+    if (bytes > MAX_BUNDLE_BYTES) return callback(new Error('Bundle exceeds the maximum allowed size'));
+    hash.update(chunk);
+    callback(null, chunk);
+  } });
+  await pipeline(Readable.fromWeb(response.body as never), meter, createWriteStream(destination, { flags: 'wx', mode: 0o600 }), { signal });
+  return { sha256: hash.digest('hex'), bytes };
 }
 
-async function readCurrentVersion(linkPath: string): Promise<string | null> {
-  try {
-    const target = await readlink(linkPath);
-    const base = target.split(/[\\/]/).filter(Boolean).pop();
-    return base || null;
-  } catch {
-    return null;
-  }
-}
-
-async function readSymlinkIfPresent(linkPath: string): Promise<string | null> {
-  try {
-    const target = await readlink(linkPath);
-    return target || null;
-  } catch {
-    return null;
-  }
-}
-
-export async function readUpdateState(paths: LocalUpdatePaths): Promise<UpdateState> {
-  try {
-    const raw = await readFile(paths.statePath, 'utf8');
-    return createUpdateState(JSON.parse(raw) as Partial<UpdateState>);
-  } catch {
-    return createUpdateState();
-  }
-}
-
-export async function writeUpdateState(paths: LocalUpdatePaths, state: UpdateState): Promise<UpdateState> {
-  const next = createUpdateState({
-    ...state,
-    updatedAt: new Date().toISOString(),
-  });
-  await mkdir(paths.runtimeRoot, { recursive: true });
-  await writeFile(paths.statePath, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
-  return next;
-}
-
-/** Remove partial `.staging` trees left behind by an interrupted extraction. */
-export async function sweepStagingDirs(paths: LocalUpdatePaths): Promise<string[]> {
-  const removed: string[] = [];
-  let entries: string[];
-  try {
-    entries = await readdir(paths.releasesDir);
-  } catch {
-    return removed;
-  }
-  for (const entry of entries) {
-    if (!entry.endsWith(STAGING_SUFFIX)) continue;
-    await rm(join(paths.releasesDir, entry), { recursive: true, force: true });
-    removed.push(entry);
-  }
-  return removed;
-}
-
-async function downloadToFile(
-  url: string,
-  destination: string,
-  fetchImpl: typeof fetch = fetch,
-): Promise<{ sha256: string; bytes: number }> {
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
-  try {
-    const response = await fetchImpl(url, {
-      signal: controller.signal,
-      headers: { 'user-agent': 'metapi-update-center/1.0' },
-    });
-    if (!response.ok || !response.body) {
-      throw new Error(`bundle download failed with HTTP ${response.status}`);
+async function readChecksums(url: string, fetchImpl: typeof fetch): Promise<Map<string, string>> {
+  const response = await fetchImpl(url, { signal: AbortSignal.timeout(15_000) });
+  if (!response.ok) throw new Error(`Checksum download failed (HTTP ${response.status})`);
+  // Do not allow a missing or oversized checksum response to weaken verification.
+  let text = '';
+  if (response.body) {
+    for await (const chunk of response.body) {
+      text += Buffer.from(chunk).toString('utf8');
+      if (text.length > 64 * 1024) throw new Error('Checksum file is too large');
     }
-    const declaredLength = Number(response.headers.get('content-length') || 0);
-    if (Number.isFinite(declaredLength) && declaredLength > MAX_BUNDLE_BYTES) {
-      throw new Error('bundle exceeds the maximum allowed size');
-    }
-
-    const hash = createHash('sha256');
-    let bytes = 0;
-    const source = Readable.fromWeb(response.body as never);
-    source.on('data', (chunk: Buffer) => {
-      bytes += chunk.length;
-      if (bytes > MAX_BUNDLE_BYTES) controller.abort();
-      hash.update(chunk);
-    });
-
-    await pipeline(source, createWriteStream(destination));
-    return { sha256: hash.digest('hex'), bytes };
-  } catch (error: any) {
-    if (error?.name === 'AbortError') {
-      throw new Error('bundle download timed out');
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeoutHandle);
+  } else {
+    text = await response.text();
+    if (text.length > 64 * 1024) throw new Error('Checksum file is too large');
   }
+  return parseChecksums(text);
 }
 
-/** Point a symlink at a target atomically (write temp, then rename over). */
-export async function switchSymlink(linkPath: string, targetRelativeOrAbsolute: string): Promise<void> {
-  const temporary = `${linkPath}.tmp`;
-  await rm(temporary, { force: true });
-  await symlink(targetRelativeOrAbsolute, temporary);
-  await rename(temporary, linkPath);
+export async function extractBundle(archive: string, destination: string): Promise<void> {
+  let rejected: string | null = null;
+  let total = 0;
+  let count = 0;
+  const allowed = new Set(['dist', 'node_modules', 'package.json', 'drizzle', 'runtime', 'runtime-manifest.json']);
+  await tar.t({ file: archive, strict: true, onReadEntry(entry) {
+    const path = entry.path.replace(/^\.\//, '');
+    const target = entry.linkpath || '';
+    total += entry.size;
+    count++;
+    if (isAbsolute(path) || path.includes('\\') || path.split('/').includes('..') || !allowed.has(path.split('/')[0]) ||
+        !['File', 'Directory', 'SymbolicLink'].includes(entry.type) ||
+        (entry.type === 'SymbolicLink' && (isAbsolute(target) || target.includes('\\') || posix.normalize(posix.join(posix.dirname(path), target)).startsWith('../'))) ||
+        total > 2 * 1024 * 1024 * 1024 || count > 200_000) rejected = path;
+  } });
+  if (rejected) throw new Error(`Unsafe bundle entry: ${rejected}`);
+  await tar.x({ file: archive, cwd: destination, strict: true, preservePaths: false, preserveOwner: false });
+}
+
+async function validateRelease(directory: string, version: string, arch: string): Promise<void> {
+  const manifest = JSON.parse(await readFile(join(directory, 'runtime-manifest.json'), 'utf8'));
+  if (manifest.protocol !== 1 || manifest.platform !== 'linux' || manifest.arch !== arch || manifest.version !== version || manifest.libc !== 'glibc') {
+    throw new Error('Bundle runtime manifest does not match version, architecture or supported runner protocol');
+  }
+  for (const name of ['dist/server/index.js', 'dist/server/db/migrate.js', 'dist/web/index.html', 'dist/web/legacy/index.html', 'package.json', 'runtime/node']) {
+    const path = await realpath(join(directory, name));
+    if (relative(directory, path).startsWith('..') || !(await lstat(path)).isFile()) throw new Error(`Invalid bundle file: ${name}`);
+  }
+  const pkg = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8'));
+  if (pkg.version !== version) throw new Error('Bundle package version does not match requested version');
+  const { stdout } = await execFileAsync(join(directory, 'runtime/node'), ['--input-type=commonjs', '-e',
+    "const D=require('./node_modules/better-sqlite3');const db=new D(':memory:');db.prepare('select 1').get();db.close();process.stdout.write(process.versions.modules);"],
+  { cwd: directory, timeout: 15_000, maxBuffer: 8192 });
+  if (stdout !== manifest.nodeAbi) throw new Error('Bundled Node/native-module ABI does not match its manifest');
 }
 
 export type StageBundleOptions = {
-  dataDir: string;
-  candidate: UpdateCenterVersionCandidate;
-  arch?: string;
-  log?: LocalUpdateLog;
-  fetchImpl?: typeof fetch;
+  dataDir: string; candidate: UpdateCenterVersionCandidate; arch?: string;
+  log?: LocalUpdateLog; fetchImpl?: typeof fetch;
 };
-
-/**
- * Download, verify and unpack a release bundle into `releases/<version>`.
- * Does NOT switch `current` — that is a separate, explicit step so the staged
- * tree can be inspected (and the previous release kept) if anything fails.
- */
+export type LocalUpdateStaged = { version: string; releaseDir: string; releaseTarget: string; sha256: string; bundleUrl: string };
 export async function stageBundle(options: StageBundleOptions): Promise<LocalUpdateStaged> {
   const log = options.log ?? (() => {});
   const arch = options.arch ?? process.arch;
   const paths = resolveLocalUpdatePaths(options.dataDir);
-  const version = String(options.candidate.normalizedVersion || '').trim();
-  if (!version) {
-    throw new Error('candidate has no normalized version');
-  }
-
-  const bundleFilename = buildBundleFilename(version, arch);
-  const bundleUrl = resolveBundleUrl(options.candidate, bundleFilename);
-  const checksumUrl = resolveChecksumUrl(options.candidate);
-
+  const version = normalizeBundleVersion(options.candidate.normalizedVersion);
+  const tag = options.candidate.tagName || `v${version}`;
+  if (normalizeBundleVersion(tag) !== version) throw new Error('Release tag and version do not match');
+  const filename = buildBundleFilename(version, arch);
+  const base = `https://github.com/yswlww/metapi-evolution/releases/download/${encodeURIComponent(tag)}/`;
+  const fetchImpl = options.fetchImpl ?? fetch;
   await mkdir(paths.releasesDir, { recursive: true });
-  const stagingDir = join(paths.releasesDir, `${version}${STAGING_SUFFIX}`);
-  const releaseDir = join(paths.releasesDir, version);
-  await rm(stagingDir, { recursive: true, force: true });
-  await mkdir(stagingDir, { recursive: true });
-
-  const bundlePath = join(paths.runtimeRoot, bundleFilename);
-  log(`Downloading ${bundleFilename}`);
-  const downloaded = await downloadToFile(bundleUrl, bundlePath, options.fetchImpl ?? fetch);
-  log(`Downloaded ${downloaded.bytes} bytes, sha256 ${downloaded.sha256}`);
-
-  log(`Fetching ${CHECKSUM_FILENAME}`);
-  let checksums = new Map<string, string>();
+  const stagingDir = join(paths.releasesDir, `${version}.staging`);
+  const archive = join(paths.runtimeRoot, `${filename}.download`);
+  if (await pathExists(stagingDir) || await pathExists(archive)) throw new Error('Stale download found; restart the supervisor to recover it');
+  await mkdir(stagingDir);
   try {
-    const checksumResponse = await (options.fetchImpl ?? fetch)(checksumUrl, {
-      headers: { 'user-agent': 'metapi-update-center/1.0' },
-    });
-    if (checksumResponse.ok) {
-      checksums = parseChecksums(await checksumResponse.text());
+    await log(`Downloading ${filename}`);
+    const downloaded = await download(`${base}${filename}`, archive, fetchImpl);
+    const checksums = await readChecksums(`${base}${CHECKSUM_FILENAME}`, fetchImpl);
+    // A Docker image digest is NOT the digest of this tarball. Only the
+    // release's checksum file authenticates the downloaded archive contents.
+    const verdict = verifyBundle({ actualSha256: downloaded.sha256, checksums, filename, expectedArch: arch, actualArch: arch });
+    if (!verdict.ok) throw new Error(verdict.reason);
+    await log('Checksum verified; validating archive and native runtime');
+    await extractBundle(archive, stagingDir);
+    await validateRelease(stagingDir, version, arch);
+    const releaseTarget = `releases/${version}-${downloaded.sha256.slice(0, 16)}`;
+    const releaseDir = join(paths.runtimeRoot, releaseTarget);
+    if (await pathExists(releaseDir)) {
+      if (await readFile(join(releaseDir, '.bundle-sha256'), 'utf8') !== downloaded.sha256) throw new Error('Existing release does not match immutable bundle');
     } else {
-      log(`Checksum file unavailable (HTTP ${checksumResponse.status}); requiring a published digest`);
+      await writeFile(join(stagingDir, '.bundle-sha256'), downloaded.sha256, 'utf8');
+      await rename(stagingDir, releaseDir);
     }
-  } catch {
-    log('Checksum file unavailable; requiring a published digest');
-  }
-
-  const verdict = verifyBundle({
-    actualSha256: downloaded.sha256,
-    expectedSha256: options.candidate.digest ?? null,
-    filename: bundleFilename,
-    checksums,
-    expectedArch: arch,
-    actualArch: arch,
-  });
-  if (!verdict.ok) {
+    return { version, releaseDir, releaseTarget, sha256: downloaded.sha256, bundleUrl: `${base}${filename}` };
+  } finally {
     await rm(stagingDir, { recursive: true, force: true });
-    await rm(bundlePath, { force: true });
-    throw new Error(verdict.reason);
+    await rm(archive, { force: true });
   }
-  log('Checksum verified');
-
-  log(`Extracting into releases/${version}${STAGING_SUFFIX}`);
-  await extractTarGz(bundlePath, stagingDir);
-  await rm(releaseDir, { recursive: true, force: true });
-  await rename(stagingDir, releaseDir);
-  await rm(bundlePath, { force: true });
-
-  return { version, releaseDir, sha256: downloaded.sha256, bundleUrl };
 }
 
-function resolveBundleUrl(candidate: UpdateCenterVersionCandidate, bundleFilename: string): string {
-  const explicit = (candidate as { bundleUrl?: string | null }).bundleUrl;
-  if (typeof explicit === 'string' && explicit.trim()) return explicit.trim();
-  const tag = String(candidate.tagName || candidate.normalizedVersion || '').trim();
-  return `https://github.com/yswlww/metapi-evolution/releases/download/${tag}/${bundleFilename}`;
-}
-
-function resolveChecksumUrl(candidate: UpdateCenterVersionCandidate): string {
-  const tag = String(candidate.tagName || candidate.normalizedVersion || '').trim();
-  return `https://github.com/yswlww/metapi-evolution/releases/download/${tag}/${CHECKSUM_FILENAME}`;
-}
-
-async function extractTarGz(archivePath: string, destination: string): Promise<void> {
-  const { spawn } = await import('node:child_process');
-  await new Promise<void>((resolvePromise, reject) => {
-    const child = spawn('tar', ['-xzf', archivePath, '-C', destination], { stdio: 'ignore' });
-    child.once('error', reject);
-    child.once('exit', (code) => {
-      if (code === 0) resolvePromise();
-      else reject(new Error(`bundle extraction failed (exit ${code ?? 'null'})`));
-    });
-  });
-}
-
-export type PerformLocalUpgradeOptions = {
-  dataDir: string;
-  candidate: UpdateCenterVersionCandidate;
-  source: UpdateSourceKind;
-  arch?: string;
-  platform?: string;
-  log?: LocalUpdateLog;
-  fetchImpl?: typeof fetch;
-};
-
-export type PerformLocalUpgradeResult = {
-  success: boolean;
-  version: string;
-  requiresRestart: boolean;
-  previousVersion: string | null;
-  state: UpdateState;
-};
-
-/**
- * Full local upgrade: stage the bundle, then flip `current` and record the
- * attempt. Returns `requiresRestart: true` on success — the caller is
- * responsible for actually restarting, so this function stays testable.
- */
-export async function performLocalUpgrade(
-  options: PerformLocalUpgradeOptions,
-): Promise<PerformLocalUpgradeResult> {
-  const log = options.log ?? (() => {});
-  const arch = options.arch ?? process.arch;
-  const platform = options.platform ?? process.platform;
+export type PerformLocalUpgradeOptions = StageBundleOptions & { source: UpdateSourceKind; platform?: string; taskId?: string };
+export type PerformLocalUpgradeResult = { success: boolean; version: string; requiresRestart: boolean; previousVersion: string | null; state: UpdateState };
+export async function performLocalUpgrade(options: PerformLocalUpgradeOptions): Promise<PerformLocalUpgradeResult> {
+  const version = normalizeBundleVersion(options.candidate.normalizedVersion);
   const paths = resolveLocalUpdatePaths(options.dataDir);
-
-  const support = resolveSelfUpgradeSupport({ arch, platform, dataDirWritable: true });
-  if (!support.supported) {
-    throw new Error(support.reason || 'self-upgrade is not supported on this runtime');
-  }
-
-  const existing = await readUpdateState(paths);
-  if (isActiveUpdatePhase(existing.phase)) {
-    throw new Error(`an upgrade is already in progress (phase: ${existing.phase})`);
-  }
-
-  const previousVersion = await readCurrentVersion(paths.currentLink);
-
-  await writeUpdateState(paths, {
-    ...existing,
-    phase: 'downloading',
-    targetVersion: options.candidate.normalizedVersion,
-    previousVersion,
-    source: options.source,
-    startedAt: new Date().toISOString(),
-    error: null,
-  });
-
+  const support = resolveSelfUpgradeSupport({ arch: options.arch ?? process.arch, platform: options.platform ?? process.platform });
+  if (!support.supported) throw new Error(support.reason || 'Unsupported runtime');
+  await mkdir(paths.runtimeRoot, { recursive: true });
+  const lock = await open(paths.lockPath, 'wx').catch(() => { throw new Error('an upgrade is already in progress'); });
+  let previousVersion: string | null = null;
   try {
-    const staged = await stageBundle({
-      dataDir: options.dataDir,
-      candidate: options.candidate,
-      arch,
-      log,
-      fetchImpl: options.fetchImpl,
-    });
-
-    await writeUpdateState(paths, {
-      ...(await readUpdateState(paths)),
-      phase: 'switching',
-      attempts: (existing.attempts ?? 0) + 1,
-    });
-
-    const previousTarget = await readSymlinkIfPresent(paths.currentLink);
-    if (previousTarget) {
-      await switchSymlink(paths.previousLink, previousTarget);
+    const existing = await readUpdateState(paths);
+    if (isActiveUpdatePhase(existing.phase)) throw new Error(`an upgrade is already in progress (phase: ${existing.phase})`);
+    if (existing.error?.startsWith('Upgrade state is unreadable')) throw new Error(existing.error);
+    previousVersion = await readCurrentVersion(paths.currentLink);
+    if (previousVersion === version) throw new Error('target version is already running');
+    const previous = await readSymlinkIfPresent(paths.currentLink);
+    // Stage can be tested without a runner, but activation cannot discard the
+    // only known-good version if bootstrap has not run.
+    if (!previous) throw new Error('No running release; launch with the runtime supervisor first');
+    await resolveRelease(paths, previous);
+    await writeUpdateState(paths, createUpdateState({ phase: 'downloading', targetVersion: version, previousVersion,
+      source: options.source, attempts: 1, taskId: options.taskId, operation: 'deploy', previousRelease: previous,
+      rollbackAttempted: false, startedAt: new Date().toISOString() }));
+    try {
+      const staged = await stageBundle(options);
+      await switchSymlink(paths.previousLink, previous);
+      const pending = await writeUpdateState(paths, { ...(await readUpdateState(paths)), phase: 'switching', targetRelease: staged.releaseTarget });
+      await switchSymlink(paths.currentLink, staged.releaseTarget);
+      const state = await writeUpdateState(paths, { ...pending, phase: 'health-checking' });
+      return { success: true, version, previousVersion, requiresRestart: true, state };
+    } catch (error) {
+      await switchSymlink(paths.currentLink, previous);
+      const message = error instanceof Error ? error.message : String(error);
+      const state = await writeUpdateState(paths, { ...(await readUpdateState(paths)), phase: 'failed', error: message });
+      await options.log?.(`Upgrade failed: ${message}`);
+      return { success: false, version, previousVersion, requiresRestart: false, state };
     }
-    await switchSymlink(paths.currentLink, join('releases', staged.version));
-    log(`Switched current -> releases/${staged.version}`);
-
-    const state = await writeUpdateState(paths, {
-      ...(await readUpdateState(paths)),
-      phase: 'health-checking',
-    });
-
-    return {
-      success: true,
-      version: staged.version,
-      requiresRestart: true,
-      previousVersion,
-      state,
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const state = await writeUpdateState(paths, {
-      ...(await readUpdateState(paths)),
-      phase: 'failed',
-      error: message,
-    });
-    log(`Upgrade failed: ${message}`);
-    return { success: false, version: options.candidate.normalizedVersion, requiresRestart: false, previousVersion, state };
+  } finally {
+    await lock.close();
+    await rm(paths.lockPath, { force: true });
   }
 }
 
-/** Revert `current` to `previous`; used by the runner after a failed health check. */
-export async function rollbackToPrevious(paths: LocalUpdatePaths): Promise<string> {
-  const previousTarget = await readSymlinkIfPresent(paths.previousLink);
-  if (!previousTarget) {
-    throw new Error('no previous release to roll back to');
-  }
-  await switchSymlink(paths.currentLink, previousTarget);
-  return previousTarget;
+export async function rollbackToPrevious(paths: LocalUpdatePaths, taskId?: string): Promise<string> {
+  await mkdir(paths.runtimeRoot, { recursive: true });
+  const lock = await open(paths.lockPath, 'wx').catch(() => { throw new Error('an upgrade is already in progress'); });
+  try {
+    const state = await readUpdateState(paths);
+    if (isActiveUpdatePhase(state.phase)) throw new Error('an upgrade is already in progress');
+    const previous = await readSymlinkIfPresent(paths.previousLink);
+    const current = await readSymlinkIfPresent(paths.currentLink);
+    if (!previous || previous === current) throw new Error('no previous release to roll back to');
+    const directory = await resolveRelease(paths, previous);
+    if (taskId) {
+      const pkg = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8'));
+      await writeUpdateState(paths, createUpdateState({ phase: 'switching', attempts: 1, taskId, operation: 'rollback',
+        targetVersion: pkg.version, previousRelease: current || undefined, targetRelease: previous,
+        previousVersion: await readCurrentVersion(paths.currentLink), startedAt: new Date().toISOString(), rollbackAttempted: false }));
+      if (current) await switchSymlink(paths.previousLink, current);
+    }
+    await switchSymlink(paths.currentLink, previous);
+    return previous;
+  } finally { await lock.close(); await rm(paths.lockPath, { force: true }); }
 }
 
 export async function getSelfUpgradeSupportForRuntime(dataDir: string): Promise<SelfUpgradeSupport> {
-  let dataDirWritable = true;
-  try {
-    await mkdir(dataDir, { recursive: true });
-    await access(dataDir, fsConstants.W_OK);
-  } catch {
-    dataDirWritable = false;
+  const base = resolveSelfUpgradeSupport();
+  if (!base.supported) return base;
+  if (process.env.METAPI_LOCAL_UPDATE_RUNNER !== '1' || !process.send || !process.connected) {
+    return { ...base, supported: false, reasonCode: 'runner-required', reason: 'Start the runtime supervisor (or update the Docker image) to enable in-app upgrades.' };
   }
-  return resolveSelfUpgradeSupport({ arch: process.arch, platform: process.platform, dataDirWritable });
+  try { await access(resolveLocalUpdatePaths(dataDir).runtimeRoot, constants.W_OK); }
+  catch { return { ...base, supported: false, reasonCode: 'read-only-runtime', reason: 'The runtime directory is not writable.' }; }
+  return base;
 }
 
-export { pathExists, readCurrentVersion, readSymlinkIfPresent };
+export async function pathExists(path: string): Promise<boolean> {
+  try { await lstat(path); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+}

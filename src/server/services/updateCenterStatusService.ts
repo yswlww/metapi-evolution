@@ -1,7 +1,9 @@
 import { config as runtimeConfig } from '../config.js';
-import { resolveSelfUpgradeSupport, type SelfUpgradeSupport } from '../../shared/localUpdateContract.js';
+import type { SelfUpgradeSupport, UpdateState } from '../../shared/localUpdateContract.js';
+import { readCurrentVersion, readSymlinkIfPresent, readUpdateState, resolveLocalUpdatePaths, type LocalUpdateTask } from '../../shared/localUpdateRuntime.js';
+import { getSelfUpgradeSupportForRuntime } from './updateCenterLocalService.js';
+import { getLatestLocalUpdateTask } from './updateCenterTaskService.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
-import { listBackgroundTasks } from './backgroundTaskService.js';
 import {
   fetchDockerHubTagCandidates,
   fetchLatestStableGitHubRelease,
@@ -19,7 +21,6 @@ import {
   type UpdateCenterRuntimeState,
   type UpdateCenterStatusSnapshot,
 } from './updateCenterRuntimeStateService.js';
-import { UPDATE_CENTER_DEPLOY_TASK_TYPE } from './updateCenterTaskConstants.js';
 import { resolveUpdateReminderCandidate, type UpdateReminderCandidate } from './updateCenterReminderService.js';
 
 function summarizeError(error: unknown) {
@@ -51,8 +52,18 @@ async function settleOptional<T>(enabled: boolean, loader: () => Promise<T>): Pr
   }
 }
 
-function getDeployTasks() {
-  return listBackgroundTasks(50).filter((task) => task.type === UPDATE_CENTER_DEPLOY_TASK_TYPE);
+async function getLocalRuntimeStatus() {
+  const paths = resolveLocalUpdatePaths(runtimeConfig.dataDir);
+  const [task, selfUpgrade, state, previousVersion, current, previous] = await Promise.all([
+    getLatestLocalUpdateTask(), getSelfUpgradeSupportForRuntime(runtimeConfig.dataDir), readUpdateState(paths),
+    readCurrentVersion(paths.previousLink), readSymlinkIfPresent(paths.currentLink), readSymlinkIfPresent(paths.previousLink),
+  ]);
+  return {
+    selfUpgrade,
+    localUpdate: { state, previousVersion, canRollback: !!previous && previous !== current },
+    runningTask: task?.status === 'running' || task?.status === 'pending' ? task : null,
+    lastFinishedTask: task?.status === 'succeeded' || task?.status === 'failed' ? task : null,
+  };
 }
 
 export type UpdateCenterStatusResult = {
@@ -63,8 +74,9 @@ export type UpdateCenterStatusResult = {
   dockerHubRecentTags: UpdateCenterVersionCandidate[];
   helper: UpdateCenterHelperStatus;
   selfUpgrade: SelfUpgradeSupport;
-  runningTask: ReturnType<typeof getDeployTasks>[number] | null;
-  lastFinishedTask: ReturnType<typeof getDeployTasks>[number] | null;
+  runningTask: LocalUpdateTask | null;
+  lastFinishedTask: LocalUpdateTask | null;
+  localUpdate: { state: UpdateState; previousVersion: string | null; canRollback: boolean };
   runtime: UpdateCenterRuntimeState;
 };
 
@@ -118,11 +130,9 @@ function buildNextRuntimeState(
   };
 }
 
-function buildResponseFromState(config: UpdateCenterConfig, runtime: UpdateCenterRuntimeState): UpdateCenterStatusResult {
+async function buildResponseFromState(config: UpdateCenterConfig, runtime: UpdateCenterRuntimeState): Promise<UpdateCenterStatusResult> {
   const snapshot = runtime.statusSnapshot;
-  const tasks = getDeployTasks();
-  const runningTask = tasks.find((task) => task.status === 'pending' || task.status === 'running') || null;
-  const lastFinishedTask = tasks.find((task) => task.status === 'succeeded' || task.status === 'failed') || null;
+  const local = await getLocalRuntimeStatus();
 
   return {
     currentVersion: getCurrentRuntimeVersion(),
@@ -130,10 +140,8 @@ function buildResponseFromState(config: UpdateCenterConfig, runtime: UpdateCente
     githubRelease: snapshot?.githubRelease || null,
     dockerHubTag: snapshot?.dockerHubTag || null,
     dockerHubRecentTags: snapshot?.dockerHubRecentTags || [],
-    helper: snapshot?.helper || buildUnavailableHelperStatus(runtime.lastCheckError),
-    selfUpgrade: resolveSelfUpgradeSupport(),
-    runningTask,
-    lastFinishedTask,
+    helper: buildUnavailableHelperStatus(),
+    ...local,
     runtime,
   };
 }
@@ -153,9 +161,7 @@ export async function buildUpdateCenterStatus(): Promise<UpdateCenterStatusResul
   const dockerHubRecentTags = dockerHubCandidates?.recentNonStable || [];
   const helper = buildUnavailableHelperStatus(null);
 
-  const tasks = getDeployTasks();
-  const runningTask = tasks.find((task) => task.status === 'pending' || task.status === 'running') || null;
-  const lastFinishedTask = tasks.find((task) => task.status === 'succeeded' || task.status === 'failed') || null;
+  const local = await getLocalRuntimeStatus();
 
   return {
     currentVersion: getCurrentRuntimeVersion(),
@@ -164,9 +170,7 @@ export async function buildUpdateCenterStatus(): Promise<UpdateCenterStatusResul
     dockerHubTag,
     dockerHubRecentTags,
     helper,
-    selfUpgrade: resolveSelfUpgradeSupport(),
-    runningTask,
-    lastFinishedTask,
+    ...local,
     runtime,
   };
 }

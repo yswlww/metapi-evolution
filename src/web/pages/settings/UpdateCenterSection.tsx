@@ -4,6 +4,7 @@ import { api } from '../../api.js';
 import ModernSelect from '../../components/ModernSelect.js';
 import { useToast } from '../../components/Toast.js';
 import { useIsMobile } from '../../components/useIsMobile.js';
+import { isLocalUpdateReleaseTag, type SelfUpgradeSupport } from '../../../shared/localUpdateContract.js';
 
 type UpdateCandidate = {
   normalizedVersion?: string;
@@ -24,7 +25,8 @@ type UpdateCenterStatus = {
   githubRelease?: UpdateCandidate | null;
   dockerHubTag?: UpdateCandidate | null;
   dockerHubRecentTags?: UpdateCandidate[] | null;
-  selfUpgrade?: { supported: boolean; reason: string | null; arch: string };
+  selfUpgrade?: SelfUpgradeSupport;
+  localUpdate?: { state: { phase: string; error: string | null }; canRollback: boolean; previousVersion: string | null };
   runningTask?: { id?: string; status?: string } | null;
   lastFinishedTask?: { id?: string; status?: string; finishedAt?: string | null } | null;
   runtime?: { lastCheckedAt?: string | null; lastCheckError?: string | null } | null;
@@ -147,6 +149,7 @@ export default function UpdateCenterSection() {
   };
 
   const streamTaskLogs = async (taskId: string) => {
+    let completed = false;
     await api.streamUpdateCenterTaskLogs(taskId, {
       signal: streamAbortRef.current?.signal,
       onLog: (entry) => {
@@ -154,8 +157,9 @@ export default function UpdateCenterSection() {
         if (!message) return;
         setLogs((prev) => [...prev, message].slice(-200));
       },
-      onDone: (payload) => { setTaskStatus(String(payload?.status || 'unknown')); },
+      onDone: (payload) => { completed = true; setTaskStatus(String(payload?.status || 'unknown')); },
     });
+    if (!completed && !streamAbortRef.current?.signal.aborted) throw new Error('Service restarting; reconnecting to task status');
   };
 
   const runTask = async (start: () => Promise<{ task?: { id: string } }>, failureMessage: string) => {
@@ -171,21 +175,42 @@ export default function UpdateCenterSection() {
       if (!taskId) throw new Error('任务未返回 taskId');
       await streamTaskLogs(taskId);
     } catch (error: any) {
-      setTaskStatus('failed');
-      toast.error(error?.message || failureMessage);
+      if (taskId) {
+        const deadline = Date.now() + 120_000;
+        while (Date.now() < deadline && !streamAbortRef.current?.signal.aborted) {
+          try {
+            const result = await api.getUpdateCenterTask(taskId, streamAbortRef.current?.signal) as { task: { status: string; logs: Array<{ message: string }> } };
+            setLogs(result.task.logs.map(entry => entry.message));
+            setTaskStatus(result.task.status);
+            if (result.task.status === 'succeeded' || result.task.status === 'failed') return;
+          } catch { /* A process restart temporarily drops the HTTP connection. */ }
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+      if (!streamAbortRef.current?.signal.aborted) {
+        setTaskStatus('failed');
+        toast.error(error?.message || failureMessage);
+      }
     } finally {
       setDeploying(false);
       void refreshStatus(false).catch(() => {});
     }
   };
 
-  const supported = status?.selfUpgrade?.supported !== false;
+  const supported = status?.selfUpgrade?.supported === true;
+  const supportReasons = {
+    'runner-required': '请先使用 runtime supervisor 启动，或更新 Docker 镜像。',
+    'unsupported-arch': '此架构未提供升级包，请改用拉取新镜像更新。',
+    'unsupported-platform': '应用内服务器升级仅支持 Linux。',
+    'read-only-runtime': 'Runtime 目录为只读。',
+  };
+  const supportReason = status?.selfUpgrade?.reasonCode ? supportReasons[status.selfUpgrade.reasonCode] : status?.selfUpgrade?.reason;
   const candidates = source === 'github-release'
     ? (status?.githubRelease ? [status.githubRelease] : [])
     : (status?.dockerHubRecentTags?.length ? status.dockerHubRecentTags : status?.dockerHubTag ? [status.dockerHubTag] : []);
   const candidate = candidates[0];
   const taskBadge = getTaskBadge(taskStatus || status?.lastFinishedTask?.status);
-  const deployDisabled = deploying || !supported || !config.enabled || !candidate?.tagName;
+  const deployDisabled = deploying || !supported || !config.enabled || !isLocalUpdateReleaseTag(candidate?.tagName) || candidate?.tagName?.replace(/^v/, '') === status?.currentVersion;
 
   return (
     <div style={{ display: 'grid', gap: 12 }}>
@@ -204,7 +229,7 @@ export default function UpdateCenterSection() {
             </span>
           </div>
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-            {status?.selfUpgrade?.reason || `架构 ${status?.selfUpgrade?.arch || '—'}`}
+            {supportReason || `架构 ${status?.selfUpgrade?.arch || '—'}`}
           </div>
         </div>
         <div style={sectionPanelStyle}>
@@ -214,9 +239,10 @@ export default function UpdateCenterSection() {
         </div>
       </div>
 
-      {!supported && status?.selfUpgrade?.reason && (
-        <div style={sectionPanelStyle} role="alert">{status.selfUpgrade.reason}</div>
+      {!supported && supportReason && (
+        <div style={sectionPanelStyle} role="alert">{supportReason}</div>
       )}
+      {status?.localUpdate?.state && <div style={sectionPanelStyle}>升级状态：{status.localUpdate.state.phase}{status.localUpdate.state.error && <p role="alert">{status.localUpdate.state.error}</p>}</div>}
       {status?.runtime?.lastCheckError && (
         <div style={sectionPanelStyle} role="alert">{status.runtime.lastCheckError}</div>
       )}
@@ -281,7 +307,7 @@ export default function UpdateCenterSection() {
             <button
               type="button"
               className="btn"
-              disabled={deploying || !supported || !config.enabled}
+              disabled={deploying || !supported || !config.enabled || status?.localUpdate?.canRollback !== true}
               onClick={() => void runTask(() => api.rollbackUpdateCenter(), '回退失败')}
             >
               {deploying ? '回退中…' : '回退到上一版本'}

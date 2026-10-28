@@ -9,16 +9,6 @@ export type UpdateCenterConfig = {
   githubReleasesEnabled: boolean;
   dockerHubTagsEnabled: boolean;
   defaultDeploySource: UpdateCenterVersionSource;
-  /**
-   * @deprecated Kubernetes deploy fields. Local upgrades do not use these;
-   * they remain only so the legacy helper client compiles until it is removed
-   * in Phase 6. Nothing reads them.
-   */
-  helperBaseUrl?: string;
-  namespace?: string;
-  releaseName?: string;
-  chartRef?: string;
-  imageRepository?: string;
 };
 
 /**

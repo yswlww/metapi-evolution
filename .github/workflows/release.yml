@@ -283,20 +283,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 26
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts --no-audit --no-fund && npm rebuild esbuild sharp better-sqlite3 --no-audit --no-fund
-
-      - name: Build server
-        run: npm run build:server
-
-      - name: Pack release bundle
-        run: node scripts/release/buildBundle.mjs --arch ${{ matrix.arch }} --out release-bundles
+      - name: Build native server bundle in the Docker runtime environment
+        env:
+          BUNDLE_VERSION: ${{ github.ref_name }}
+        run: |
+          version_arg=""
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then version_arg="--build-arg METAPI_BUNDLE_VERSION=$BUNDLE_VERSION"; fi
+          docker buildx build --file docker/Dockerfile --target server-bundle \
+            --platform linux/${{ matrix.arch }} $version_arg \
+            --output type=local,dest=release-bundles .
 
       - name: Upload server bundle
         uses: actions/upload-artifact@v7
@@ -318,6 +313,11 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
+
+      - name: Combine and verify architecture checksums
+        run: |
+          cat release-assets/metapi-evolution-*.tar.gz.sha256 > release-assets/checksums.txt
+          cd release-assets && sha256sum -c checksums.txt
 
       - name: Show release files
         run: ls -la release-assets

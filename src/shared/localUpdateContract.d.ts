@@ -22,12 +22,18 @@ export type UpdateState = Readonly<{
   startedAt: string | null;
   updatedAt: string | null;
   error: string | null;
+  taskId?: string;
+  operation?: 'deploy' | 'rollback';
+  targetRelease?: string;
+  previousRelease?: string;
+  rollbackAttempted?: boolean;
 }>;
 
 export type SelfUpgradeSupport = Readonly<{
   supported: boolean;
   reason: string | null;
   arch: string;
+  reasonCode?: 'unsupported-platform' | 'unsupported-arch' | 'read-only-runtime' | 'runner-required';
 }>;
 
 export declare const UPDATE_PHASES: readonly UpdatePhase[];
@@ -36,6 +42,10 @@ export declare const UPDATE_UNVERIFIED_PHASES: readonly UpdatePhase[];
 export declare const UPDATE_SUPPORTED_ARCHES: readonly string[];
 export declare const UPDATE_STATE_FILENAME: string;
 
+export declare function normalizeLocalUpdateVersion(value: unknown): string;
+export declare function toLocalBundleArch(arch: string): string;
+export declare function localUpdateBundleFilename(version: string, arch: string): string;
+export declare function isLocalUpdateReleaseTag(value: unknown): value is string;
 export declare function isUpdatePhase(value: unknown): value is UpdatePhase;
 export declare function isActiveUpdatePhase(value: unknown): value is UpdatePhase;
 export declare function isUnverifiedUpdatePhase(value: unknown): value is UpdatePhase;

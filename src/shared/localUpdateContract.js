@@ -56,6 +56,24 @@ export const UPDATE_SUPPORTED_ARCHES = Object.freeze(['x64', 'arm64']);
 /** Filename of the persisted upgrade state inside `$DATA_DIR/runtime`. */
 export const UPDATE_STATE_FILENAME = 'update-state.json';
 
+export function isLocalUpdateReleaseTag(value) {
+  return typeof value === 'string' && value.length <= 100 && /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/.test(value);
+}
+
+export function normalizeLocalUpdateVersion(value) {
+  const version = typeof value === 'string' ? value.trim().replace(/^v/, '') : '';
+  if (!isLocalUpdateReleaseTag(version)) throw new Error('A release version is required; image aliases and paths are not deployable bundles');
+  return version;
+}
+
+export function toLocalBundleArch(arch) {
+  return arch === 'x64' ? 'amd64' : arch;
+}
+
+export function localUpdateBundleFilename(version, arch) {
+  return `metapi-evolution-${normalizeLocalUpdateVersion(version)}-${toLocalBundleArch(arch)}.tar.gz`;
+}
+
 export function isUpdatePhase(value) {
   return typeof value === 'string' && PHASE_SET.has(value);
 }
@@ -91,6 +109,7 @@ export function resolveSelfUpgradeSupport(input) {
   if (platform !== 'linux') {
     return {
       supported: false,
+      reasonCode: 'unsupported-platform',
       reason: `local upgrades are Linux-only; this runtime is ${platform}`,
       arch,
     };
@@ -99,6 +118,7 @@ export function resolveSelfUpgradeSupport(input) {
   if (!UPDATE_SUPPORTED_ARCHES.includes(arch)) {
     return {
       supported: false,
+      reasonCode: 'unsupported-arch',
       reason: `no upgrade bundle is published for ${arch}; pull a new image instead`,
       arch,
     };
@@ -107,6 +127,7 @@ export function resolveSelfUpgradeSupport(input) {
   if (source.dataDirWritable === false) {
     return {
       supported: false,
+      reasonCode: 'read-only-runtime',
       reason: 'the data directory is not writable, so a release bundle cannot be staged',
       arch,
     };
@@ -139,6 +160,11 @@ export function createUpdateState(input) {
     startedAt: typeof source.startedAt === 'string' ? source.startedAt : null,
     updatedAt: typeof source.updatedAt === 'string' ? source.updatedAt : null,
     error: typeof source.error === 'string' ? source.error : null,
+    ...(typeof source.taskId === 'string' ? { taskId: source.taskId } : {}),
+    ...(source.operation === 'deploy' || source.operation === 'rollback' ? { operation: source.operation } : {}),
+    ...(typeof source.targetRelease === 'string' ? { targetRelease: source.targetRelease } : {}),
+    ...(typeof source.previousRelease === 'string' ? { previousRelease: source.previousRelease } : {}),
+    ...(typeof source.rollbackAttempted === 'boolean' ? { rollbackAttempted: source.rollbackAttempted } : {}),
   };
 }
 
@@ -155,5 +181,5 @@ export function createUpdateState(input) {
 export function canAutoRollback(state) {
   const normalized = createUpdateState(state);
   if (!isUnverifiedUpdatePhase(normalized.phase)) return false;
-  return normalized.attempts <= 1;
+  return normalized.attempts === 1 && normalized.rollbackAttempted !== true;
 }

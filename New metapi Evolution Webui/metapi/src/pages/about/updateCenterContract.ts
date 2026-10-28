@@ -1,3 +1,6 @@
+import type { SelfUpgradeSupport, UpdateState } from '../../../../../src/shared/localUpdateContract.js';
+import { isLocalUpdateReleaseTag } from '../../../../../src/shared/localUpdateContract.js';
+
 export type UpdateSource = 'github-release' | 'docker-hub-tag';
 export type UpdateConfig = {
   enabled: boolean;
@@ -13,7 +16,7 @@ export type UpdateCandidate = {
   url?: string | null;
   publishedAt?: string | null;
 };
-export type SelfUpgrade = { supported: boolean; reason: string | null; arch: string };
+export type SelfUpgrade = SelfUpgradeSupport;
 export type UpdateStatus = {
   currentVersion?: string;
   config?: UpdateConfig;
@@ -21,6 +24,7 @@ export type UpdateStatus = {
   dockerHubTag?: UpdateCandidate | null;
   dockerHubRecentTags?: UpdateCandidate[] | null;
   selfUpgrade?: SelfUpgrade;
+  localUpdate?: { state: UpdateState; previousVersion: string | null; canRollback: boolean };
   runningTask?: { id?: string; status?: string } | null;
   lastFinishedTask?: { id?: string; status?: string } | null;
   runtime?: { lastCheckError?: string | null; lastCheckedAt?: string | null };
@@ -28,10 +32,10 @@ export type UpdateStatus = {
 
 export function deployPayload(source: UpdateSource, candidate: UpdateCandidate) {
   const targetTag = candidate.tagName?.trim();
-  if (!targetTag) throw new Error('No deployable tag');
+  if (!targetTag || !isLocalUpdateReleaseTag(targetTag)) throw new Error('No deployable release tag');
   return { source, targetTag, ...(candidate.digest ? { targetDigest: candidate.digest } : {}) };
 }
 
 export function canRollback(status: UpdateStatus): boolean {
-  return status.selfUpgrade?.supported === true && status.config?.enabled === true;
+  return status.selfUpgrade?.supported === true && status.config?.enabled === true && status.localUpdate?.canRollback === true;
 }

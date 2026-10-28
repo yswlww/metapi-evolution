@@ -1,100 +1,72 @@
 #!/usr/bin/env node
-/**
- * Build a self-contained server release bundle for local runtime upgrades.
- *
- * The bundle is the image's own build, packed so the runner can unpack it into
- * $DATA_DIR/runtime/releases/<version> and switch to it. Native modules
- * (better-sqlite3) are not recompiled here: the bundle must be produced on the
- * architecture it will run on, which is why the release workflow builds one per
- * arch rather than cross-compiling.
- *
- * Usage: node scripts/release/buildBundle.mjs --version 1.5.0 --arch amd64 --out release-bundles
- */
+// Build on the target Linux architecture, inside the same Debian/Node image as
+// Docker. Ship that Node executable with its native modules: host CI's Node ABI
+// must never leak into a release installed in a different container runtime.
 import { createHash } from 'node:crypto';
-import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
+import { copyFile, cp, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import * as tar from 'tar';
+import { normalizeLocalUpdateVersion, localUpdateBundleFilename, toLocalBundleArch, UPDATE_SUPPORTED_ARCHES } from '../../src/shared/localUpdateContract.js';
 
-const ARCH_TOKEN_BY_NODE_ARCH = { x64: 'amd64', arm64: 'arm64' };
-
-function readArg(name) {
-  const index = process.argv.indexOf(`--${name}`);
-  if (index === -1) return null;
-  return process.argv[index + 1] ?? null;
-}
-
-function resolveVersion() {
-  const explicit = readArg('version');
-  if (explicit) return explicit.replace(/^v/, '');
-  const pkg = JSON.parse(readFileSync(resolve('package.json'), 'utf8'));
-  return String(pkg.version || '').trim();
-}
-
-function resolveArch() {
-  const explicit = readArg('arch');
-  if (explicit) return explicit;
-  const mapped = ARCH_TOKEN_BY_NODE_ARCH[process.arch];
-  if (!mapped) {
-    throw new Error(`no bundle is published for ${process.arch}; build on amd64 or arm64`);
+async function digestTree(root, path, hash) {
+  for (const entry of (await readdir(join(root, path), { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
+    const name = join(path, entry.name);
+    if (entry.isDirectory()) await digestTree(root, name, hash);
+    else if (entry.isFile()) hash.update(name).update(await readFile(join(root, name)));
   }
-  return mapped;
 }
-
-function sha256File(path) {
+export async function writeRuntimeManifest(root, version) {
   const hash = createHash('sha256');
-  return new Promise((resolvePromise, reject) => {
-    const stream = createReadStream(path);
-    stream.on('data', (chunk) => hash.update(chunk));
-    stream.once('error', reject);
-    stream.once('end', () => resolvePromise(hash.digest('hex')));
-  });
+  await digestTree(root, 'dist', hash);
+  hash.update(await readFile(join(root, 'package.json')));
+  const manifest = {
+    protocol: 1, platform: process.platform, arch: process.arch, libc: 'glibc', version,
+    nodeVersion: process.versions.node, nodeAbi: process.versions.modules, buildId: hash.digest('hex'),
+  };
+  await writeFile(join(root, 'runtime-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  return manifest;
 }
 
-function run(command, args) {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { stdio: 'inherit' });
-    child.once('error', reject);
-    child.once('exit', (code) => {
-      if (code === 0) resolvePromise();
-      else reject(new Error(`${command} exited with code ${code ?? 'null'}`));
-    });
-  });
-}
-
-async function main() {
-  const version = resolveVersion();
-  if (!version) throw new Error('could not resolve a version');
-  const arch = resolveArch();
-  const outDir = resolve(readArg('out') || 'release-bundles');
-
-  for (const required of ['dist/server/index.js', 'dist/server/db/migrate.js', 'node_modules', 'package.json', 'drizzle']) {
-    if (!existsSync(resolve(required))) {
-      throw new Error(`missing ${required}; run the server build before bundling`);
-    }
+export async function buildBundle({ root = process.cwd(), out, arch = toLocalBundleArch(process.arch), version } = {}) {
+  root = resolve(root);
+  if (process.platform !== 'linux' || !UPDATE_SUPPORTED_ARCHES.includes(process.arch) || arch !== toLocalBundleArch(process.arch)) {
+    throw new Error('Build bundles natively on the matching Linux amd64/arm64 architecture');
   }
-
+  const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+  version = normalizeLocalUpdateVersion(version || pkg.version);
+  for (const path of ['dist/server/index.js', 'dist/server/db/migrate.js', 'dist/web/index.html', 'dist/web/legacy/index.html', 'node_modules', 'drizzle']) {
+    await (await import('node:fs/promises')).access(join(root, path));
+  }
+  const outDir = resolve(out || 'release-bundles');
   await mkdir(outDir, { recursive: true });
-  const filename = `metapi-evolution-${version}-${arch}.tar.gz`;
-  const bundlePath = join(outDir, filename);
-
-  await run('tar', [
-    '-czf', bundlePath,
-    '--exclude=node_modules/.cache',
-    'dist', 'node_modules', 'package.json', 'drizzle',
-  ]);
-
-  const digest = await sha256File(bundlePath);
-  const checksumPath = join(outDir, 'checksums.txt');
-  const existing = existsSync(checksumPath) ? await readFile(checksumPath, 'utf8') : '';
-  const kept = existing.split('\n').filter((line) => line.trim() && !line.includes(filename));
-  kept.push(`${digest}  ${filename}`);
-  await writeFile(checksumPath, `${kept.join('\n')}\n`, 'utf8');
-
-  console.log(JSON.stringify({ filename, digest, bytes: statSync(bundlePath).size, checksumPath }));
+  const staging = await mkdtemp(join(outDir, '.bundle-'));
+  try {
+    for (const name of ['dist', 'node_modules', 'drizzle']) await cp(join(root, name), join(staging, name), { recursive: true, verbatimSymlinks: true, filter: path => !path.endsWith('/.cache') });
+    await writeFile(join(staging, 'package.json'), JSON.stringify({ ...pkg, version }, null, 2));
+    await mkdir(join(staging, 'runtime'));
+    await copyFile(process.execPath, join(staging, 'runtime/node'));
+    await chmod(join(staging, 'runtime/node'), 0o755);
+    await writeRuntimeManifest(staging, version);
+    const filename = localUpdateBundleFilename(version, process.arch);
+    const bundlePath = join(outDir, filename);
+    await tar.c({ file: bundlePath, cwd: staging, gzip: true, portable: true, noMtime: true }, ['dist', 'node_modules', 'drizzle', 'package.json', 'runtime', 'runtime-manifest.json']);
+    const { createReadStream } = await import('node:fs');
+    const hash = createHash('sha256');
+    for await (const chunk of createReadStream(bundlePath)) hash.update(chunk);
+    const digest = hash.digest('hex');
+    // Unique filenames avoid matrix artifact merges silently overwriting the
+    // other architecture's checksums. The publishing job combines these files.
+    await writeFile(`${bundlePath}.sha256`, `${digest}  ${filename}\n`);
+    return { filename, digest };
+  } finally { await rm(staging, { recursive: true, force: true }); }
 }
 
-main().catch((error) => {
-  console.error(`[buildBundle] ${error instanceof Error ? error.message : String(error)}`);
-  process.exit(1);
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const arg = name => { const index = process.argv.indexOf(`--${name}`); return index >= 0 ? process.argv[index + 1] : undefined; };
+  const root = resolve(arg('root') || '.');
+  const action = process.argv.includes('--manifest-only')
+    ? readFile(join(root, 'package.json'), 'utf8').then(raw => writeRuntimeManifest(root, JSON.parse(raw).version))
+    : buildBundle({ root, arch: arg('arch'), version: arg('version'), out: arg('out') });
+  action.then(result => console.log(JSON.stringify(result))).catch(error => { console.error(`[buildBundle] ${error.message}`); process.exitCode = 1; });
+}

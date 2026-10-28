@@ -1255,6 +1255,7 @@ export const api = {
       body: JSON.stringify(data),
     }),
   getUpdateCenterStatus: () => request("/api/update-center/status"),
+  getUpdateCenterTask: (id: string, signal?: AbortSignal) => request(`/api/update-center/tasks/${encodeURIComponent(id)}`, { signal }),
   saveUpdateCenterConfig: (data: any) =>
     request("/api/update-center/config", {
       method: "PUT",

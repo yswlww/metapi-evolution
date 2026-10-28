@@ -219,7 +219,7 @@ describe('settings parity interactions', () => {
     expect(fixture.saveUpdateConfig).toHaveBeenCalledWith({...config, defaultDeploySource: 'docker-hub-tag'});
   });
   it('deploys a tag and rolls back to the previous release', async () => {
-    const status = {currentVersion: '1.4.2', config: {enabled: true, defaultDeploySource: 'github-release'}, dockerHubRecentTags: [{tagName: 'v1.4.3', displayVersion: '1.4.3', digest: 'sha256:abc'}], selfUpgrade: {supported: true, reason: null, arch: 'x64'}, lastFinishedTask: {id: 'task-1'}};
+    const status = {currentVersion: '1.4.2', config: {enabled: true, defaultDeploySource: 'github-release'}, dockerHubRecentTags: [{tagName: 'v1.4.3', displayVersion: '1.4.3', digest: 'sha256:abc'}], selfUpgrade: {supported: true, reason: null, arch: 'x64'}, localUpdate: {canRollback: true}, lastFinishedTask: {id: 'task-1'}};
     fixture.getUpdateCenterStatus.mockResolvedValue(status); fixture.deployUpdateCenter.mockResolvedValue({task: {id: 'task-1'}}); fixture.rollbackUpdateCenter.mockResolvedValue({task: {id: 'task-1'}});
     await render(<UpdateCenter />);
     await act(async () => field('Deploy source', 'select').props.onChange({target: {value: 'docker-hub-tag'}}));

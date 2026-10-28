@@ -9,6 +9,7 @@ import { PARITY_ACTION_CLASS, PARITY_SELECT_CLASS } from '../../lib/settingsPari
 import { settingsDirty } from '../../lib/settingsParity';
 import { deployPayload, canRollback, type UpdateStatus, type UpdateConfig, type UpdateSource } from './updateCenterContract';
 import { saveUpdateConfig, getUpdateTask, type UpdateTask } from './updateCenterApi';
+import { isLocalUpdateReleaseTag } from '../../../../../src/shared/localUpdateContract.js';
 
 export default function UpdateCenter({ onVersion }: { onVersion?: (version: string) => void }) {
   const t = useUiText(); const local = useLocalSettingsText(); const { showToast } = useToast();
@@ -40,6 +41,7 @@ export default function UpdateCenter({ onVersion }: { onVersion?: (version: stri
   useEffect(() => {
     if (!taskId) return;
     const controller = new AbortController(); let timer: ReturnType<typeof setTimeout> | undefined;
+    const reconnectDeadline = Date.now() + 120_000;
     const poll = async () => {
       try {
         const result = await getUpdateTask(taskId, controller.signal);
@@ -47,7 +49,12 @@ export default function UpdateCenter({ onVersion }: { onVersion?: (version: stri
         setTask(result.task);
         if (result.task.status === 'pending' || result.task.status === 'running') timer = setTimeout(poll, 1000);
         else await reload();
-      } catch (error) { if (!controller.signal.aborted) setError(error instanceof Error ? error.message : t('ui.about.err_operation')); }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          if (Date.now() < reconnectDeadline) timer = setTimeout(poll, 1000);
+          else setError(error instanceof Error ? error.message : t('ui.about.err_operation'));
+        }
+      }
     };
     setTask(null); void poll();
     return () => { controller.abort(); if (timer) clearTimeout(timer); };
@@ -62,7 +69,16 @@ export default function UpdateCenter({ onVersion }: { onVersion?: (version: stri
     } catch (error) { setError(error instanceof Error ? error.message : t('ui.about.err_operation')); }
     finally { setBusy(false); }
   };
-  const supported = status?.selfUpgrade?.supported !== false;
+  const supported = status?.selfUpgrade?.supported === true;
+  const supportHint = status?.selfUpgrade?.reasonCode === 'runner-required'
+    ? local('Start with the runtime supervisor or update the Docker image first.', '請先透過 runtime supervisor 啟動，或更新 Docker 映像。', '请先通过 runtime supervisor 启动，或更新 Docker 镜像。')
+    : status?.selfUpgrade?.reasonCode === 'unsupported-arch'
+      ? local('No release bundle is available for this architecture. Pull a new image instead.', '此架構未提供升級包，請改用拉取新映像更新。', '此架构未提供升级包，请改用拉取新镜像更新。')
+      : status?.selfUpgrade?.reasonCode === 'read-only-runtime'
+        ? local('The runtime directory is read-only.', 'Runtime 目錄為唯讀。', 'Runtime 目录为只读。')
+        : status?.selfUpgrade?.reasonCode === 'unsupported-platform'
+          ? local('In-app server upgrades require Linux.', '應用內伺服器升級僅支援 Linux。', '应用内服务器升级仅支持 Linux。')
+          : status?.selfUpgrade?.reason;
   const candidates = source === 'github-release' ? status?.githubRelease ? [status.githubRelease] : [] : status?.dockerHubRecentTags?.length ? status.dockerHubRecentTags : status?.dockerHubTag ? [status.dockerHubTag] : [];
   const candidate = candidates.find(entry => entry.tagName === tag) ?? candidates[0];
   const selectedTag = candidate?.tagName ?? '';
@@ -86,16 +102,19 @@ export default function UpdateCenter({ onVersion }: { onVersion?: (version: stri
     {error && <p role="alert">{error}</p>}
     <div className="card p-5 space-y-4">
       <div><div className="font-mono text-[10px] text-[color:var(--color-muted)]">{t('ui.about.current')}</div><div className="font-display text-2xl">{status?.currentVersion ?? '—'}</div></div>
-      {!supported && status?.selfUpgrade?.reason && <p role="alert">{status.selfUpgrade.reason}</p>}
+      {!supported && supportHint && <p role="alert">{supportHint}</p>}
+      {status?.localUpdate?.state && <p>{local('Upgrade state', '升級狀態', '升级状态')}：{status.localUpdate.state.phase}</p>}
+      {status?.localUpdate?.state?.error && <p role="alert">{status.localUpdate.state.error}</p>}
       {status?.runtime?.lastCheckError && <p role="alert">{status.runtime.lastCheckError}</p>}
       <button className={PARITY_ACTION_CLASS} disabled={busy} onClick={() => run(checkUpdateCenter, t('ui.about.check_ok'))}>{busy ? t('ui.about.checking') : t('ui.about.check')}</button>
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label={local('Deploy source', '部署來源', '部署来源')}><select className={PARITY_SELECT_CLASS} value={source} onChange={event => { setSource(event.target.value as UpdateSource); setTag(''); }}><option value="github-release">GitHub Releases</option><option value="docker-hub-tag">Docker Hub</option></select></Field>
         <Field label={local('Target tag', '目標標籤', '目标标签')}><select className={PARITY_SELECT_CLASS} value={selectedTag} onChange={event => setTag(event.target.value)}>{!candidates.length && <option value="">{local('No candidate available', '沒有可用候選版本', '没有可用候选版本')}</option>}{candidates.map(entry => <option key={entry.tagName} value={entry.tagName}>{entry.tagName} · {entry.displayVersion}</option>)}</select></Field>
       </div>
+      <p className="text-xs text-[color:var(--color-muted)]">{local('In-app upgrades install GitHub Release bundles; Docker-only aliases such as latest/dev require an image pull.', '應用內升級使用 GitHub Release 升級包；latest／dev 等僅有 Docker 映像的標籤須以拉取映像更新。', '应用内升级使用 GitHub Release 升级包；latest／dev 等仅有 Docker 镜像的标签须以拉取镜像更新。')}</p>
       {candidate?.digest && <p className="break-all font-mono text-xs">{candidate.digest}</p>}
       {candidate?.url && <a href={candidate.url} target="_blank" rel="noopener noreferrer">{local('Release notes', '版本說明', '版本说明')}</a>}
-      <button className={PARITY_ACTION_CLASS} disabled={busy || running || !supported || !status?.config?.enabled || !selectedTag} onClick={deploy}>{busy ? t('ui.about.deploying') : t('ui.about.deploy')}</button>
+      <button className={PARITY_ACTION_CLASS} disabled={busy || running || !supported || !status?.config?.enabled || !isLocalUpdateReleaseTag(selectedTag) || selectedTag.replace(/^v/, '') === status.currentVersion} onClick={deploy}>{busy ? t('ui.about.deploying') : t('ui.about.deploy')}</button>
       <button className={PARITY_ACTION_CLASS} disabled={busy || running || !canRollback(status ?? {})} onClick={rollback}>{busy ? t('ui.about.rolling_back') : t('ui.about.rollback')}</button>
     </div>
     {config && <details className="card p-5"><summary>{local('Update center configuration', '更新中心設定', '更新中心配置')}</summary><div className="mt-4 grid gap-4 sm:grid-cols-2">

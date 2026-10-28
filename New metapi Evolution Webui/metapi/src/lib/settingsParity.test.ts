@@ -46,7 +46,7 @@ describe('maintenance parity contracts', () => {
     expect(() => deployPayload('github-release', {displayVersion: 'latest'})).toThrow();
   });
   it('allows rollback only when self-upgrade is supported and the center is enabled', () => {
-    const base = { currentVersion: '1.4.2', config: { enabled: true, githubReleasesEnabled: true, dockerHubTagsEnabled: true, defaultDeploySource: 'github-release' as const } };
+    const base = { currentVersion: '1.4.2', localUpdate: { state: { phase: 'idle' as const, targetVersion: null, previousVersion: null, source: null, attempts: 0, startedAt: null, updatedAt: null, error: null }, previousVersion: '1.4.1', canRollback: true }, config: { enabled: true, githubReleasesEnabled: true, dockerHubTagsEnabled: true, defaultDeploySource: 'github-release' as const } };
     expect(canRollback({ ...base, selfUpgrade: { supported: true, reason: null, arch: 'x64' } })).toBe(true);
     expect(canRollback({ ...base, selfUpgrade: { supported: false, reason: 'armv7', arch: 'arm' } })).toBe(false);
     expect(canRollback({ ...base, config: { ...base.config, enabled: false }, selfUpgrade: { supported: true, reason: null, arch: 'x64' } })).toBe(false);

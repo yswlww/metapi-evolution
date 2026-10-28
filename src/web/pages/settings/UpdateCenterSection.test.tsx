@@ -47,6 +47,7 @@ function statusWith(overrides: Record<string, unknown> = {}) {
     githubRelease: { normalizedVersion: '1.3.0', displayVersion: '1.3.0', tagName: 'v1.3.0' },
     dockerHubTag: null,
     selfUpgrade: { supported: true, reason: null, arch: 'x64' },
+    localUpdate: { state: { phase: 'idle', error: null }, canRollback: true, previousVersion: '1.2.2' },
     ...overrides,
   };
 }
@@ -57,7 +58,7 @@ describe('UpdateCenterSection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     apiMock.getUpdateCenterStatus.mockResolvedValue(statusWith());
-    apiMock.streamUpdateCenterTaskLogs.mockResolvedValue(undefined);
+    apiMock.streamUpdateCenterTaskLogs.mockImplementation(async (_id, handlers) => handlers.onDone?.({ status: 'succeeded' }));
   });
 
   afterEach(() => {

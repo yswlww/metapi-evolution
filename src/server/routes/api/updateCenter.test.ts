@@ -1,281 +1,137 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
-import { waitForBackgroundTaskToReachTerminalState } from '../../test-fixtures/backgroundTaskTestUtils.js';
+import { createUpdateState } from '../../../shared/localUpdateContract.js';
+import { finishLocalUpdateTask, resolveLocalUpdatePaths, writeUpdateState } from '../../../shared/localUpdateRuntime.js';
 
-const {
-  fetchLatestStableGitHubReleaseMock,
-  fetchDockerHubTagCandidatesMock,
-  performLocalUpgradeMock,
-  rollbackToPreviousMock,
-} = vi.hoisted(() => ({
-  fetchLatestStableGitHubReleaseMock: vi.fn(),
-  fetchDockerHubTagCandidatesMock: vi.fn(),
-  performLocalUpgradeMock: vi.fn(),
-  rollbackToPreviousMock: vi.fn(),
+const mocks = vi.hoisted(() => ({ github: vi.fn(), docker: vi.fn(), upgrade: vi.fn(), rollback: vi.fn(), support: vi.fn(), activate: vi.fn() }));
+vi.mock('../../services/updateCenterVersionService.js', async () => ({
+  ...await vi.importActual<typeof import('../../services/updateCenterVersionService.js')>('../../services/updateCenterVersionService.js'),
+  fetchLatestStableGitHubRelease: mocks.github, fetchDockerHubTagCandidates: mocks.docker,
 }));
-
-vi.mock('../../services/updateCenterVersionService.js', async () => {
-  const actual = await vi.importActual<typeof import('../../services/updateCenterVersionService.js')>('../../services/updateCenterVersionService.js');
-  return {
-    ...actual,
-    fetchLatestStableGitHubRelease: (...args: unknown[]) => fetchLatestStableGitHubReleaseMock(...args),
-    fetchDockerHubTagCandidates: (...args: unknown[]) => fetchDockerHubTagCandidatesMock(...args),
-  };
-});
-
-vi.mock('../../services/updateCenterLocalService.js', async () => {
-  const actual = await vi.importActual<typeof import('../../services/updateCenterLocalService.js')>('../../services/updateCenterLocalService.js');
-  return {
-    ...actual,
-    performLocalUpgrade: (...args: unknown[]) => performLocalUpgradeMock(...args),
-    rollbackToPrevious: (...args: unknown[]) => rollbackToPreviousMock(...args),
-  };
-});
-
+vi.mock('../../services/updateCenterLocalService.js', async () => ({
+  ...await vi.importActual<typeof import('../../services/updateCenterLocalService.js')>('../../services/updateCenterLocalService.js'),
+  performLocalUpgrade: mocks.upgrade, rollbackToPrevious: mocks.rollback, getSelfUpgradeSupportForRuntime: mocks.support,
+}));
 type DbModule = typeof import('../../db/index.js');
 
-function getNextPatchVersion(version: string) {
-  const match = String(version).trim().match(/^(\d+)\.(\d+)\.(\d+)$/);
-  if (!match) return '999.0.0';
-  return `${match[1]}.${match[2]}.${Number.parseInt(match[3], 10) + 1}`;
-}
-
-describe('update center routes', () => {
+describe('local update-center API', () => {
   let app: FastifyInstance;
-  let db: DbModule['db'];
-  let schema: DbModule['schema'];
-  let closeDbConnections: DbModule['closeDbConnections'];
-  let dataDir = '';
-  let resetBackgroundTasks: (() => void) | null = null;
-  let getBackgroundTask: ((taskId: string) => { status: string; logs?: Array<{ message: string }> } | null) | null = null;
-
-  async function saveEnabledConfig() {
-    const response = await app.inject({
-      method: 'PUT',
-      url: '/api/update-center/config',
-      payload: {
-        enabled: true,
-        githubReleasesEnabled: true,
-        dockerHubTagsEnabled: true,
-        defaultDeploySource: 'github-release',
-      },
-    });
-    expect(response.statusCode).toBe(200);
-  }
-
+  let dataDir: string;
+  let database: DbModule;
+  const sendDescriptor = Object.getOwnPropertyDescriptor(process, 'send');
+  const connectedDescriptor = Object.getOwnPropertyDescriptor(process, 'connected');
   beforeAll(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), 'metapi-update-center-'));
+    dataDir = await mkdtemp(join(tmpdir(), 'metapi-local-api-'));
     process.env.DATA_DIR = dataDir;
-
+    Object.defineProperty(process, 'send', { value: mocks.activate, configurable: true });
+    Object.defineProperty(process, 'connected', { value: true, configurable: true });
     await import('../../db/migrate.js');
-    const dbModule = await import('../../db/index.js');
-    const routesModule = await import('./updateCenter.js');
-    const backgroundTaskModule = await import('../../services/backgroundTaskService.js');
-
-    db = dbModule.db;
-    schema = dbModule.schema;
-    closeDbConnections = dbModule.closeDbConnections;
-    resetBackgroundTasks = backgroundTaskModule.__resetBackgroundTasksForTests;
-    getBackgroundTask = backgroundTaskModule.getBackgroundTask;
-
+    database = await import('../../db/index.js');
     app = Fastify();
-    await app.register(routesModule.updateCenterRoutes);
+    await app.register((await import('./updateCenter.js')).updateCenterRoutes);
   });
-
   beforeEach(async () => {
-    fetchLatestStableGitHubReleaseMock.mockReset();
-    fetchDockerHubTagCandidatesMock.mockReset();
-    performLocalUpgradeMock.mockReset();
-    rollbackToPreviousMock.mockReset();
-    resetBackgroundTasks?.();
-    await db.delete(schema.settings).run();
-  });
-
-  afterAll(async () => {
-    if (app) await app.close();
-    if (typeof closeDbConnections === 'function') await closeDbConnections();
-    if (dataDir) {
-      try { rmSync(dataDir, { recursive: true, force: true }); } catch {}
-    }
-    delete process.env.DATA_DIR;
-  });
-
-  it('persists config under the new key and drops the Kubernetes fields', async () => {
-    const response = await app.inject({
-      method: 'PUT',
-      url: '/api/update-center/config',
-      payload: {
-        enabled: true,
-        helperBaseUrl: 'http://old-helper:9850',
-        namespace: 'ai',
-        chartRef: 'oci://example/chart',
-        githubReleasesEnabled: false,
-        defaultDeploySource: 'docker-hub-tag',
-      },
+    vi.clearAllMocks();
+    mocks.github.mockResolvedValue(null);
+    mocks.docker.mockResolvedValue({ primary: null, recentNonStable: [] });
+    mocks.support.mockResolvedValue({ supported: true, reason: null, arch: 'x64' });
+    await database.db.delete(database.schema.settings).run();
+    await rm(join(dataDir, 'runtime'), { recursive: true, force: true });
+    mocks.upgrade.mockImplementation(async options => {
+      const state = await writeUpdateState(resolveLocalUpdatePaths(dataDir), createUpdateState({ phase: 'health-checking', taskId: options.taskId, targetVersion: '9.0.0', attempts: 1 }));
+      await options.log('Checksum verified');
+      return { success: true, version: '9.0.0', requiresRestart: true, state };
     });
+    mocks.rollback.mockResolvedValue('releases/1.0.0');
+  });
+  afterAll(async () => {
+    await app.close();
+    await database.closeDbConnections();
+    await rm(dataDir, { recursive: true, force: true });
+    delete process.env.DATA_DIR;
+    if (sendDescriptor) Object.defineProperty(process, 'send', sendDescriptor); else delete process.send;
+    if (connectedDescriptor) Object.defineProperty(process, 'connected', connectedDescriptor); else delete (process as unknown as { connected?: boolean }).connected;
+  });
+  const inject = (method: 'POST' | 'PUT' | 'GET', url: string, payload?: unknown) => app.inject({ method, url, ...(payload === undefined ? {} : { payload }) });
+  async function enable() {
+    expect((await inject('PUT', '/api/update-center/config', { enabled: true })).statusCode).toBe(200);
+  }
+  async function wait(test: () => boolean | Promise<boolean>) {
+    const deadline = Date.now() + 2000;
+    while (!await test()) {
+      if (Date.now() > deadline) throw new Error('Local task did not settle');
+      await new Promise(r => setTimeout(r, 10));
+    }
+  }
+  const start = () => inject('POST', '/api/update-center/deploy', { source: 'github-release', targetTag: 'v9.0.0', targetDigest: 'sha256:' + 'a'.repeat(64) });
 
-    expect(response.statusCode).toBe(200);
-    const body = response.json();
-    expect(body.config.enabled).toBe(true);
-    expect(body.config.defaultDeploySource).toBe('docker-hub-tag');
-    expect(body.config.helperBaseUrl).toBeUndefined();
-    expect(body.config.chartRef).toBeUndefined();
-
-    const saved = await db.select().from(schema.settings)
-      .where(eq(schema.settings.key, 'update_center_config_v2')).get();
+  it('writes only the local config key, dropping old cluster settings', async () => {
+    const response = await inject('PUT', '/api/update-center/config', { enabled: true, helperBaseUrl: 'https://old.test', chartRef: 'chart' });
+    expect(response.json().config.helperBaseUrl).toBeUndefined();
+    const saved = await database.db.select().from(database.schema.settings).where(eq(database.schema.settings.key, 'update_center_config_v2')).get();
     expect(saved?.value).toContain('"enabled":true');
   });
-
-  it('rejects a payload that is not an object', async () => {
-    const response = await app.inject({
-      method: 'PUT',
-      url: '/api/update-center/config',
-      payload: ['not', 'an', 'object'],
-    });
-    expect(response.statusCode).toBe(400);
+  it('rejects malformed bodies and invalid source enums', async () => {
+    expect((await inject('PUT', '/api/update-center/config', [])).statusCode).toBe(400);
+    expect((await inject('POST', '/api/update-center/deploy', { source: 'invalid' })).statusCode).toBe(400);
   });
-
-  it('rejects deploy requests when the update center is disabled', async () => {
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/update-center/deploy',
-      payload: { source: 'github-release', targetTag: '1.5.0' },
-    });
-
-    expect(response.statusCode).toBe(400);
-    expect(response.json().message).toContain('disabled');
-    expect(performLocalUpgradeMock).not.toHaveBeenCalled();
+  it('refuses disabled and unsupported deployments without starting work', async () => {
+    expect((await start()).statusCode).toBe(400);
+    await enable();
+    mocks.support.mockResolvedValue({ supported: false, reason: 'No runtime supervisor', arch: 'x64' });
+    expect((await start()).json().message).toContain('supervisor');
+    expect(mocks.upgrade).not.toHaveBeenCalled();
   });
-
-  it('rejects deploy requests without a target tag', async () => {
-    await saveEnabledConfig();
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/update-center/deploy',
-      payload: { source: 'github-release' },
-    });
-
-    expect(response.statusCode).toBe(400);
-    expect(response.json().message).toContain('targetTag');
+  it('rejects missing, unsafe and alias targets before any task is created', async () => {
+    await enable();
+    for (const tag of ['', '../../data', 'latest', 'dev']) expect((await inject('POST', '/api/update-center/deploy', { targetTag: tag })).statusCode).toBe(400);
+    expect(mocks.upgrade).not.toHaveBeenCalled();
   });
-
-  it('starts a local upgrade task and reports when a restart is required', async () => {
-    await saveEnabledConfig();
-    performLocalUpgradeMock.mockResolvedValue({
-      success: true,
-      version: '1.5.0',
-      requiresRestart: true,
-      previousVersion: '1.4.2',
-      state: { phase: 'health-checking', attempts: 1 },
-    });
-
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/update-center/deploy',
-      payload: { source: 'github-release', targetTag: 'v1.5.0', targetDigest: 'sha256:' + 'a'.repeat(64) },
-    });
-
+  it('keeps the task running until the supervisor confirms health', async () => {
+    await enable();
+    const response = await start();
     expect(response.statusCode).toBe(202);
-    const taskId = response.json().task.id as string;
-    await waitForBackgroundTaskToReachTerminalState((id) => getBackgroundTask?.(id) ?? null, taskId);
-
-    const task = getBackgroundTask?.(taskId);
-    expect(task?.status).toBe('succeeded');
-    expect(performLocalUpgradeMock).toHaveBeenCalledWith(expect.objectContaining({
-      source: 'github-release',
-      candidate: expect.objectContaining({ normalizedVersion: '1.5.0' }),
-    }));
-  });
-
-  it('marks the task failed when the local upgrade rejects the bundle', async () => {
-    await saveEnabledConfig();
-    performLocalUpgradeMock.mockResolvedValue({
-      success: false,
-      version: '1.5.0',
-      requiresRestart: false,
-      previousVersion: null,
-      state: { phase: 'failed', attempts: 1, error: 'checksum mismatch for bundle' },
-    });
-
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/update-center/deploy',
-      payload: { source: 'github-release', targetTag: '1.5.0' },
-    });
-
-    expect(response.statusCode).toBe(202);
-    const taskId = response.json().task.id as string;
-    await waitForBackgroundTaskToReachTerminalState((id) => getBackgroundTask?.(id) ?? null, taskId);
-
-    const task = getBackgroundTask?.(taskId);
-    expect(task?.status).toBe('failed');
-  });
-
-  it('starts a rollback task against the previous release', async () => {
-    await saveEnabledConfig();
-    rollbackToPreviousMock.mockResolvedValue('releases/1.4.2');
-
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/update-center/rollback',
-      payload: {},
-    });
-
-    expect(response.statusCode).toBe(202);
-    const taskId = response.json().task.id as string;
-    await waitForBackgroundTaskToReachTerminalState((id) => getBackgroundTask?.(id) ?? null, taskId);
-
-    const task = getBackgroundTask?.(taskId);
-    expect(task?.status).toBe('succeeded');
-    expect(rollbackToPreviousMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('returns status without contacting a deploy helper', async () => {
-    fetchLatestStableGitHubReleaseMock.mockResolvedValue(null);
-    fetchDockerHubTagCandidatesMock.mockResolvedValue({ primary: null, recentNonStable: [] });
-
-    const response = await app.inject({ method: 'POST', url: '/api/update-center/check' });
-
-    expect(response.statusCode).toBe(200);
-    const body = response.json();
-    expect(body.currentVersion).toBeTypeOf('string');
-    expect(body.selfUpgrade).toMatchObject({ supported: expect.any(Boolean), arch: expect.any(String) });
-    expect(body.helper?.ok).toBe(false);
-    expect(body.helper?.history).toEqual([]);
-  });
-
-  it('streams task logs and rejects an unknown task id', async () => {
-    await saveEnabledConfig();
-    performLocalUpgradeMock.mockResolvedValue({
-      success: true,
-      version: '1.5.0',
-      requiresRestart: true,
-      previousVersion: null,
-      state: { phase: 'health-checking', attempts: 1 },
-    });
-
-    const deployed = await app.inject({
-      method: 'POST',
-      url: '/api/update-center/deploy',
-      payload: { source: 'github-release', targetTag: '1.5.0' },
-    });
-    const taskId = deployed.json().task.id as string;
-    await waitForBackgroundTaskToReachTerminalState((id) => getBackgroundTask?.(id) ?? null, taskId);
-
-    const stream = await app.inject({ method: 'GET', url: `/api/update-center/tasks/${taskId}/stream` });
-    expect(stream.statusCode).toBe(200);
+    const id = response.json().task.id;
+    await wait(() => mocks.activate.mock.calls.length === 1);
+    expect(mocks.activate).toHaveBeenCalledWith({ type: 'metapi:activate', taskId: id });
+    expect(mocks.upgrade).toHaveBeenCalledWith(expect.objectContaining({ candidate: expect.not.objectContaining({ digest: expect.anything() }) }));
+    expect((await inject('GET', `/api/update-center/tasks/${id}`)).json().task.status).toBe('running');
+    const state = createUpdateState({ phase: 'completed', taskId: id, targetVersion: '9.0.0' });
+    await finishLocalUpdateTask(resolveLocalUpdatePaths(dataDir), state);
+    const task = (await inject('GET', `/api/update-center/tasks/${id}`)).json().task;
+    expect(task.status).toBe('succeeded');
+    expect(task.logs.some((line: {message: string}) => line.message.includes('Activated'))).toBe(true);
+    const stream = await inject('GET', `/api/update-center/tasks/${id}/stream`);
     expect(stream.body).toContain('event: done');
-
-    const missing = await app.inject({ method: 'GET', url: '/api/update-center/tasks/does-not-exist/stream' });
-    expect(missing.statusCode).toBe(404);
+    expect(stream.body).toContain('"status":"succeeded"');
   });
-
-  it('reports the next patch version shape used by reminders', () => {
-    expect(getNextPatchVersion('1.4.2')).toBe('1.4.3');
-    expect(getNextPatchVersion('not-semver')).toBe('999.0.0');
+  it('deduplicates concurrent requests and preserves the task outcome after restart', async () => {
+    await enable();
+    const [a, b] = await Promise.all([start(), start()]);
+    expect(a.json().task.id).toBe(b.json().task.id);
+    await wait(() => mocks.activate.mock.calls.length === 1);
+    await finishLocalUpdateTask(resolveLocalUpdatePaths(dataDir), createUpdateState({ phase: 'rolled-back', taskId: a.json().task.id, error: 'Migration failed; restored previous version' }));
+    const recovered = (await inject('GET', '/api/update-center/status')).json();
+    expect(recovered.lastFinishedTask.status).toBe('failed');
+    expect(recovered.lastFinishedTask.error).toContain('Migration failed');
+  });
+  it('persists a checksum failure without requesting activation', async () => {
+    await enable();
+    mocks.upgrade.mockResolvedValue({ success: false, state: { error: 'checksum mismatch' } });
+    const response = await start();
+    const id = response.json().task.id;
+    await wait(async () => (await inject('GET', `/api/update-center/tasks/${id}`)).json().task.status === 'failed');
+    expect(mocks.activate).not.toHaveBeenCalled();
+  });
+  it('reports runtime capability and does not contact a cluster helper', async () => {
+    const value = (await inject('POST', '/api/update-center/check')).json();
+    expect(value.selfUpgrade).toMatchObject({ supported: true, arch: 'x64' });
+    expect(value.helper.ok).toBe(false);
+    expect(value.localUpdate.canRollback).toBe(false);
+    expect((await inject('GET', '/api/update-center/tasks/no-such-task')).statusCode).toBe(404);
   });
 });
