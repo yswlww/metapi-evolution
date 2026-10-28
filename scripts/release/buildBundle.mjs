@@ -3,7 +3,8 @@
 // Docker. Ship that Node executable with its native modules: host CI's Node ABI
 // must never leak into a release installed in a different container runtime.
 import { createHash } from 'node:crypto';
-import { copyFile, cp, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { access, copyFile, cp, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as tar from 'tar';
@@ -36,7 +37,7 @@ export async function buildBundle({ root = process.cwd(), out, arch = toLocalBun
   const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
   version = normalizeLocalUpdateVersion(version || pkg.version);
   for (const path of ['dist/server/index.js', 'dist/server/db/migrate.js', 'dist/web/index.html', 'dist/web/legacy/index.html', 'node_modules', 'drizzle']) {
-    await (await import('node:fs/promises')).access(join(root, path));
+    await access(join(root, path));
   }
   const outDir = resolve(out || 'release-bundles');
   await mkdir(outDir, { recursive: true });
@@ -51,7 +52,6 @@ export async function buildBundle({ root = process.cwd(), out, arch = toLocalBun
     const filename = localUpdateBundleFilename(version, process.arch);
     const bundlePath = join(outDir, filename);
     await tar.c({ file: bundlePath, cwd: staging, gzip: true, portable: true, noMtime: true }, ['dist', 'node_modules', 'drizzle', 'package.json', 'runtime', 'runtime-manifest.json']);
-    const { createReadStream } = await import('node:fs');
     const hash = createHash('sha256');
     for await (const chunk of createReadStream(bundlePath)) hash.update(chunk);
     const digest = hash.digest('hex');

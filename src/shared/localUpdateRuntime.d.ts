@@ -31,6 +31,7 @@ export declare function switchSymlink(path: string, target: string): Promise<voi
 export declare function resolveRelease(paths: LocalUpdatePaths, target: string): Promise<string>;
 export declare function readCurrentVersion(path: string): Promise<string | null>;
 export declare function sweepStagingDirs(paths: LocalUpdatePaths): Promise<string[]>;
+export declare function resolveLocalUpdateTaskPath(paths: LocalUpdatePaths, id: string): string;
 export declare function readLocalUpdateTask(paths: LocalUpdatePaths, id: string): Promise<LocalUpdateTask | null>;
 export declare function writeLocalUpdateTask(paths: LocalUpdatePaths, task: LocalUpdateTask): Promise<LocalUpdateTask>;
 export declare function finishLocalUpdateTask(paths: LocalUpdatePaths, state: UpdateState): Promise<void>;

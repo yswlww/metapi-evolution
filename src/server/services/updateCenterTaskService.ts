@@ -23,8 +23,9 @@ export async function getLocalUpdateTask(id: string): Promise<LocalUpdateTask | 
 }
 export async function getLatestLocalUpdateTask(): Promise<LocalUpdateTask | null> {
   try {
-    const { id } = JSON.parse(await readFile(join(paths().runtimeRoot, 'latest-task.json'), 'utf8'));
-    return await getLocalUpdateTask(id);
+    const parsed: unknown = JSON.parse(await readFile(join(paths().runtimeRoot, 'latest-task.json'), 'utf8'));
+    if (!parsed || typeof parsed !== 'object' || typeof (parsed as { id?: unknown }).id !== 'string') return null;
+    return await getLocalUpdateTask((parsed as { id: string }).id);
   } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
 }
 

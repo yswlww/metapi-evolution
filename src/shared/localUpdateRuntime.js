@@ -107,15 +107,27 @@ export async function sweepStagingDirs(paths) {
   return removed;
 }
 
+export function resolveLocalUpdateTaskPath(paths, id) {
+  if (!/^[a-zA-Z0-9-]{1,100}$/.test(id)) throw new Error('Invalid update task id');
+  const tasksDir = resolve(paths.tasksDir);
+  const file = resolve(tasksDir, `${id}.json`);
+  if (file !== tasksDir && !file.startsWith(tasksDir + sep)) throw new Error('Invalid update task id');
+  return file;
+}
+
 export async function readLocalUpdateTask(paths, id) {
-  if (!/^[a-zA-Z0-9-]{1,100}$/.test(id)) return null;
-  try { return JSON.parse(await readFile(join(paths.tasksDir, `${id}.json`), 'utf8')); }
+  let file;
+  try {
+    file = resolveLocalUpdateTaskPath(paths, id);
+  } catch {
+    return null;
+  }
+  try { return JSON.parse(await readFile(file, 'utf8')); }
   catch (error) { if (error.code === 'ENOENT') return null; throw error; }
 }
 
 export async function writeLocalUpdateTask(paths, task) {
-  if (!/^[a-zA-Z0-9-]{1,100}$/.test(task.id)) throw new Error('Invalid update task id');
-  await atomicWriteJson(join(paths.tasksDir, `${task.id}.json`), task);
+  await atomicWriteJson(resolveLocalUpdateTaskPath(paths, task.id), task);
   return task;
 }
 

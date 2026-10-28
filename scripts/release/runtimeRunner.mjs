@@ -2,9 +2,9 @@
 // The supervisor is image-owned, not replaced by a downloaded release. Its only
 // dependencies are built-ins and the shared, dependency-free runtime contract.
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, readdir, rm, symlink } from 'node:fs/promises';
+import { mkdir, readFile, rm, symlink } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { canAutoRollback, createUpdateState, isUnverifiedUpdatePhase } from '../../src/shared/localUpdateContract.js';
@@ -97,7 +97,6 @@ async function bootstrap(paths, imageRoot) {
   await mkdir(paths.releasesDir, { recursive: true });
   const manifest = await readFile(join(imageRoot, 'runtime-manifest.json'), 'utf8').catch(() => '');
   const identity = manifest || await readFile(join(imageRoot, 'package.json'), 'utf8');
-  const { createHash } = await import('node:crypto');
   const imageId = createHash('sha256').update(identity).digest('hex').slice(0, 20);
   let oldImageId;
   try { oldImageId = JSON.parse(await readFile(join(paths.runtimeRoot, 'image.json'), 'utf8')).id; } catch {}
