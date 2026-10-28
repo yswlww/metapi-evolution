@@ -1,4 +1,5 @@
 import { config as runtimeConfig } from '../config.js';
+import { resolveSelfUpgradeSupport, type SelfUpgradeSupport } from '../../shared/localUpdateContract.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
 import { listBackgroundTasks } from './backgroundTaskService.js';
 import {
@@ -61,6 +62,7 @@ export type UpdateCenterStatusResult = {
   dockerHubTag: UpdateCenterVersionCandidate | null;
   dockerHubRecentTags: UpdateCenterVersionCandidate[];
   helper: UpdateCenterHelperStatus;
+  selfUpgrade: SelfUpgradeSupport;
   runningTask: ReturnType<typeof getDeployTasks>[number] | null;
   lastFinishedTask: ReturnType<typeof getDeployTasks>[number] | null;
   runtime: UpdateCenterRuntimeState;
@@ -129,6 +131,7 @@ function buildResponseFromState(config: UpdateCenterConfig, runtime: UpdateCente
     dockerHubTag: snapshot?.dockerHubTag || null,
     dockerHubRecentTags: snapshot?.dockerHubRecentTags || [],
     helper: snapshot?.helper || buildUnavailableHelperStatus(runtime.lastCheckError),
+    selfUpgrade: resolveSelfUpgradeSupport(),
     runningTask,
     lastFinishedTask,
     runtime,
@@ -161,6 +164,7 @@ export async function buildUpdateCenterStatus(): Promise<UpdateCenterStatusResul
     dockerHubTag,
     dockerHubRecentTags,
     helper,
+    selfUpgrade: resolveSelfUpgradeSupport(),
     runningTask,
     lastFinishedTask,
     runtime,

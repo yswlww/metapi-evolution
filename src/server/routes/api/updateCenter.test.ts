@@ -243,6 +243,7 @@ describe('update center routes', () => {
     expect(response.statusCode).toBe(200);
     const body = response.json();
     expect(body.currentVersion).toBeTypeOf('string');
+    expect(body.selfUpgrade).toMatchObject({ supported: expect.any(Boolean), arch: expect.any(String) });
     expect(body.helper?.ok).toBe(false);
     expect(body.helper?.history).toEqual([]);
   });
