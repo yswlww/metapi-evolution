@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { databasePayload, finiteNumber, integerNumber, mergeSettingsDraft, settingsDirty, ROUTING_PRESETS, resolveRoutingProfilePreset } from './settingsParity';
 import { createVisualPayloadRule, visualRulesToPayloadRules, payloadRulesToVisualRules, createCodexDefaultHighReasoningVisualPreset } from './settingsParityPayload';
-import { deployPayload, rollbackPayload } from '../pages/about/updateCenterContract';
+import { deployPayload, canRollback } from '../pages/about/updateCenterContract';
 
 describe('maintenance parity contracts', () => {
   it('preserves explicit zero and rejects invalid numeric input', () => {
@@ -45,9 +45,10 @@ describe('maintenance parity contracts', () => {
     expect(deployPayload('docker-hub-tag', {tagName: 'v1.4.2', displayVersion: 'Metapi 1.4.2', digest: 'sha256:abc'})).toEqual({source: 'docker-hub-tag', targetTag: 'v1.4.2', targetDigest: 'sha256:abc'});
     expect(() => deployPayload('github-release', {displayVersion: 'latest'})).toThrow();
   });
-  it('rolls back only to an actual noncurrent history revision', () => {
-    const status = {currentVersion: '1.4.2', helper: {revision: '8', history: [{revision: '7'}, {revision: '8'}]}};
-    expect(rollbackPayload(status, '7')).toEqual({targetRevision: '7'});
-    for (const revision of ['8', '1.4.2', '', 'unknown']) expect(() => rollbackPayload(status, revision)).toThrow();
+  it('allows rollback only when self-upgrade is supported and the center is enabled', () => {
+    const base = { currentVersion: '1.4.2', config: { enabled: true, githubReleasesEnabled: true, dockerHubTagsEnabled: true, defaultDeploySource: 'github-release' as const } };
+    expect(canRollback({ ...base, selfUpgrade: { supported: true, reason: null, arch: 'x64' } })).toBe(true);
+    expect(canRollback({ ...base, selfUpgrade: { supported: false, reason: 'armv7', arch: 'arm' } })).toBe(false);
+    expect(canRollback({ ...base, config: { ...base.config, enabled: false }, selfUpgrade: { supported: true, reason: null, arch: 'x64' } })).toBe(false);
   });
 });

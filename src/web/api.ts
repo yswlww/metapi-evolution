@@ -1274,10 +1274,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  rollbackUpdateCenter: (data: { targetRevision: string }) =>
+  rollbackUpdateCenter: () =>
     request("/api/update-center/rollback", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: JSON.stringify({}),
     }),
   streamUpdateCenterTaskLogs: (
     taskId: string,

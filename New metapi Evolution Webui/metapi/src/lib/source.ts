@@ -1015,9 +1015,9 @@ export async function deployUpdateCenter(data: {
   return apiPost("/api/update-center/deploy", data);
 }
 
-export async function rollbackUpdateCenter(data: { targetRevision: string }): Promise<unknown> {
+export async function rollbackUpdateCenter(): Promise<unknown> {
   if (DATA_MODE === "prototype") return {};
-  return apiPost("/api/update-center/rollback", data);
+  return apiPost("/api/update-center/rollback", {});
 }
 
 // ── Proxy / chat test jobs ───────────────────────────────────────────────
