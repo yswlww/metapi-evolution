@@ -115,13 +115,25 @@ export function resolveLocalUpdateTaskPath(paths, id) {
   return file;
 }
 
+const TASK_FILE_NAME = /^[a-zA-Z0-9-]{1,100}\.json$/;
+
+/**
+ * Locate a task file by name, using the directory listing rather than a path
+ * built from request data. Returns null when the task does not exist.
+ */
+async function findTaskFile(paths, id) {
+  if (!/^[a-zA-Z0-9-]{1,100}$/.test(id)) return null;
+  const wanted = `${id}.json`;
+  let entries;
+  try { entries = await readdir(paths.tasksDir); }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  const entry = entries.find(name => name === wanted && TASK_FILE_NAME.test(name));
+  return entry ? join(paths.tasksDir, entry) : null;
+}
+
 export async function readLocalUpdateTask(paths, id) {
-  let file;
-  try {
-    file = resolveLocalUpdateTaskPath(paths, id);
-  } catch {
-    return null;
-  }
+  const file = await findTaskFile(paths, id);
+  if (!file) return null;
   try { return JSON.parse(await readFile(file, 'utf8')); }
   catch (error) { if (error.code === 'ENOENT') return null; throw error; }
 }
@@ -133,11 +145,16 @@ export async function writeLocalUpdateTask(paths, task) {
 
 export async function finishLocalUpdateTask(paths, state) {
   if (!state.taskId) return;
-  const task = await readLocalUpdateTask(paths, state.taskId);
-  if (!task) return;
+  // Update the file that was located by name, so the recorded task id (read
+  // back from disk) is never used to build a path.
+  const file = await findTaskFile(paths, state.taskId);
+  if (!file) return;
+  let task;
+  try { task = JSON.parse(await readFile(file, 'utf8')); }
+  catch (error) { if (error.code === 'ENOENT') return; throw error; }
   const success = state.phase === 'completed';
   const message = success ? `Activated ${state.targetVersion}` : state.error || state.phase;
-  await writeLocalUpdateTask(paths, {
+  await atomicWriteJson(file, {
     ...task,
     status: success ? 'succeeded' : 'failed',
     error: success ? null : message,

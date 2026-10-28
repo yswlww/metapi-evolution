@@ -1,8 +1,10 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { createUpdateState } from './localUpdateContract.js';
 import {
+  finishLocalUpdateTask,
   readLocalUpdateTask,
   resolveLocalUpdatePaths,
   resolveLocalUpdateTaskPath,
@@ -48,5 +50,21 @@ describe('localUpdateRuntime task paths', () => {
     };
     await writeLocalUpdateTask(p, task);
     expect(await readLocalUpdateTask(p, 'task-1')).toMatchObject({ id: 'task-1', status: 'running' });
+  });
+
+  it('cannot be steered at a file outside the tasks directory', async () => {
+    const p = paths();
+    mkdirSync(p.tasksDir, { recursive: true });
+    const outside = join(p.tasksDir, '..', 'escaped.json');
+    writeFileSync(outside, JSON.stringify({ id: 'escaped' }), 'utf8');
+    try {
+      // Neither a traversal id nor a name that exists elsewhere resolves.
+      expect(await readLocalUpdateTask(p, '../escaped')).toBeNull();
+      expect(await readLocalUpdateTask(p, 'escaped')).toBeNull();
+      expect(await finishLocalUpdateTask(p, { ...createUpdateState({ phase: 'completed' }), taskId: '../escaped' })).toBeUndefined();
+      expect(JSON.parse(readFileSync(outside, 'utf8')).status).toBeUndefined();
+    } finally {
+      rmSync(outside, { force: true });
+    }
   });
 });
