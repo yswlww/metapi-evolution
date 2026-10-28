@@ -12,30 +12,18 @@ import {
   loadUpdateCenterConfig,
 } from './updateCenterConfigService.js';
 import {
-  getUpdateCenterHelperStatus,
-  type UpdateCenterHelperStatus,
-} from './updateCenterHelperClient.js';
-import {
   loadUpdateCenterRuntimeState,
   saveUpdateCenterRuntimeState,
+  type UpdateCenterHelperStatus,
   type UpdateCenterRuntimeState,
   type UpdateCenterStatusSnapshot,
 } from './updateCenterRuntimeStateService.js';
 import { UPDATE_CENTER_DEPLOY_TASK_TYPE } from './updateCenterTaskConstants.js';
 import { resolveUpdateReminderCandidate, type UpdateReminderCandidate } from './updateCenterReminderService.js';
 
-function getUpdateCenterHelperToken(): string {
-  return String(
-    runtimeConfig.deployHelperToken
-    || process.env.DEPLOY_HELPER_TOKEN
-    || process.env.UPDATE_CENTER_HELPER_TOKEN
-    || '',
-  ).trim();
-}
-
-function summarizeHelperError(error: unknown) {
+function summarizeError(error: unknown) {
   if (error instanceof Error && error.message) return error.message;
-  return String(error || 'unknown helper error');
+  return String(error || 'unknown error');
 }
 
 async function settleOptional<T>(enabled: boolean, loader: () => Promise<T>): Promise<{
@@ -57,7 +45,7 @@ async function settleOptional<T>(enabled: boolean, loader: () => Promise<T>): Pr
   } catch (error) {
     return {
       value: null,
-      error: summarizeHelperError(error),
+      error: summarizeError(error),
     };
   }
 }
@@ -149,17 +137,10 @@ function buildResponseFromState(config: UpdateCenterConfig, runtime: UpdateCente
 
 export async function buildUpdateCenterStatus(): Promise<UpdateCenterStatusResult> {
   const config = await loadUpdateCenterConfig();
-  const helperToken = getUpdateCenterHelperToken();
 
-  const [githubLookup, dockerLookup, helperLookup, runtime] = await Promise.all([
+  const [githubLookup, dockerLookup, runtime] = await Promise.all([
     settleOptional(config.githubReleasesEnabled, async () => await fetchLatestStableGitHubRelease()),
     settleOptional(config.dockerHubTagsEnabled, async () => await fetchDockerHubTagCandidates()),
-    settleOptional(!!config.helperBaseUrl, async () => {
-      if (!helperToken) {
-        throw new Error('DEPLOY_HELPER_TOKEN is required');
-      }
-      return await getUpdateCenterHelperStatus(config, helperToken);
-    }),
     loadUpdateCenterRuntimeState(),
   ]);
 
@@ -167,7 +148,7 @@ export async function buildUpdateCenterStatus(): Promise<UpdateCenterStatusResul
   const dockerHubCandidates = dockerLookup.value;
   const dockerHubTag = dockerHubCandidates?.primary || null;
   const dockerHubRecentTags = dockerHubCandidates?.recentNonStable || [];
-  const helper = (helperLookup.value as UpdateCenterHelperStatus | null) || buildUnavailableHelperStatus(helperLookup.error);
+  const helper = buildUnavailableHelperStatus(null);
 
   const tasks = getDeployTasks();
   const runningTask = tasks.find((task) => task.status === 'pending' || task.status === 'running') || null;

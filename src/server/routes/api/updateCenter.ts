@@ -9,20 +9,19 @@ import {
 } from '../../services/backgroundTaskService.js';
 import { type UpdateCenterVersionSource } from '../../services/updateCenterVersionService.js';
 import {
-  getUpdateCenterDeployBlockMessage,
-  normalizeUpdateCenterTargetDigest,
-} from '../../services/updateCenterDeployGuardService.js';
-import {
-  getDefaultUpdateCenterConfig,
   loadUpdateCenterConfig,
   normalizeUpdateCenterConfig,
   saveUpdateCenterConfig,
   type UpdateCenterConfig,
 } from '../../services/updateCenterConfigService.js';
 import {
-  streamUpdateCenterDeploy,
-  streamUpdateCenterRollback,
-} from '../../services/updateCenterHelperClient.js';
+  performLocalUpgrade,
+  readCurrentVersion,
+  readUpdateState,
+  resolveLocalUpdatePaths,
+  rollbackToPrevious,
+} from '../../services/updateCenterLocalService.js';
+import { resolveSelfUpgradeSupport } from '../../../shared/localUpdateContract.js';
 import {
   getUpdateCenterStatus,
   refreshUpdateCenterStatusCache,
@@ -48,32 +47,17 @@ type RollbackBody = {
   targetRevision?: string;
 };
 
-function getUpdateCenterHelperToken(): string {
-  return String(
-    runtimeConfig.deployHelperToken
-    || process.env.DEPLOY_HELPER_TOKEN
-    || process.env.UPDATE_CENTER_HELPER_TOKEN
-    || '',
-  ).trim();
-}
-
-function assertHelperConfig(config: UpdateCenterConfig) {
-  if (!config.enabled) throw new Error('update center is disabled');
-  if (!config.helperBaseUrl) throw new Error('helperBaseUrl is required');
-  if (!config.namespace) throw new Error('namespace is required');
-  if (!config.releaseName) throw new Error('releaseName is required');
-  if (!getUpdateCenterHelperToken()) throw new Error('DEPLOY_HELPER_TOKEN is required');
-}
-
-function assertDeployableConfig(config: UpdateCenterConfig) {
-  assertHelperConfig(config);
-  if (!config.chartRef) throw new Error('chartRef is required');
-  if (!config.imageRepository) throw new Error('imageRepository is required');
-}
-
-function summarizeHelperError(error: unknown) {
+function summarizeError(error: unknown) {
   if (error instanceof Error && error.message) return error.message;
-  return String(error || 'unknown helper error');
+  return String(error || 'unknown error');
+}
+
+function assertUpgradable(config: UpdateCenterConfig) {
+  if (!config.enabled) throw new Error('update center is disabled');
+  const support = resolveSelfUpgradeSupport();
+  if (!support.supported) {
+    throw new Error(support.reason || 'self-upgrade is not supported on this runtime');
+  }
 }
 
 function writeSseEvent(reply: { raw: NodeJS.WritableStream & { write: (chunk: string) => void } }, event: string, data: unknown) {
@@ -95,7 +79,7 @@ export async function updateCenterRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: parsedBody.error });
     }
 
-    const next = normalizeUpdateCenterConfig(parsedBody.data || getDefaultUpdateCenterConfig());
+    const next = normalizeUpdateCenterConfig(parsedBody.data || {});
     const saved = await saveUpdateCenterConfig(next);
     return {
       success: true,
@@ -106,23 +90,16 @@ export async function updateCenterRoutes(app: FastifyInstance) {
   app.post<{ Body: unknown }>('/api/update-center/deploy', async (request, reply) => {
     const parsedBody = parseUpdateCenterDeployPayload(request.body);
     if (!parsedBody.success) {
-      return reply.code(400).send({
-        success: false,
-        message: parsedBody.error,
-      });
+      return reply.code(400).send({ success: false, message: parsedBody.error });
     }
 
     const body = parsedBody.data;
     const config = await loadUpdateCenterConfig();
     try {
-      assertDeployableConfig(config);
+      assertUpgradable(config);
     } catch (error) {
-      return reply.code(400).send({
-        success: false,
-        message: summarizeHelperError(error),
-      });
+      return reply.code(400).send({ success: false, message: summarizeError(error) });
     }
-    const helperToken = getUpdateCenterHelperToken();
 
     const source = body.source === 'docker-hub-tag'
       ? 'docker-hub-tag'
@@ -130,25 +107,14 @@ export async function updateCenterRoutes(app: FastifyInstance) {
         ? 'github-release'
         : config.defaultDeploySource;
     const targetTag = String(body.targetTag || body.targetVersion || '').trim();
-    const targetDigest = normalizeUpdateCenterTargetDigest(body.targetDigest);
     if (!targetTag) {
-      return reply.code(400).send({
-        success: false,
-        message: 'targetTag is required',
-      });
+      return reply.code(400).send({ success: false, message: 'targetTag is required' });
     }
 
-    const deployBlockMessage = await getUpdateCenterDeployBlockMessage({
-      config,
-      helperToken,
-      targetTag,
-      targetDigest,
-    });
-    if (deployBlockMessage) {
-      return reply.code(409).send({
-        success: false,
-        message: deployBlockMessage,
-      });
+    const paths = resolveLocalUpdatePaths(runtimeConfig.dataDir);
+    const runningVersion = await readCurrentVersion(paths.currentLink);
+    if (runningVersion && runningVersion === targetTag.replace(/^v/, '')) {
+      return reply.code(409).send({ success: false, message: 'target version is already running' });
     }
 
     let taskId = '';
@@ -162,65 +128,49 @@ export async function updateCenterRoutes(app: FastifyInstance) {
       },
       async () => {
         await Promise.resolve();
-        appendBackgroundTaskLog(taskId, `Resolving target image: ${targetTag}${targetDigest ? ` @ ${targetDigest}` : ''}`);
-        appendBackgroundTaskLog(taskId, `Contacting deploy helper: ${config.helperBaseUrl}`);
+        appendBackgroundTaskLog(taskId, `Resolving target version: ${targetTag}`);
 
-        const result = await streamUpdateCenterDeploy(
-          {
-            config,
-            helperToken,
+        const result = await performLocalUpgrade({
+          dataDir: runtimeConfig.dataDir,
+          candidate: {
             source,
-            targetTag,
-            targetDigest,
+            rawVersion: targetTag,
+            normalizedVersion: targetTag.replace(/^v/, ''),
+            url: null,
+            tagName: targetTag,
+            digest: body.targetDigest || null,
           },
-          (message) => {
-            appendBackgroundTaskLog(taskId, message);
-          },
-        );
+          source,
+          log: (message) => appendBackgroundTaskLog(taskId, message),
+        });
 
         if (!result.success) {
-          throw new Error('deploy helper reported a failed deployment');
+          throw new Error(result.state.error || 'local upgrade failed');
         }
-        appendBackgroundTaskLog(taskId, result.rolledBack ? 'Deployment rolled back' : 'Deployment finished successfully');
+        appendBackgroundTaskLog(taskId, `Switched to ${result.version}; restart required to activate`);
         return result;
       },
     );
     taskId = task.id;
 
-    return reply.code(202).send({
-      success: true,
-      reused,
-      task,
-    });
+    return reply.code(202).send({ success: true, reused, task });
   });
 
   app.post<{ Body: unknown }>('/api/update-center/rollback', async (request, reply) => {
     const parsedBody = parseUpdateCenterRollbackPayload(request.body);
     if (!parsedBody.success) {
-      return reply.code(400).send({
-        success: false,
-        message: parsedBody.error,
-      });
+      return reply.code(400).send({ success: false, message: parsedBody.error });
     }
 
-    const body = parsedBody.data;
     const config = await loadUpdateCenterConfig();
     try {
-      assertHelperConfig(config);
+      assertUpgradable(config);
     } catch (error) {
-      return reply.code(400).send({
-        success: false,
-        message: summarizeHelperError(error),
-      });
+      return reply.code(400).send({ success: false, message: summarizeError(error) });
     }
 
-    const targetRevision = String(body.targetRevision || '').trim();
-    if (!targetRevision) {
-      return reply.code(400).send({
-        success: false,
-        message: 'targetRevision is required',
-      });
-    }
+    const paths = resolveLocalUpdatePaths(runtimeConfig.dataDir);
+    const state = await readUpdateState(paths);
 
     let taskId = '';
     const { task, reused } = startBackgroundTask(
@@ -233,34 +183,15 @@ export async function updateCenterRoutes(app: FastifyInstance) {
       },
       async () => {
         await Promise.resolve();
-        appendBackgroundTaskLog(taskId, `Resolving rollback revision: ${targetRevision}`);
-        appendBackgroundTaskLog(taskId, `Contacting deploy helper: ${config.helperBaseUrl}`);
-
-        const result = await streamUpdateCenterRollback(
-          {
-            config,
-            helperToken: getUpdateCenterHelperToken(),
-            targetRevision,
-          },
-          (message) => {
-            appendBackgroundTaskLog(taskId, message);
-          },
-        );
-
-        if (!result.success) {
-          throw new Error('deploy helper reported a failed rollback');
-        }
-        appendBackgroundTaskLog(taskId, 'Rollback finished successfully');
-        return result;
+        appendBackgroundTaskLog(taskId, `Rolling back from ${state.targetVersion || 'current'}`);
+        const target = await rollbackToPrevious(paths);
+        appendBackgroundTaskLog(taskId, `Rolled back to ${target}; restart required to activate`);
+        return { success: true, target };
       },
     );
     taskId = task.id;
 
-    return reply.code(202).send({
-      success: true,
-      reused,
-      task,
-    });
+    return reply.code(202).send({ success: true, reused, task });
   });
 
   app.get<{ Params: { id: string } }>('/api/update-center/tasks/:id/stream', async (request, reply) => {
