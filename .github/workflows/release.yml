@@ -265,9 +265,49 @@ jobs:
             release/builder-debug.yml
           if-no-files-found: error
 
+  build-server-bundle:
+    name: Build Server Bundle (${{ matrix.arch }})
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund && npm rebuild esbuild sharp better-sqlite3 --no-audit --no-fund
+
+      - name: Build server
+        run: npm run build:server
+
+      - name: Pack release bundle
+        run: node scripts/release/buildBundle.mjs --arch ${{ matrix.arch }} --out release-bundles
+
+      - name: Upload server bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: metapi-server-bundle-${{ github.run_id }}-${{ matrix.arch }}
+          path: release-bundles/*
+          if-no-files-found: error
+
   publish-release:
     name: Publish GitHub Release
-    needs: build-packages
+    needs: [build-packages, build-server-bundle]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     if: startsWith(github.ref, 'refs/tags/')
