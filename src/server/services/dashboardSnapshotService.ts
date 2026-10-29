@@ -1,4 +1,4 @@
-import { and, eq, gte, lt, sql } from "drizzle-orm";
+import { and, eq, gte, isNotNull, lt, sql } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { buildModelAnalysisFromDailyUsage } from "./modelAnalysisService.js";
 import { parseCheckinRewardAmount } from "./checkinRewardParser.js";
@@ -15,6 +15,7 @@ import {
 } from "./snapshotCacheService.js";
 import {
   buildSiteAvailabilitySummariesFromHourlyAggregates,
+  medianLatencyMs,
   proxyCostSqlExpression,
   type SiteAvailabilitySiteRow,
   toRoundedMicroNumber,
@@ -41,6 +42,7 @@ export type DashboardSummaryPayload = {
     windowSeconds: number;
     requestsPerMinute: number;
     tokensPerMinute: number;
+    p50LatencyMs: number | null;
   };
 };
 
@@ -97,6 +99,7 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
     totalUsedRow,
     proxy24hRow,
     proxyPerformanceRow,
+    latencySampleRows,
     todaySpendRow,
   ] = await Promise.all([
     db
@@ -161,6 +164,25 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
         ),
       )
       .get(),
+    // P50 needs the individual samples; no percentile aggregate is portable
+    // across SQLite, MySQL and Postgres, so read the window's latencies and
+    // take the median in JS. The window is one minute, so this stays small.
+    db
+      .select({ latencyMs: schema.proxyLogs.latencyMs })
+      .from(schema.proxyLogs)
+      .innerJoin(
+        schema.accounts,
+        eq(schema.proxyLogs.accountId, schema.accounts.id),
+      )
+      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .where(
+        and(
+          gte(schema.proxyLogs.createdAt, lastMinuteDate),
+          eq(schema.sites.status, "active"),
+          isNotNull(schema.proxyLogs.latencyMs),
+        ),
+      )
+      .all(),
     db
       .select({
         todaySpend: sql<number>`coalesce(sum(coalesce(${schema.siteDayUsage.totalSiteSpend}, 0)), 0)`,
@@ -206,6 +228,9 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
   const totalTokens = Number(proxy24hRow?.totalTokens || 0);
   const requestsPerMinute = Number(proxyPerformanceRow?.total || 0);
   const tokensPerMinute = Number(proxyPerformanceRow?.totalTokens || 0);
+  const p50LatencyMs = medianLatencyMs(
+    (latencySampleRows ?? []).map((row) => Number(row.latencyMs)),
+  );
   const totalUsed = Number(totalUsedRow?.totalUsed || 0);
   const todaySpend = Number(todaySpendRow?.todaySpend || 0);
   const todayReward = accounts.reduce(
@@ -243,6 +268,7 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
       windowSeconds: 60,
       requestsPerMinute,
       tokensPerMinute,
+      p50LatencyMs,
     },
   };
 }

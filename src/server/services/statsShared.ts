@@ -88,6 +88,27 @@ function roundPercent(value: number | null): number | null {
   return Math.round(value * 10) / 10;
 }
 
+/**
+ * Median of a latency sample set. Odd-sized sets return the middle sample;
+ * even-sized sets average the two middle samples. `null` means the set held no
+ * usable measurement, which callers must keep distinguishable from 0 ms.
+ * The math lives in JS because SQLite, MySQL and Postgres do not share a
+ * percentile aggregate.
+ */
+export function medianLatencyMs(values: Array<number | null | undefined>): number | null {
+  const samples = values
+    .filter((value): value is number => Number.isFinite(value) && (value as number) >= 0)
+    .map((value) => Math.round(value));
+  if (samples.length === 0) return null;
+  samples.sort((left, right) => left - right);
+
+  const midpoint = samples.length / 2;
+  if (samples.length % 2 === 1) {
+    return samples[Math.floor(midpoint)];
+  }
+  return Math.round((samples[midpoint - 1] + samples[midpoint]) / 2);
+}
+
 function createSiteAvailabilityBucketTemplate(startMs: number) {
   return Array.from({ length: SITE_AVAILABILITY_BUCKET_COUNT }, (_, index) => {
     const bucketStart = new Date(startMs + index * SITE_AVAILABILITY_BUCKET_MS);
