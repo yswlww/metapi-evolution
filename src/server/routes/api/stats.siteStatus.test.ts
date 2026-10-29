@@ -194,30 +194,36 @@ describe('stats dashboard filters disabled sites', () => {
         accountId: activeAccount.id,
         status: 'success',
         totalTokens: 1200,
+        latencyMs: 300,
         createdAt: withinWindow,
       },
       {
         accountId: activeAccount.id,
         status: 'failed',
         totalTokens: 600,
+        latencyMs: 500,
         createdAt: withinWindow,
       },
       {
         accountId: activeAccount.id,
         status: 'success',
         totalTokens: null,
+        latencyMs: 400,
         createdAt: withinWindow,
       },
+      // Outside the window and on a disabled site: neither may move the P50.
       {
         accountId: activeAccount.id,
         status: 'success',
         totalTokens: 9999,
+        latencyMs: 9000,
         createdAt: outsideWindow,
       },
       {
         accountId: disabledAccount.id,
         status: 'success',
         totalTokens: 7777,
+        latencyMs: 8000,
         createdAt: withinWindow,
       },
     ]).run();
@@ -233,6 +239,7 @@ describe('stats dashboard filters disabled sites', () => {
         windowSeconds: number;
         requestsPerMinute: number;
         tokensPerMinute: number;
+        p50LatencyMs: number | null;
       };
     };
 
@@ -240,7 +247,76 @@ describe('stats dashboard filters disabled sites', () => {
       windowSeconds: 60,
       requestsPerMinute: 3,
       tokensPerMinute: 1800,
+      // Median of [300, 400, 500]; the 60s window's own latencies only.
+      p50LatencyMs: 400,
     });
+  });
+
+  it('reports a null P50 latency when the window holds no measured latency', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'no-latency-site',
+      url: 'https://no-latency.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'no-latency-user',
+      accessToken: 'no-latency-token',
+      balance: 5,
+      status: 'active',
+    }).returning().get();
+
+    const recent = formatUtcSqlDateTime(new Date(Date.now() - 10_000));
+    await db.insert(schema.proxyLogs).values([
+      { accountId: account.id, status: 'success', totalTokens: 10, latencyMs: null, createdAt: recent },
+      { accountId: account.id, status: 'success', totalTokens: 20, latencyMs: null, createdAt: recent },
+    ]).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/stats/dashboard?view=summary',
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      performance: { requestsPerMinute: number; p50LatencyMs: number | null };
+    };
+
+    expect(body.performance.requestsPerMinute).toBe(2);
+    // A missing measurement must stay missing; reporting 0 ms would read as
+    // instant responses.
+    expect(body.performance.p50LatencyMs).toBeNull();
+  });
+
+  it('averages the two middle samples for an even-sized latency window', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'even-latency-site',
+      url: 'https://even-latency.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'even-latency-user',
+      accessToken: 'even-latency-token',
+      balance: 5,
+      status: 'active',
+    }).returning().get();
+
+    const recent = formatUtcSqlDateTime(new Date(Date.now() - 5_000));
+    await db.insert(schema.proxyLogs).values([
+      { accountId: account.id, status: 'success', totalTokens: 1, latencyMs: 100, createdAt: recent },
+      { accountId: account.id, status: 'success', totalTokens: 1, latencyMs: 300, createdAt: recent },
+    ]).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/stats/dashboard?view=summary',
+    });
+
+    const body = response.json() as { performance: { p50LatencyMs: number | null } };
+    expect(body.performance.p50LatencyMs).toBe(200);
   });
 
   it('returns site availability buckets and average latency from per-request proxy logs', async () => {

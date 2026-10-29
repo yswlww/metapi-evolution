@@ -90,7 +90,7 @@ export default function Dashboard() {
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             <StatCard label={t("ui.dash.total_balance")} value={`$${(kpi.totalBalance ?? totalAccountBalance).toLocaleString()}`} trend={{ label: `$${(kpi.todaySpend ?? 0).toFixed(2)} ${l("spent today", "今日消耗")}`, tone: "muted" }} icon={<DollarSign size={16} />} />
             <StatCard label={t("ui.dash.active_routes")} value={kpi.activeRoutes ?? 0} trend={{ label: l("Routing", "路由中"), tone: "lime" }} icon={<Route size={16} />} />
-            <StatCard label={l("P50 latency", "P50 延遲", "P50 延迟")} value={kpi.avgLatency ? `${kpi.avgLatency}ms` : "—"} trend={{ label: l("Across channels", "跨頻道", "跨频道"), tone: "cyan" }} icon={<Clock size={16} />} />
+            <StatCard label={l("P50 latency", "P50 延遲", "P50 延迟")} value={kpi.avgLatency != null ? `${Math.round(kpi.avgLatency)}ms` : "—"} trend={{ label: l("Last 60s", "最近 60 秒", "最近 60 秒"), tone: "cyan" }} icon={<Clock size={16} />} />
             <StatCard label={t("ui.dash.accounts_card")} value={`${kpi.activeAccounts ?? 0}/${kpi.totalAccounts ?? 0}`} trend={{ label: t("ui.dash.active_total"), tone: "lime" }} icon={<Activity size={16} />} />
           </div>
 
