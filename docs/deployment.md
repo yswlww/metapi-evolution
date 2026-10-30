@@ -42,7 +42,7 @@ Docker / Docker Compose 部署可以直接在管理后台升级，不需要集�
 
 模板会自动完成：
 
-- 拉取 `kennethww/metapi:latest` 镜像
+- 拉取 `kennethww/metapi-evolution:latest` 镜像
 - 配置 HTTP 端口（4000）
 - 挂载持久化存储（`/app/data`）
 - 分配域名
@@ -187,7 +187,7 @@ docker run -d --name metapi \
   -e TZ=Asia/Shanghai \
   -v ./data:/app/data \
   --restart unless-stopped \
-  kennethww/metapi:latest
+  kennethww/metapi-evolution:latest
 ```
 
 > **路径说明：**

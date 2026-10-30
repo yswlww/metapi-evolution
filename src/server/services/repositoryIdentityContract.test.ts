@@ -56,7 +56,7 @@ describe('repositoryIdentityContract', () => {
     expect(readme).toContain('并非原作者或上游仓库认可的官方续作');
     expect(readme).not.toContain('唯一权威来源');
     expect(readme).toContain('不直接合并上游分支、Pull Request 或连续提交');
-    expect(readme).toContain('`kennethww/metapi`');
+    expect(readme).toContain('`kennethww/metapi-evolution`');
     expect(readme).toContain('`io.github.yswlww.metapi.desktop`');
     expect(readme).not.toContain('`me.cita777.metapi.desktop`');
     expect(readme).toContain('Metapi-Evolution');
@@ -69,7 +69,7 @@ describe('repositoryIdentityContract', () => {
     expect(readmeEn).toContain('is not an official continuation endorsed by the original author or upstream repository');
     expect(readmeEn).not.toContain('authoritative source');
     expect(readmeEn).toContain('does not directly merge upstream branches, pull requests, or commit series');
-    expect(readmeEn).toContain('`kennethww/metapi`');
+    expect(readmeEn).toContain('`kennethww/metapi-evolution`');
     expect(readmeEn).toContain('`io.github.yswlww.metapi.desktop`');
     expect(readmeEn).not.toContain('`me.cita777.metapi.desktop`');
     expect(readmeEn).toContain('Metapi-Evolution');

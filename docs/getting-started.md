@@ -34,7 +34,7 @@ mkdir metapi && cd metapi
 ```yaml
 services:
   metapi:
-    image: kennethww/metapi:latest
+    image: kennethww/metapi-evolution:latest
     ports:
       - "127.0.0.1:${PORT:-4000}:${PORT:-4000}"
     volumes:

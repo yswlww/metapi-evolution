@@ -64,7 +64,7 @@ spec:
       template: PREBUILT
       spec:
         source:
-          image: kennethww/metapi:latest
+          image: kennethww/metapi-evolution:latest
         ports:
           - id: web
             port: 4000
