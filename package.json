@@ -101,7 +101,7 @@
   "devDependencies": {
     "@electron/notarize": "^3.1.2",
     "@tailwindcss/vite": "^4.3.3",
-    "@types/better-sqlite3": "^7.6.11",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^26.6.5",
     "@types/node-cron": "^3.0.11",
     "@types/nodemailer": "^8.0.2",
