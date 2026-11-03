@@ -4,10 +4,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, normalize, sep } from 'node:path';
+import { isAllowedStaticPath } from './staticPathGuard.js';
 
 const webDir = mkdtempSync(join(tmpdir(), 'metapi-static-'));
 writeFileSync(join(webDir, 'index.html'), '<!doctype html><title>root</title>');
 writeFileSync(join(webDir, 'index-abc123.js'), 'export default 1;');
+writeFileSync(join(webDir, 'blocked.txt'), 'do-not-serve');
 
 /**
  * Mirrors the cache-header callback registered in `src/server/index.ts`.
@@ -36,6 +38,7 @@ describe('static frontend delivery', () => {
       root: webDir,
       prefix: '/',
       wildcard: false,
+      allowedPath: (pathName) => isAllowedStaticPath(pathName) && !pathName.endsWith('blocked.txt'),
       setHeaders: setCacheHeader as never,
     });
   });
@@ -55,5 +58,11 @@ describe('static frontend delivery', () => {
     const response = await app.inject({ method: 'GET', url: '/index-abc123.js' });
     expect(response.statusCode).toBe(200);
     expect(response.headers['cache-control']).toBeDefined();
+  });
+
+  it('consults allowedPath before serving a file', async () => {
+    const response = await app.inject({ method: 'GET', url: '/blocked.txt' });
+    expect(response.statusCode).not.toBe(200);
+    expect(response.body).not.toContain('do-not-serve');
   });
 });
