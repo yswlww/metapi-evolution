@@ -1,4 +1,5 @@
 import { frontendEntryForPath } from './frontendEntry.js';
+import { isAllowedStaticPath } from './staticPathGuard.js';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
@@ -261,6 +262,8 @@ if (existsSync(webDir)) {
     root: webDir,
     prefix: '/',
     wildcard: false,
+    // Required for 10.1.8 to recheck the file send actually opens.
+    allowedPath: (pathName) => isAllowedStaticPath(pathName),
     setHeaders: (reply, filePath) => {
       const normalizedPath = normalize(filePath);
       // `@fastify/static` hands the Fastify reply to this callback, not the raw

@@ -9,7 +9,7 @@ function atLeast(version: string, minimum: string): boolean {
   return true;
 }
 const floors: Record<string, (version: string) => string> = {
-  'follow-redirects': () => '1.16.1',
+  'follow-redirects': () => '1.16.2',
   fastify: () => '5.12.5', nodemailer: () => '10.1.4',
   undici: () => '7.30.1',
   'brace-expansion': version => version.startsWith('1.') ? '1.1.21' : version.startsWith('2.') ? '2.1.7' : '5.0.12',
@@ -22,6 +22,8 @@ const floors: Record<string, (version: string) => string> = {
   'http-cache-semantics': () => '4.3.0', joi: () => '18.2.9',
   katex: () => '0.19.0', 'global-agent': () => '4.1.3',
   vite: () => '6.4.3', esbuild: () => '0.25.0',
+  // glob 7 is outside the advisory. 9 through 14.0.1 keep walking after abort.
+  glob: version => version.startsWith('7.') || version.startsWith('8.') ? version : '14.0.2',
 };
 
 describe('dependency security floors', () => {
@@ -66,6 +68,10 @@ describe('dependency security floors', () => {
       if (comparable !== npmVersion) drift.push(`${name}: npm ${npmVersion} vs pnpm ${pnpmVersion}`);
     }
     expect(drift).toEqual([]);
+  });
+  it('keeps the direct minimatch dependency on the patched 11 line', async () => {
+    const lock = JSON.parse(await readFile(new URL('../../../package-lock.json', import.meta.url), 'utf8')) as PackageLock;
+    expect(atLeast(lock.packages['node_modules/minimatch']?.version || '0.0.0', '11.0.1')).toBe(true);
   });
   it('keeps npm and pnpm security overrides identical', async () => {
     const manifest = JSON.parse(await readFile(new URL('../../../package.json', import.meta.url), 'utf8'));
