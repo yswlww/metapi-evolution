@@ -167,7 +167,7 @@
     "esbuild@<0.25.0": "0.25.12",
     "esbuild@>=0.27.3 <0.28.1": "0.28.2",
     "vitepress": {
-      "vite": "6.4.4"
+      "vite": "6.4.5"
     },
     "@electron/get": {
       "undici": "7.30.1"
