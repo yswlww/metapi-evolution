@@ -2,7 +2,7 @@
 # longer publish linux/arm/v7 manifests, which breaks our armv7 Docker jobs.
 # Pin the exact patch so a security release is a deliberate, reviewable bump
 # rather than a silent drift of the floating tag.
-FROM node:22.23.4-bookworm-slim AS builder
+FROM node:22.23.5-bookworm-slim AS builder
 
 WORKDIR /app
 
@@ -31,7 +31,7 @@ RUN node scripts/release/buildBundle.mjs --arch "$TARGETARCH" --version "${METAP
 FROM scratch AS server-bundle
 COPY --from=bundle-builder /release-bundles/ /
 
-FROM node:22.23.4-bookworm-slim AS runtime
+FROM node:22.23.5-bookworm-slim AS runtime
 
 WORKDIR /app
 
