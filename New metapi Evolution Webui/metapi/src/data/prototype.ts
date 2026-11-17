@@ -116,6 +116,9 @@ export interface Site {
   maxConcurrency?: number | null;
   isPinned?: boolean;
   apiKey?: string | null;
+  postRefreshProbeEnabled?: boolean;
+  postRefreshProbeScope?: 'single' | 'all' | null;
+  postRefreshProbeModel?: string | null;
 }
 
 export interface Account {

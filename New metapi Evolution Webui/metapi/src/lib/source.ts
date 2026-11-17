@@ -60,6 +60,9 @@ interface BackendSite {
     nextExpiresAt?: string;
     planNames?: string[];
   } | null;
+  postRefreshProbeEnabled?: boolean;
+  postRefreshProbeScope?: 'single' | 'all' | null;
+  postRefreshProbeModel?: string | null;
 }
 
 function mapBackendSite(raw: BackendSite): Site {
@@ -88,6 +91,9 @@ function mapBackendSite(raw: BackendSite): Site {
     maxConcurrency: raw.maxConcurrency ?? null,
     isPinned: raw.isPinned ?? false,
     apiKey: raw.apiKey ?? null,
+    postRefreshProbeEnabled: raw.postRefreshProbeEnabled ?? false,
+    postRefreshProbeScope: raw.postRefreshProbeScope ?? null,
+    postRefreshProbeModel: raw.postRefreshProbeModel ?? null,
   };
 }
 
@@ -124,6 +130,9 @@ export async function updateSite(
     sortOrder?: number;
     globalWeight?: number;
     maxConcurrency?: number | null;
+    postRefreshProbeEnabled?: boolean;
+    postRefreshProbeScope?: 'single' | 'all';
+    postRefreshProbeModel?: string;
   },
 ): Promise<Site> {
   if (DATA_MODE === "prototype") return { id, ...payload } as unknown as Site;
