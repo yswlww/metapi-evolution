@@ -9,6 +9,7 @@ import { SectionTitle, StatCard } from "../components/PrototypeUI";
 import { useUiText } from "../i18n/useUiText";
 import { useToast } from "../components/Toast";
 import { fetchDashboardFeed, fetchModelBySite, probeSiteNow, type DashboardFeed } from "../lib/source";
+import { fmtTime } from "../lib/format";
 
 export default function Dashboard() {
   const t = useUiText();
@@ -221,7 +222,7 @@ export default function Dashboard() {
                       )}
                     </div>
                     <span className="shrink-0 font-mono text-[10px] text-[color:var(--color-muted)]">
-                      {event.createdAt ? new Date(event.createdAt).toLocaleTimeString() : ""}
+                      {fmtTime(event.createdAt)}
                     </span>
                   </div>
                 ))
