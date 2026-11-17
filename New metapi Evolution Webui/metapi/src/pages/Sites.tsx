@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from 'react-router-dom';
 import SiteModelsChooser from './sites/SiteModelsChooser';
+import SiteProbeSettings from './sites/SiteProbeSettings';
 import { useManagementText } from '../lib/managementParityText';
 import { batchOutcome, buildOrderUpdates, sortManagementRows, type BatchResponse } from '../lib/managementParity';
 import { apiPost } from '../lib/client';
@@ -48,6 +49,7 @@ export default function Sites() {
   const l = useManagementText();
   const [createdSite, setCreatedSite] = useState<Site | null>(null);
   const [disabledLoaded, setDisabledLoaded] = useState(false);
+  const [initialDisabledModels, setInitialDisabledModels] = useState("");
   const { showToast } = useToast();
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
@@ -88,6 +90,9 @@ export default function Sites() {
     pinned: false,
     disabledModels: "",
     maxConcurrency: "",
+    probeEnabled: false,
+    probeScope: "single" as 'single' | 'all',
+    probeModel: "",
   });
 
   const statusCounts = useMemo(() => {
@@ -111,7 +116,7 @@ export default function Sites() {
 
   const openCreate = () => {
     setDrawerMode("create");
-    setForm({ name: "", slug: "", adapter: "new-api", url: "", region: "", status: "healthy", note: "", enabled: true, customHeaders: "", proxyUrl: "", useSystemProxy: false, weight: "1.0", pinned: false, disabledModels: "", maxConcurrency: "" });
+    setForm({ name: "", slug: "", adapter: "new-api", url: "", region: "", status: "healthy", note: "", enabled: true, customHeaders: "", proxyUrl: "", useSystemProxy: false, weight: "1.0", pinned: false, disabledModels: "", maxConcurrency: "", probeEnabled: false, probeScope: "single", probeModel: "" });
     setDrawer({ id: 0 });
   };
 
@@ -135,6 +140,9 @@ export default function Sites() {
       pinned: site.isPinned ?? false,
       disabledModels: "",
       maxConcurrency: site.maxConcurrency == null ? "" : String(site.maxConcurrency),
+      probeEnabled: site.postRefreshProbeEnabled ?? false,
+      probeScope: site.postRefreshProbeScope === 'all' ? 'all' : 'single',
+      probeModel: site.postRefreshProbeModel ?? "",
     });
     setDrawer(site);
   };
@@ -171,7 +179,9 @@ export default function Sites() {
   };
 
   // Build the backend payload from the form. The API expects backend field
-  // names (name/url/platform/status), not the UI Site display shape.
+  // names (name/url/platform/status), not the UI Site display shape. Probe
+  // scope settings only apply on edit: a new site has no discovered models
+  // to probe yet, and the create endpoint does not consume them.
   const buildSitePayload = (forCreate: boolean) => ({
     name: form.name.trim(),
     url: form.url.trim(),
@@ -193,6 +203,11 @@ export default function Sites() {
     // Advanced fields that the form exposes.
     ...(form.proxyUrl.trim() ? { proxyUrl: form.proxyUrl.trim() } : { proxyUrl: null }),
     useSystemProxy: form.useSystemProxy,
+    ...(!forCreate ? {
+      postRefreshProbeEnabled: form.probeEnabled,
+      postRefreshProbeScope: form.probeScope,
+      postRefreshProbeModel: form.probeModel.trim(),
+    } : {}),
     ...(form.customHeaders.trim()
       ? (() => {
         try {
@@ -211,7 +226,13 @@ export default function Sites() {
     setDisabledLoaded(false);
     if (drawerMode === "edit" && drawer?.id) {
       fetchSiteDisabledModels(drawer.id)
-        .then((models) => { if (!cancelled) { setForm((prev) => ({ ...prev, disabledModels: (models ?? []).join(", ") })); setDisabledLoaded(true); } })
+        .then((models) => {
+          if (cancelled) return;
+          const disabledModels = (models ?? []).join(", ");
+          setForm((prev) => ({ ...prev, disabledModels }));
+          setInitialDisabledModels(disabledModels);
+          setDisabledLoaded(true);
+        })
         .catch((err) => { if (!cancelled) showToast(err instanceof Error ? err.message : l('loadFailed')); });
     } else if (drawerMode === "create") {
       setForm((prev) => ({ ...prev, disabledModels: "" }));
@@ -254,9 +275,12 @@ export default function Sites() {
         setCreatedSite(created);
       } else if (drawer?.id) {
         await updateSite(drawer.id, buildSitePayload(false));
-        // Always persist disabled-models so an empty input clears the old list.
-        const models = form.disabledModels.split(",").map((m) => m.trim()).filter(Boolean);
-        if (disabledLoaded) await updateSiteDisabledModels(drawer.id, models);
+        // Do not replace newer probe flags with the snapshot from opening the
+        // drawer. An explicit edit, including clearing the list, still persists.
+        if (disabledLoaded && form.disabledModels !== initialDisabledModels) {
+          const models = form.disabledModels.split(",").map((m) => m.trim()).filter(Boolean);
+          await updateSiteDisabledModels(drawer.id, models);
+        }
       }
       showToast(drawerMode === "create" ? t("ui.sites.created") : t("ui.sites.saved"));
       setDrawer(null);
@@ -286,7 +310,10 @@ export default function Sites() {
   const handleProbe = async () => {
     if (!drawer?.id) return;
     try {
-      await probeSiteNow(drawer.id, { scope: "single" });
+      await probeSiteNow(drawer.id, {
+        scope: form.probeScope,
+        ...(form.probeScope === 'single' ? { modelName: form.probeModel.trim() } : {}),
+      });
       showToast(t("ui.sites.probe_ok", { name: form.name }));
     } catch (err) {
       showToast(err instanceof Error ? err.message : t("ui.monitor.probe_failed"));
@@ -631,6 +658,8 @@ export default function Sites() {
                     <span className="font-mono text-[10px] tracking-wider text-[color:var(--color-muted)]">{t("ui.sites.adv_pinned")}</span>
                   </label>
                 </div>
+
+                {drawerMode === 'edit' && <SiteProbeSettings value={form} onChange={(patch) => setForm(prev => ({ ...prev, ...patch }))} />}
 
                 {drawerMode === 'edit' && drawer.id && disabledLoaded && <SiteModelsChooser key={drawer.id} siteId={drawer.id} value={form.disabledModels} onChange={disabledModels => setForm(prev => ({ ...prev, disabledModels }))} />}
                 <label className="block">
