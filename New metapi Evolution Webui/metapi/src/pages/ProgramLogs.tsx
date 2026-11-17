@@ -8,6 +8,7 @@ import { markEventRead, markAllEventsRead, clearEvents } from "../lib/source";
 import { fetchEventPage, fetchUnreadCount } from "./observability/api";
 import { mapEvent, appendEventPage, type ProgramEvent, type EventResult } from "./observability/events";
 import { useObservationLabels } from "./observability/labels";
+import { fmtTime, parseStoredUtcDateTime } from "../lib/format";
 
 const PAGE_SIZE = 50;
 const TYPES = ["all", "checkin", "balance", "token", "proxy", "status", "site_notice", "oauth", "key", "system", "export"];
@@ -93,7 +94,7 @@ export default function ProgramLogs() {
       <p className="text-xs text-[color:var(--color-muted)]">{l("Search and result filters apply to loaded events; type and unread filters apply on the server. Load more to search older events.", "搜尋與結果篩選僅作用於已載入事件；類型與未讀由伺服器篩選。載入更多可搜尋較舊事件。", "搜索与结果筛选仅作用于已加载事件；类型与未读由服务器筛选。加载更多可搜索较旧事件。")}</p>
       {filtered.length === 0 && !loading ? <EmptyState title={t("ui.events.empty_title")} description={t("ui.events.empty_desc")} /> : filtered.map((e) => <article key={e.id} className={`card flex flex-col gap-3 p-4 sm:flex-row ${e.read ? "" : "ring-1 ring-[color:var(--color-lime)]/30"}`}>
         <span className={`chip chip-${TONES[e.status]} self-start`}>{statusLabel(e.status)}</span>
-        <div className="min-w-0 flex-1"><h3 className="text-lg">{e.title}</h3><span className="text-xs text-[color:var(--color-muted)]">{typeLabel(e.type)}</span><p className="whitespace-pre-wrap text-sm">{e.detail}</p><time className="text-xs text-[color:var(--color-muted)]">{e.occurredAt ? new Date(e.occurredAt).toLocaleString() : "—"}</time></div>
+        <div className="min-w-0 flex-1"><h3 className="text-lg">{e.title}</h3><span className="text-xs text-[color:var(--color-muted)]">{typeLabel(e.type)}</span><p className="whitespace-pre-wrap text-sm">{e.detail}</p><time dateTime={parseStoredUtcDateTime(e.occurredAt)?.toISOString()} className="text-xs text-[color:var(--color-muted)]">{fmtTime(e.occurredAt)}</time></div>
         {!e.read && <button type="button" disabled={mutating || loading} className="chip self-start" onClick={() => markRead(e.id)}>{t("ui.events.read")}</button>}
       </article>)}
       {loading && <p role="status">{l("Loading…", "載入中…", "加载中…")}</p>}

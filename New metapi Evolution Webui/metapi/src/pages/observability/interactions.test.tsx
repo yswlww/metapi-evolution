@@ -31,7 +31,7 @@ beforeEach(() => {
   transport.get.mockImplementation(async (url: string) => {
     if (url.startsWith("/api/models/marketplace")) return { models: [{ ...baseModel, ...(url.includes("includePricing=true") || url.includes("includePricing=1") ? { pricingSources: [{ accountId: 8, siteId: 1, siteName: "Shared", username: "one", ownerBy: "vendor", enableGroups: ["default"], groupPricing: { default: { quotaType: 0, inputPerMillion: 2, outputPerMillion: 4 } } }] } : {}) }] };
     if (url === "/api/events/count") return { count: 80 };
-    if (url.startsWith("/api/events?")) { const q = new URLSearchParams(url.split("?")[1]); const offset = Number(q.get("offset")); return Array.from({ length: offset === 0 ? 50 : 1 }, (_, i) => ({ id: offset + i + 1, type: "checkin", level: "info", title: `Event ${offset + i + 1}`, message: "成功 2 失败 0", read: false, createdAt: "2026-10-08" })); }
+    if (url.startsWith("/api/events?")) { const q = new URLSearchParams(url.split("?")[1]); const offset = Number(q.get("offset")); return Array.from({ length: offset === 0 ? 50 : 1 }, (_, i) => ({ id: offset + i + 1, type: "checkin", level: "info", title: `Event ${offset + i + 1}`, message: "成功 2 失败 0", read: false, createdAt: "2026-10-08 03:00:00" })); }
     if (url.startsWith("/api/site-announcements?")) return [{ id: 1, siteId: 2, platform: "new-api", sourceKey: "notice", title: "Real announcement", content: "Actual content <script>alert(1)</script>", level: "info", readAt: "2026-10-08 01:00:00", firstSeenAt: "2026-10-07 01:00:00" }];
     if (url.startsWith("/api/monitor/overview")) return overview;
     if (url.startsWith("/api/stats/proxy-logs?")) { const q = new URLSearchParams(url.split("?")[1]); if (q.get("view") === "meta") return { summary: { totalCount: 21, successCount: 0, failedCount: 21, totalCost: 3 }, clientOptions: [{ value: "app:curl", label: "curl" }], sites: [{ id: 2, name: "Shared" }] }; return { items: [{ id: Number(q.get("offset")) + 1, modelRequested: "different-model", status: "failed", siteName: "Shared", clientAppName: "curl", firstByteLatencyMs: 12, isStream: true, createdAt: "2026-10-08" }], total: 21, page: 1, pageSize: 10 }; }
@@ -76,6 +76,10 @@ describe("Observation page interactions against backend fixtures", () => {
     await change(root.root.findAllByType("input")[0], "Event 63"); await click(button(root, "Mark all"));
     expect(text(root.root)).toContain("Event 63"); expect(root.root.findAllByType("input")[0].props.value).toBe("Event 63");
     expect(root.root.findAllByType("article")[0].findAllByType("button")).toHaveLength(0);
+  });
+  it("Program logs render timezone-less stored timestamps as UTC", async () => {
+    const root = await mount(<ProgramLogs />);
+    expect(root.root.findAllByType("time")[0].props.dateTime).toBe("2026-10-08T03:00:00.000Z");
   });
   it("Program unread removal adjusts raw offset without skipping older events", async () => {
     const rows = Array.from({ length: 120 }, (_, i) => ({ id: i + 1, type: "checkin", title: `Event ${i + 1}`, message: "成功 1", read: false, level: "info" }));
