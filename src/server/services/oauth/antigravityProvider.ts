@@ -1,7 +1,10 @@
 import { fetch } from 'undici';
 import { config } from '../../config.js';
+import { ANTIGRAVITY_RUNTIME_USER_AGENT as ANTIGRAVITY_MODELS_USER_AGENT } from '../../proxy-core/providers/antigravityClientIdentity.js';
 import { withExplicitProxyRequestInit } from '../siteProxy.js';
 import type { OAuthProviderDefinition } from './providers.js';
+
+export { ANTIGRAVITY_MODELS_USER_AGENT };
 
 export const ANTIGRAVITY_OAUTH_PROVIDER = 'antigravity';
 export const ANTIGRAVITY_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -15,7 +18,6 @@ export const ANTIGRAVITY_DAILY_UPSTREAM_BASE_URL = 'https://daily-cloudcode-pa.g
 export const ANTIGRAVITY_SANDBOX_DAILY_UPSTREAM_BASE_URL = 'https://daily-cloudcode-pa.sandbox.googleapis.com';
 export const ANTIGRAVITY_GOOGLE_API_CLIENT = 'google-cloud-sdk vscode_cloudshelleditor/0.1';
 export const ANTIGRAVITY_USER_AGENT = 'google-api-nodejs-client/9.15.1';
-export const ANTIGRAVITY_MODELS_USER_AGENT = 'antigravity/1.19.6 darwin/arm64';
 export const ANTIGRAVITY_CLIENT_METADATA = '{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}';
 export const ANTIGRAVITY_INTERNAL_API_VERSION = 'v1internal';
 export const ANTIGRAVITY_ONBOARD_POLL_INTERVAL_MS = 2_000;

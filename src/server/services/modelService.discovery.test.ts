@@ -1859,7 +1859,7 @@ describe('refreshModelsForAccount credential discovery', () => {
         Authorization: 'Bearer antigravity-access-token',
         Accept: 'application/json',
         'Content-Type': 'application/json',
-        'User-Agent': 'antigravity/1.19.6 darwin/arm64',
+        'User-Agent': 'antigravity/hub/2.29.0 (aidev_client; os_type=darwin; arch=arm64; cl=1013060670)',
       }),
     });
     const discoveryHeaders = undiciFetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;

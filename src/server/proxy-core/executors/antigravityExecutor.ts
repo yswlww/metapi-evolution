@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Headers, Response } from 'undici';
 import { geminiGenerateContentTransformer } from '../../transformers/gemini/generate-content/index.js';
+import { ANTIGRAVITY_RUNTIME_USER_AGENT } from '../providers/antigravityClientIdentity.js';
 import type { RuntimeDispatchInput, RuntimeExecutor, RuntimeResponse } from './types.js';
 import {
   asTrimmedString,
@@ -223,7 +224,7 @@ export const antigravityExecutor: RuntimeExecutor = {
           Authorization: input.request.headers.Authorization || input.request.headers.authorization || '',
           'Content-Type': 'application/json',
           Accept: useStreamEndpoint ? 'text/event-stream' : 'application/json',
-          'User-Agent': 'antigravity/1.19.6 darwin/arm64',
+          'User-Agent': ANTIGRAVITY_RUNTIME_USER_AGENT,
         };
         let response: RuntimeResponse;
         try {
@@ -276,7 +277,7 @@ export const antigravityExecutor: RuntimeExecutor = {
       Authorization: input.request.headers.Authorization || input.request.headers.authorization || '',
       'Content-Type': 'application/json',
       Accept: useStreamEndpoint ? 'text/event-stream' : 'application/json',
-      'User-Agent': 'antigravity/1.19.6 darwin/arm64',
+      'User-Agent': ANTIGRAVITY_RUNTIME_USER_AGENT,
     }));
     if (fallbackResponse.ok) {
       return materializeAntigravitySuccessResponse(fallbackResponse, aggregateStreamResponse);

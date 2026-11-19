@@ -19,6 +19,7 @@ import { getAdapter } from '../../services/platforms/index.js';
 import { getCredentialModeFromExtraConfig, getProxyUrlFromExtraConfig, resolvePlatformUserId } from '../../services/accountExtraConfig.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
 import { withAccountProxyOverride } from '../../services/siteProxy.js';
+import { ensureFreshNewApiAccessToken } from '../../services/newApiManagedAuth.js';
 import { type ModelRefreshResult } from '../../services/modelService.js';
 import {
   type CoverageBatchRebuildResult,
@@ -299,9 +300,19 @@ async function executeAccountTokenSync(row: AccountWithSiteRow): Promise<SyncExe
   try {
     const platformUserId = resolvePlatformUserId(row.accounts.extraConfig, row.accounts.username);
     const accountProxyUrl = getProxyUrlFromExtraConfig(row.accounts.extraConfig);
+    let accessToken = row.accounts.accessToken;
+    try {
+      const prepared = await ensureFreshNewApiAccessToken({
+        account: row.accounts,
+        site: row.sites,
+        currentAccessToken: accessToken,
+        currentExtraConfig: row.accounts.extraConfig,
+      });
+      accessToken = prepared.accessToken;
+    } catch {}
     let tokens = await withTimeout(
       () => withAccountProxyOverride(accountProxyUrl,
-        () => adapter.getApiTokens(row.sites.url, row.accounts.accessToken, platformUserId)),
+        () => adapter.getApiTokens(row.sites.url, accessToken, platformUserId)),
       TOKEN_SYNC_TIMEOUT_MS,
       `token sync timeout (${Math.round(TOKEN_SYNC_TIMEOUT_MS / 1000)}s)`,
     );
@@ -309,7 +320,7 @@ async function executeAccountTokenSync(row: AccountWithSiteRow): Promise<SyncExe
     if (tokens.length === 0) {
       const fallback = await withTimeout(
         () => withAccountProxyOverride(accountProxyUrl,
-          () => adapter.getApiToken(row.sites.url, row.accounts.accessToken, platformUserId)),
+          () => adapter.getApiToken(row.sites.url, accessToken, platformUserId)),
         TOKEN_SYNC_TIMEOUT_MS,
         `token sync timeout (${Math.round(TOKEN_SYNC_TIMEOUT_MS / 1000)}s)`,
       );

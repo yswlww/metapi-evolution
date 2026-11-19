@@ -1,7 +1,6 @@
 import type { PreparedProviderRequest, PrepareProviderRequestInput, ProviderAction, ProviderProfile } from './types.js';
 import { resolveAntigravityProviderAction } from './antigravityRuntime.js';
-
-const ANTIGRAVITY_RUNTIME_USER_AGENT = 'antigravity/1.19.6 darwin/arm64';
+import { ANTIGRAVITY_RUNTIME_USER_AGENT } from './antigravityClientIdentity.js';
 
 function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';

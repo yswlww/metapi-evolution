@@ -14,6 +14,7 @@ import {
   resolvePlatformUserId,
 } from './accountExtraConfig.js';
 import { autoReloginAccount } from './accountAutoReloginService.js';
+import { ensureFreshNewApiAccessToken } from './newApiManagedAuth.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
 import { withAccountProxyOverride } from './siteProxy.js';
@@ -171,9 +172,37 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
 
   const accountProxyUrl = resolveProxyUrlFromExtraConfig(account.extraConfig);
   let activeAccessToken = account.accessToken;
+  try {
+    const prepared = await ensureFreshNewApiAccessToken({
+      account,
+      site,
+      currentAccessToken: activeAccessToken,
+      currentExtraConfig: activeExtraConfig,
+    });
+    activeAccessToken = prepared.accessToken;
+    if (prepared.extraConfig !== undefined) activeExtraConfig = prepared.extraConfig ?? activeExtraConfig;
+  } catch {}
   const checkinStartedAt = Date.now();
   let result = await withAccountProxyOverride(accountProxyUrl,
     () => adapter.checkin(site.url, activeAccessToken, activePlatformUserId));
+
+  if (!result.success && shouldAttemptAutoRelogin(result.message)) {
+    try {
+      const prepared = await ensureFreshNewApiAccessToken({
+        account,
+        site,
+        currentAccessToken: activeAccessToken,
+        currentExtraConfig: activeExtraConfig,
+        force: true,
+      });
+      if (prepared.accessToken !== activeAccessToken) {
+        activeAccessToken = prepared.accessToken;
+        if (prepared.extraConfig !== undefined) activeExtraConfig = prepared.extraConfig ?? activeExtraConfig;
+        result = await withAccountProxyOverride(accountProxyUrl,
+          () => adapter.checkin(site.url, activeAccessToken, activePlatformUserId));
+      }
+    } catch {}
+  }
 
   if (!result.success && shouldAttemptAutoRelogin(result.message)) {
     const refreshed = await autoReloginAccount(account, site);

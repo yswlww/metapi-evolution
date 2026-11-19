@@ -6,16 +6,6 @@ import {
   CLAUDE_TOKEN_COUNTING_BETA,
 } from './headerUtils.js';
 
-function hasSemanticClaudeCodingBasePath(siteUrl?: string): boolean {
-  try {
-    const parsed = new URL(siteUrl || '');
-    return parsed.hostname.toLowerCase() === 'qianfan.baidubce.com'
-      && parsed.pathname.replace(/\/+$/, '').toLowerCase() === '/anthropic/coding';
-  } catch {
-    return false;
-  }
-}
-
 export const claudeProviderProfile: ProviderProfile = {
   id: 'claude',
   prepareRequest(input: PrepareProviderRequestInput): PreparedProviderRequest {
@@ -27,7 +17,7 @@ export const claudeProviderProfile: ProviderProfile = {
     const isClaudeOauthUpstream = input.sitePlatform?.trim().toLowerCase() === 'claude'
       && input.oauthProvider === 'claude';
     const isCountTokens = input.action === 'countTokens';
-    const pathPrefix = hasSemanticClaudeCodingBasePath(input.siteUrl) ? '' : '/v1';
+    const pathPrefix = '/v1';
 
     return {
       path: isCountTokens ? `${pathPrefix}/messages/count_tokens?beta=true` : `${pathPrefix}/messages`,

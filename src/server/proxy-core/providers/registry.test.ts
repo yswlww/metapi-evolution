@@ -222,7 +222,11 @@ describe('resolveProviderProfile', () => {
 
     expect(result.path).toBe('/v1internal:streamGenerateContent?alt=sse');
     expect(result.headers.Authorization).toBe('Bearer oauth-access-token');
-    expect(result.headers['User-Agent']).toBe('antigravity/1.19.6 darwin/arm64');
+    expect(result.headers['User-Agent']).toMatch(/^antigravity\/hub\/(\d+)\.(\d+)\.(\d+) /);
+    const userAgent = String(result.headers['User-Agent']);
+    const version = userAgent.match(/^antigravity\/hub\/(\d+)\.(\d+)\.(\d+) /);
+    const [major, minor] = [Number(version?.[1]), Number(version?.[2])];
+    expect(major > 2 || (major === 2 && minor >= 23)).toBe(true);
     expect(result.headers['X-Goog-Api-Client']).toBeUndefined();
     expect(result.headers.Accept).toBe('text/event-stream');
     expect(result.runtime).toMatchObject({

@@ -587,6 +587,12 @@ export async function accountsRoutes(app: FastifyInstance) {
       if (platformUserId) {
         extraConfigPatch.platformUserId = platformUserId;
       }
+      if (loginResult.sessionRefresh) {
+        extraConfigPatch.newApiAuth = {
+          refreshToken: loginResult.sessionRefresh.refreshToken,
+          tokenExpiresAt: loginResult.sessionRefresh.tokenExpiresAt,
+        };
+      }
       const extraConfig = mergeAccountExtraConfig(
         existing?.extraConfig,
         extraConfigPatch,

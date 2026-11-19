@@ -21,6 +21,7 @@ import {
   isSub2ApiPlatform,
 } from './sub2apiManagedAuth.js';
 import { refreshSub2ApiManagedSessionSingleflight } from './sub2apiRefreshSingleflight.js';
+import { ensureFreshNewApiAccessToken } from './newApiManagedAuth.js';
 
 function isSiteDisabled(status?: string | null): boolean {
   return (status || 'active') === 'disabled';
@@ -296,6 +297,18 @@ export async function refreshBalance(accountId: number) {
       } catch {}
     }
   }
+
+  try {
+    const prepared = await ensureFreshNewApiAccessToken({
+      account,
+      site,
+      currentAccessToken: activeAccessToken,
+      currentExtraConfig: activeExtraConfig,
+    });
+    activeAccessToken = prepared.accessToken;
+    if (prepared.extraConfig !== undefined) activeExtraConfig = prepared.extraConfig;
+  } catch {}
+
   const readBalance = async (token: string) => withAccountProxyOverride(accountProxyUrl,
     () => adapter.getBalance(site.url, token, activePlatformUserId));
   const handleBalanceError = async (err: any) => {
@@ -325,7 +338,25 @@ export async function refreshBalance(accountId: number) {
       && !!getSub2ApiAuthFromExtraConfig(activeExtraConfig)?.refreshToken
       && shouldAttemptAutoRelogin(message);
 
-    if (canTryManagedSub2ApiRefresh) {
+    const canTryManagedNewApiRefresh = shouldAttemptAutoRelogin(message);
+    if (canTryManagedNewApiRefresh) {
+      try {
+        const refreshed = await ensureFreshNewApiAccessToken({
+          account,
+          site,
+          currentAccessToken: activeAccessToken,
+          currentExtraConfig: activeExtraConfig,
+          force: true,
+        });
+        if (refreshed.accessToken !== activeAccessToken) {
+          activeAccessToken = refreshed.accessToken;
+          if (refreshed.extraConfig !== undefined) activeExtraConfig = refreshed.extraConfig;
+          balanceInfo = await readBalance(activeAccessToken);
+        }
+      } catch {}
+    }
+
+    if (!balanceInfo && canTryManagedSub2ApiRefresh) {
       try {
         const refreshed = await refreshSub2ApiManagedSessionSingleflight({
           account,
@@ -339,7 +370,7 @@ export async function refreshBalance(accountId: number) {
       } catch (retryErr: any) {
         await handleBalanceError(retryErr);
       }
-    } else if (shouldAttemptAutoRelogin(message)) {
+    } else if (!balanceInfo && shouldAttemptAutoRelogin(message)) {
       const refreshed = await autoReloginAccount(account, site);
       if (refreshed) {
         activeAccessToken = refreshed.accessToken;

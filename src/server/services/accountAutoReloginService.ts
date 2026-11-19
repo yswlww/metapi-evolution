@@ -76,8 +76,18 @@ export async function autoReloginAccount(
     const authoritativePlatformUserId = normalizePlatformUserId(loginResult.platformUserId);
     const platformUserId = authoritativePlatformUserId
       ?? resolvePlatformUserId(currentAccount.extraConfig, currentAccount.username);
-    const extraConfig = authoritativePlatformUserId
-      ? mergeAccountExtraConfig(currentAccount.extraConfig, { platformUserId: authoritativePlatformUserId })
+    const extraConfigPatch: Record<string, unknown> = {};
+    if (authoritativePlatformUserId) {
+      extraConfigPatch.platformUserId = authoritativePlatformUserId;
+    }
+    if (loginResult.sessionRefresh) {
+      extraConfigPatch.newApiAuth = {
+        refreshToken: loginResult.sessionRefresh.refreshToken,
+        tokenExpiresAt: loginResult.sessionRefresh.tokenExpiresAt,
+      };
+    }
+    const extraConfig = Object.keys(extraConfigPatch).length > 0
+      ? mergeAccountExtraConfig(currentAccount.extraConfig, extraConfigPatch)
       : currentAccount.extraConfig;
     const updates: Record<string, unknown> = {
       accessToken: loginResult.accessToken,

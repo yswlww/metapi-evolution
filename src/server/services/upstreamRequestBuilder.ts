@@ -20,6 +20,7 @@ import {
   getInputHeader,
   headerValueToString,
 } from '../proxy-core/providers/headerUtils.js';
+import { ANTIGRAVITY_RUNTIME_USER_AGENT } from '../proxy-core/providers/antigravityClientIdentity.js';
 import { assertOrcaRouterTokenTransport } from './orcarouterTransport.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -92,8 +93,6 @@ const METAPI_INTERNAL_HEADER_BLOCKLIST = new Set([
   'x-metapi-responses-websocket-mode',
   'x-metapi-responses-websocket-transport',
 ]);
-
-const ANTIGRAVITY_RUNTIME_USER_AGENT = 'antigravity/1.19.6 darwin/arm64';
 const MINIMAX_HOST_SUFFIXES = ['minimaxi.com', 'minimax.chat'];
 const MINIMAX_MODEL_PATTERN = /(?:^|[-_/])minimax(?:[-_/]|$)|^MiniMax/i;
 
@@ -112,11 +111,6 @@ function getNormalizedSiteUrlHostAndPath(siteUrl?: string): { host: string; path
 function hasSemanticOpenAiCodingBasePath(siteUrl?: string): boolean {
   const parsed = getNormalizedSiteUrlHostAndPath(siteUrl);
   return parsed?.host === 'qianfan.baidubce.com' && parsed.path === '/v2/coding';
-}
-
-function hasSemanticClaudeCodingBasePath(siteUrl?: string): boolean {
-  const parsed = getNormalizedSiteUrlHostAndPath(siteUrl);
-  return parsed?.host === 'qianfan.baidubce.com' && parsed.path === '/anthropic/coding';
 }
 
 function isMiniMaxOpenAiCompatibleRequest(input: {
@@ -540,7 +534,6 @@ export function buildUpstreamEndpointRequest(input: {
     }
 
     if (sitePlatform === 'claude') {
-      if (hasSemanticClaudeCodingBasePath(input.siteUrl)) return '/messages';
       return '/v1/messages';
     }
 

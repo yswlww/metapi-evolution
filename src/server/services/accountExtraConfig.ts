@@ -13,6 +13,11 @@ type Sub2ApiAuthConfig = {
   tokenExpiresAt?: unknown;
 };
 
+type NewApiAuthConfig = {
+  refreshToken?: unknown;
+  tokenExpiresAt?: unknown;
+};
+
 type Sub2ApiSubscriptionConfig = {
   updatedAt?: unknown;
   activeCount?: unknown;
@@ -38,6 +43,7 @@ type AccountExtraConfig = {
   };
   autoRelogin?: AutoReloginConfig;
   sub2apiAuth?: Sub2ApiAuthConfig;
+  newApiAuth?: NewApiAuthConfig;
   sub2apiSubscription?: Sub2ApiSubscriptionConfig;
   [key: string]: unknown;
 };
@@ -223,6 +229,23 @@ export type StoredSub2ApiSubscriptionSummary = SubscriptionSummary & {
 export function getSub2ApiAuthFromExtraConfig(extraConfig?: ExtraConfigInput): ManagedSub2ApiAuth | null {
   const parsed = parseExtraConfig(extraConfig);
   const raw = parsed.sub2apiAuth;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const refreshToken = normalizeNonEmptyString(raw.refreshToken);
+  if (!refreshToken) return null;
+  const tokenExpiresAt = normalizeTimestampMs(raw.tokenExpiresAt);
+  return tokenExpiresAt
+    ? { refreshToken, tokenExpiresAt }
+    : { refreshToken };
+}
+
+export type ManagedNewApiAuth = {
+  refreshToken: string;
+  tokenExpiresAt?: number;
+};
+
+export function getNewApiAuthFromExtraConfig(extraConfig?: ExtraConfigInput): ManagedNewApiAuth | null {
+  const parsed = parseExtraConfig(extraConfig);
+  const raw = parsed.newApiAuth;
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const refreshToken = normalizeNonEmptyString(raw.refreshToken);
   if (!refreshToken) return null;

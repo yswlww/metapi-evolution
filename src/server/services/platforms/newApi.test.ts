@@ -21,6 +21,13 @@ const CHECKIN_INVALID_URL_EXPIRED_SESSION_TOKEN = 'checkin-invalid-url-expired-s
 const CHECKIN_INVALID_URL_FORBIDDEN_SESSION_TOKEN = 'checkin-invalid-url-forbidden-session-token';
 const CHECKIN_CLOUDFLARE_530_TOKEN = 'checkin-cloudflare-530-token';
 const CHECKIN_VELOERA_TOKEN = 'checkin-veloera-token';
+const CHECKIN_QUOTA_AWARDED_TOKEN = 'checkin-quota-awarded-token';
+const MASKED_KEY_TOKEN = 'masked-key-token';
+const JWT_LOGIN_USERNAME = 'jwt-user';
+const JWT_LOGIN_PASSWORD = 'jwt-pass';
+const JWT_LOGIN_ACCESS_TOKEN = 'jwt-access-token';
+const JWT_LOGIN_REFRESH = 'refresh-secret';
+const JWT_LOGIN_EXPIRES_AT = 1_800_000_000;
 const BALANCE_FAIL_TOKEN = 'balance-fail-token';
 const BALANCE_SHIELD_FAILURE_TOKEN = 'balance-shield-failure-token';
 const GROUP_EXPIRED_TOKEN = 'group-expired-token';
@@ -118,6 +125,25 @@ describe('NewApiAdapter', () => {
             payload = JSON.parse(bodyRaw || '{}');
           } catch {}
 
+          const isJwtLogin =
+            payload.username === JWT_LOGIN_USERNAME &&
+            payload.password === JWT_LOGIN_PASSWORD;
+          if (isJwtLogin) {
+            res.writeHead(200, {
+              'Content-Type': 'application/json',
+              'Set-Cookie': `new_api_refresh=${JWT_LOGIN_REFRESH}; Path=/api/user/auth; HttpOnly`,
+            });
+            res.end(JSON.stringify({
+              success: true,
+              data: {
+                access_token: JWT_LOGIN_ACCESS_TOKEN,
+                access_expires_at: JWT_LOGIN_EXPIRES_AT,
+                user: { id: 42, username: JWT_LOGIN_USERNAME },
+              },
+            }));
+            return;
+          }
+
           const isShieldLogin =
             payload.username === SHIELD_LOGIN_USERNAME &&
             payload.password === SHIELD_LOGIN_PASSWORD;
@@ -188,6 +214,25 @@ describe('NewApiAdapter', () => {
       }
 
       if (req.url?.startsWith('/api/token/')) {
+        if (
+          req.method === 'POST'
+          && req.url === '/api/token/7/key'
+          && req.headers.authorization === `Bearer ${MASKED_KEY_TOKEN}`
+        ) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, data: { key: 'sk-full-secret-key-value' } }));
+          return;
+        }
+        if (req.headers.authorization === `Bearer ${MASKED_KEY_TOKEN}`) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            success: true,
+            data: {
+              items: [{ id: 7, name: 'metapi', key: 'sk-f**********alue', status: 1 }],
+            },
+          }));
+          return;
+        }
         if (typeof req.headers.authorization === 'string' && req.headers.authorization === `Bearer ${COOKIE_SHIELDED_TOKEN}`) {
           res.writeHead(401, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: false, message: 'unauthorized' }));
@@ -452,6 +497,11 @@ describe('NewApiAdapter', () => {
       }
 
       if (req.url === '/api/user/checkin') {
+        if (req.headers.authorization === `Bearer ${CHECKIN_QUOTA_AWARDED_TOKEN}`) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, message: 'checked in', data: { quota_awarded: 500000 } }));
+          return;
+        }
         if (typeof req.headers.authorization === 'string' && req.headers.authorization === `Bearer ${CHECKIN_CLOUDFLARE_530_TOKEN}`) {
           res.writeHead(530, { 'Content-Type': 'text/html; charset=utf-8' });
           res.end(CLOUDFLARE_530_HTML);
@@ -614,6 +664,36 @@ describe('NewApiAdapter', () => {
           && r.headers.cookie.includes(`acw_sc__v2=${ANYROUTER_CHALLENGE_ACW}`),
       ),
     ).toBe(true);
+  });
+
+  it('reveals masked token keys from the current New API key endpoint', async () => {
+    const adapter = new NewApiAdapter();
+    const tokens = await adapter.getApiTokens(baseUrl, MASKED_KEY_TOKEN, 11494);
+
+    expect(tokens).toEqual([
+      { name: 'metapi', key: 'sk-full-secret-key-value', enabled: true },
+    ]);
+    expect(requests.some((request) => request.method === 'POST' && request.url === '/api/token/7/key')).toBe(true);
+  });
+
+  it('reads the current checkin reward field quota_awarded', async () => {
+    const adapter = new NewApiAdapter();
+    const result = await adapter.checkin(baseUrl, CHECKIN_QUOTA_AWARDED_TOKEN, 11494);
+
+    expect(result).toEqual({ success: true, message: 'checked in', reward: '500000' });
+  });
+
+  it('keeps the short-lived login JWT and its refresh cookie', async () => {
+    const adapter = new NewApiAdapter();
+    const result = await adapter.login(baseUrl, JWT_LOGIN_USERNAME, JWT_LOGIN_PASSWORD);
+
+    expect(result.success).toBe(true);
+    expect(result.accessToken).toBe(JWT_LOGIN_ACCESS_TOKEN);
+    expect(result.platformUserId).toBe(42);
+    expect(result.sessionRefresh).toEqual({
+      refreshToken: JWT_LOGIN_REFRESH,
+      tokenExpiresAt: JWT_LOGIN_EXPIRES_AT * 1000,
+    });
   });
 
   it('parses token list response with data.items[] shape', async () => {
