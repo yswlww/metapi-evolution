@@ -185,7 +185,7 @@ describe('upstreamRequestBuilder', () => {
       downstreamFormat: 'openai',
     });
 
-    expect(request.path).toBe('/messages');
+    expect(request.path).toBe('/v1/messages');
   });
 
   it('does not override an explicit MiniMax reasoning_split value', () => {
@@ -310,7 +310,7 @@ describe('upstreamRequestBuilder', () => {
       },
     });
 
-    expect(request.path).toBe('/messages/count_tokens?beta=true');
+    expect(request.path).toBe('/v1/messages/count_tokens?beta=true');
   });
 
   it('does not apply Baidu semantic path handling to non-Baidu hosts', () => {

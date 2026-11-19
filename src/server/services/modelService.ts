@@ -28,6 +28,7 @@ import { config } from '../config.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
 import { clearAllRouteDecisionSnapshots } from './routeDecisionSnapshotStore.js';
 import { withAccountProxyOverride } from './siteProxy.js';
+import { ensureFreshNewApiAccessToken } from './newApiManagedAuth.js';
 import { isCodexPlatform } from './oauth/codexAccount.js';
 import { buildStoredOauthStateFromAccount, getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { refreshOauthAccessTokenSingleflight } from './oauth/refreshSingleflight.js';
@@ -1070,12 +1071,24 @@ export async function refreshModelsForAccount(
 
   const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
   let discoveredApiToken: string | null = null;
+  let accessToken = account.accessToken;
+  if (accessToken) {
+    try {
+      const prepared = await ensureFreshNewApiAccessToken({
+        account,
+        site,
+        currentAccessToken: accessToken,
+        currentExtraConfig: account.extraConfig,
+      });
+      accessToken = prepared.accessToken;
+    } catch {}
+  }
 
-  if (!account.apiToken && account.accessToken) {
+  if (!account.apiToken && accessToken) {
     try {
       discoveredApiToken = await withTimeout(
         () => withAccountProxyOverride(accountProxyUrl,
-          () => adapter.getApiToken(site.url, account.accessToken, platformUserId)),
+          () => adapter.getApiToken(site.url, accessToken, platformUserId)),
         API_TOKEN_DISCOVERY_TIMEOUT_MS,
         `api token discovery timeout (${Math.round(API_TOKEN_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
       );
@@ -1201,7 +1214,7 @@ export async function refreshModelsForAccount(
   // Prefer account-level credential discovery so model availability does not rely on managed tokens.
   await discoverModelsWithCredential(account.apiToken);
   await discoverModelsWithCredential(discoveredApiToken);
-  await discoverModelsWithCredential(account.accessToken);
+  await discoverModelsWithCredential(accessToken);
 
   for (const token of enabledTokens) {
     const startedAt = Date.now();

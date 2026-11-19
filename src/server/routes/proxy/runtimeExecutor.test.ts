@@ -80,7 +80,7 @@ describe('dispatchRuntimeRequest', () => {
       Authorization: 'Bearer antigravity-token',
       'Content-Type': 'application/json',
       Accept: 'application/json',
-      'User-Agent': 'antigravity/1.19.6 darwin/arm64',
+      'User-Agent': 'antigravity/hub/2.29.0 (aidev_client; os_type=darwin; arch=arm64; cl=1013060670)',
     });
 
     const upstreamBody = JSON.parse(String(firstInit.body));
@@ -162,7 +162,7 @@ describe('dispatchRuntimeRequest', () => {
       Authorization: 'Bearer antigravity-token',
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
-      'User-Agent': 'antigravity/1.19.6 darwin/arm64',
+      'User-Agent': 'antigravity/hub/2.29.0 (aidev_client; os_type=darwin; arch=arm64; cl=1013060670)',
     });
 
     const upstreamBody = JSON.parse(String(requestInit.body));

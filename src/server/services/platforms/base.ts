@@ -39,11 +39,17 @@ export interface BalanceInfo {
   subscriptionSummary?: SubscriptionSummary;
 }
 
+export interface LoginSessionRefresh {
+  refreshToken: string;
+  tokenExpiresAt: number;
+}
+
 export interface LoginResult {
   success: boolean;
   accessToken?: string;
   username?: string;
   platformUserId?: number;
+  sessionRefresh?: LoginSessionRefresh;
   message?: string;
 }
 

@@ -8,6 +8,7 @@ import {
   getUseSystemProxyFromExtraConfig,
   resolveProxyUrlFromExtraConfig,
   getSub2ApiAuthFromExtraConfig,
+  getNewApiAuthFromExtraConfig,
   getSub2ApiSubscriptionFromExtraConfig,
   guessPlatformUserIdFromUsername,
   mergeAccountExtraConfig,
@@ -85,6 +86,18 @@ describe('accountExtraConfig', () => {
     expect(normalizeCredentialMode('session')).toBe('session');
     expect(normalizeCredentialMode('AUTO')).toBe('auto');
     expect(normalizeCredentialMode('abc')).toBeUndefined();
+  });
+
+  it('parses managed New API refresh cookie from extra config', () => {
+    expect(getNewApiAuthFromExtraConfig(JSON.stringify({
+      newApiAuth: { refreshToken: 'refresh-secret', tokenExpiresAt: 1800000000000 },
+    }))).toEqual({
+      refreshToken: 'refresh-secret',
+      tokenExpiresAt: 1800000000000,
+    });
+    expect(getNewApiAuthFromExtraConfig(JSON.stringify({
+      newApiAuth: { refreshToken: '  ' },
+    }))).toBeNull();
   });
 
   it('parses managed sub2api refresh token config from extra config', () => {

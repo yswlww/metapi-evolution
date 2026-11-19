@@ -350,6 +350,84 @@ export class NewApiAdapter extends BasePlatformAdapter {
     return { balance: quota, used, quota: total, todayIncome, todayQuotaConsumption };
   }
 
+  private readCheckinReward(data: any): string | undefined {
+    const reward = data?.quota_awarded ?? data?.quota ?? data?.reward;
+    if (reward == null || reward === '') return undefined;
+    return String(reward);
+  }
+
+  private readCookieValue(cookieHeader: string, name: string): string {
+    const target = name.toLowerCase();
+    for (const part of cookieHeader.split(';')) {
+      const pair = part.trim();
+      const eq = pair.indexOf('=');
+      if (eq <= 0) continue;
+      if (pair.slice(0, eq).trim().toLowerCase() !== target) continue;
+      return pair.slice(eq + 1).trim();
+    }
+    return '';
+  }
+
+  private readSessionRefresh(payload: any, cookieHeader: string): LoginResult['sessionRefresh'] {
+    const refreshToken = this.readCookieValue(cookieHeader, 'new_api_refresh');
+    if (!refreshToken) return undefined;
+    const rawExpiresAt = payload?.data?.access_expires_at ?? payload?.data?.accessExpiresAt;
+    const expiresAt = typeof rawExpiresAt === 'number'
+      ? rawExpiresAt
+      : (typeof rawExpiresAt === 'string' ? Number(rawExpiresAt) : Number.NaN);
+    if (!Number.isFinite(expiresAt) || expiresAt <= 0) return undefined;
+    const tokenExpiresAt = expiresAt > 10_000_000_000 ? Math.trunc(expiresAt) : Math.trunc(expiresAt * 1000);
+    return { refreshToken, tokenExpiresAt };
+  }
+
+  private isMaskedTokenKey(key: string): boolean {
+    return key.includes('**********');
+  }
+
+  private async revealTokenKey(
+    baseUrl: string,
+    tokenId: number,
+    headers: Record<string, string>,
+  ): Promise<string | null> {
+    try {
+      const res = await this.fetchJson<any>(`${baseUrl}/api/token/${tokenId}/key`, {
+        method: 'POST',
+        headers,
+      });
+      const key = typeof res?.data?.key === 'string' ? res.data.key.trim() : '';
+      if (!key || this.isMaskedTokenKey(key)) return null;
+      return key;
+    } catch {
+      return null;
+    }
+  }
+
+  private async revealMaskedTokenItems(
+    baseUrl: string,
+    items: ApiTokenInfo[],
+    rawItems: any[],
+    headers: Record<string, string>,
+  ): Promise<ApiTokenInfo[]> {
+    const revealed: ApiTokenInfo[] = [];
+    for (const item of items) {
+      if (!this.isMaskedTokenKey(item.key)) {
+        revealed.push(item);
+        continue;
+      }
+      const raw = rawItems.find((candidate) => (
+        typeof candidate?.key === 'string' && candidate.key.trim() === item.key
+      ));
+      const tokenId = Number.parseInt(String(raw?.id), 10);
+      if (!Number.isFinite(tokenId) || tokenId <= 0) {
+        revealed.push(item);
+        continue;
+      }
+      const key = await this.revealTokenKey(baseUrl, tokenId, headers);
+      revealed.push(key ? { ...item, key } : item);
+    }
+    return revealed;
+  }
+
   private extractLoginAccessToken(payload: any): string | null {
     const candidates: unknown[] = [
       payload?.data,
@@ -820,7 +898,13 @@ export class NewApiAdapter extends BasePlatformAdapter {
         const headers: Record<string, string> = { Cookie: cookie };
         this.appendUserIdCompatibilityHeaders(headers, userId);
         const res = await this.fetchJsonRaw<any>(`${baseUrl}/api/token/?p=0&size=100`, { headers });
-        const normalized = this.normalizeTokenItems(this.parseTokenItems(res));
+        const rawItems = this.parseTokenItems(res);
+        const normalized = await this.revealMaskedTokenItems(
+          baseUrl,
+          this.normalizeTokenItems(rawItems),
+          rawItems,
+          headers,
+        );
         if (normalized.length > 0) return normalized;
       } catch {}
     }
@@ -961,11 +1045,13 @@ export class NewApiAdapter extends BasePlatformAdapter {
       const accessToken = this.extractLoginAccessToken(res);
       const platformUserId = extractPlatformUserIdFromLoginPayload(res);
       if (res?.success && accessToken) {
+        const sessionRefresh = this.readSessionRefresh(res, cookieHeader);
         return {
           success: true,
           accessToken,
           username,
           ...(platformUserId ? { platformUserId } : {}),
+          ...(sessionRefresh ? { sessionRefresh } : {}),
         };
       }
       if (res?.success && this.hasUsableSessionCookie(cookieHeader)) {
@@ -1105,7 +1191,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
         headers,
       });
       if (res?.success) {
-        return { success: true, message: res.message || 'checkin success', reward: res.data?.reward?.toString() };
+        return { success: true, message: res.message || 'checkin success', reward: this.readCheckinReward(res.data) };
       }
       const directMessage = this.extractResponseMessage(res);
       if (directMessage) firstFailureMessage = directMessage;
@@ -1134,7 +1220,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
             return {
               success: true,
               message: signInRes.message || 'checked in',
-              reward: signInRes.data?.reward?.toString(),
+              reward: this.readCheckinReward(signInRes.data),
             };
           }
           const signInMessage = this.extractResponseMessage(signInRes);
@@ -1151,7 +1237,7 @@ export class NewApiAdapter extends BasePlatformAdapter {
             headers,
           });
           if (res?.success) {
-            return { success: true, message: res.message || 'checkin success', reward: res.data?.reward?.toString() };
+            return { success: true, message: res.message || 'checkin success', reward: this.readCheckinReward(res.data) };
           }
           const cookieMessage = this.extractResponseMessage(res);
           if (cookieMessage) firstFailureMessage = cookieMessage;
@@ -1443,7 +1529,13 @@ export class NewApiAdapter extends BasePlatformAdapter {
       const res = await this.fetchJson<any>(`${baseUrl}/api/token/?p=0&size=100`, {
         headers: this.authHeaders(accessToken, userId || undefined),
       });
-      const normalized = this.normalizeTokenItems(this.parseTokenItems(res));
+      const rawItems = this.parseTokenItems(res);
+      const normalized = await this.revealMaskedTokenItems(
+        baseUrl,
+        this.normalizeTokenItems(rawItems),
+        rawItems,
+        this.authHeaders(accessToken, userId || undefined),
+      );
       if (normalized.length > 0) return normalized;
       if (this.isTokenListResponse(res)) return [];
     } catch {}

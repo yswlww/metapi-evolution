@@ -27,18 +27,35 @@ export class VeloeraAdapter extends BasePlatformAdapter {
   }
 
   async checkin(baseUrl: string, accessToken: string, platformUserId?: number): Promise<CheckinResult> {
-    try {
-      const res = await this.fetchJson<any>(`${baseUrl}/api/user/checkin`, {
-        method: 'POST',
-        headers: this.veloeraHeaders(accessToken, platformUserId),
-      });
-      if (res?.success) {
-        return { success: true, message: res.message || 'Check-in successful', reward: res.data?.reward?.toString() };
+    const headers = this.veloeraHeaders(accessToken, platformUserId);
+    const endpoints = ['/api/user/checkin', '/api/user/check_in'];
+    let lastMessage = 'Check-in failed';
+
+    for (const endpoint of endpoints) {
+      try {
+        const res = await this.fetchJson<any>(`${baseUrl}${endpoint}`, {
+          method: 'POST',
+          headers,
+        });
+        if (res?.success) {
+          const reward = res.data?.quota ?? res.data?.quota_awarded ?? res.data?.reward;
+          return {
+            success: true,
+            message: res.message || 'Check-in successful',
+            ...(reward == null ? {} : { reward: String(reward) }),
+          };
+        }
+        lastMessage = res?.message || lastMessage;
+        return { success: false, message: lastMessage };
+      } catch (err: any) {
+        lastMessage = err?.message || lastMessage;
+        if (!String(lastMessage).includes('404')) {
+          return { success: false, message: lastMessage };
+        }
       }
-      return { success: false, message: res?.message || 'Check-in failed' };
-    } catch (err: any) {
-      return { success: false, message: err.message };
     }
+
+    return { success: false, message: lastMessage };
   }
 
   async getBalance(baseUrl: string, accessToken: string, platformUserId?: number): Promise<BalanceInfo> {
